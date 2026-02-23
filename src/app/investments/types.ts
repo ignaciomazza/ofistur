@@ -4,6 +4,7 @@ export type Investment = {
   id_agency: number;
   category: string;
   description: string;
+  counterparty_name?: string | null;
   amount: number;
   currency: string;
   created_at: string;
@@ -25,6 +26,17 @@ export type Investment = {
   recurring_id?: number | null;
   payment_method?: string | null;
   account?: string | null;
+  payments?:
+    | {
+        amount?: number | null;
+        payment_method?: string | null;
+        account?: string | null;
+        payment_currency?: string | null;
+        fee_mode?: "FIXED" | "PERCENT" | null;
+        fee_value?: number | null;
+        fee_amount?: number | null;
+      }[]
+    | null;
   base_amount?: number | null;
   base_currency?: string | null;
   counter_amount?: number | null;
@@ -74,6 +86,7 @@ export type Operator = { id_operator: number; name: string };
 export type InvestmentFormState = {
   category: string;
   description: string;
+  counterparty_name: string;
   amount: string;
   currency: string;
   paid_at: string;
@@ -93,6 +106,7 @@ export type InvestmentFormState = {
 export type RecurringFormState = {
   category: string;
   description: string;
+  counterparty_name: string;
   amount: string;
   currency: string;
   start_date: string;

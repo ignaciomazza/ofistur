@@ -294,6 +294,7 @@ function buildInvestmentListSelect(
     id_agency: true,
     category: true,
     description: true,
+    counterparty_name: true,
     amount: true,
     currency: true,
     created_at: true,
@@ -1143,6 +1144,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
           ? [{ booking: { agency_booking_id: qNum } }]
           : []),
         { description: { contains: q, mode: "insensitive" } },
+        { counterparty_name: { contains: q, mode: "insensitive" } },
         { category: { contains: q, mode: "insensitive" } },
         { currency: { contains: q, mode: "insensitive" } },
         {
@@ -1324,6 +1326,10 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     const b = req.body ?? {};
     const category = String(b.category ?? "").trim(); // requerido
     const description = String(b.description ?? "").trim(); // requerido
+    const counterparty_name =
+      typeof b.counterparty_name === "string"
+        ? b.counterparty_name.trim()
+        : "";
     const currencyInput = String(b.currency ?? "").trim();
     const payments = normalizeInvestmentPayments(
       b.payments,
@@ -1355,6 +1361,11 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     if (!category || !description || !currency || !Number.isFinite(amount)) {
       return res.status(400).json({
         error: "category, description, currency y amount son obligatorios",
+      });
+    }
+    if (counterparty_name.length > 160) {
+      return res.status(400).json({
+        error: "counterparty_name supera 160 caracteres",
       });
     }
     const operatorCategoryNames = await getOperatorCategoryNames(auth.id_agency);
@@ -1715,6 +1726,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           id_agency: auth.id_agency,
           category,
           description,
+          ...(counterparty_name ? { counterparty_name } : {}),
           amount,
           currency,
           paid_at: paid_at ?? null,

@@ -998,13 +998,16 @@ export default function OtherIncomesPage() {
         if (next === null) break;
       }
 
-      const csv = [headers, ...rows].join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const csv = [headers, ...rows].join("\r\n");
+      const blob = new Blob(["\uFEFF", csv], {
+        type: "text/csv;charset=utf-8;",
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `ingresos_${todayDateKeyInBuenosAires()}.csv`;
       a.click();
+      URL.revokeObjectURL(url);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error al descargar CSV";
       toast.error(msg);
@@ -1136,6 +1139,29 @@ export default function OtherIncomesPage() {
               </button>
             </div>
           </header>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-[260px] flex-1 items-center gap-2 rounded-2xl border border-white/20 bg-white/40 px-3 py-2 shadow-inner dark:bg-zinc-900/40">
+              <input
+                className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-500"
+                value={filters.q}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, q: e.target.value }))
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyFilters();
+                }}
+                placeholder="Buscar por concepto, número, categoría, operador o pagador"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={applyFilters}
+              className="rounded-full border border-sky-500/40 bg-sky-500/20 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:bg-sky-500/30 dark:text-sky-100"
+            >
+              Buscar
+            </button>
+          </div>
 
           {activeFilters.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
@@ -2207,7 +2233,7 @@ export default function OtherIncomesPage() {
         </div>
 
         {editingItem && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 md:py-8">
             <div className="w-full max-w-3xl rounded-2xl border border-white/20 bg-white/90 p-5 shadow-xl backdrop-blur dark:bg-zinc-900/90">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold">Editar ingreso</h2>

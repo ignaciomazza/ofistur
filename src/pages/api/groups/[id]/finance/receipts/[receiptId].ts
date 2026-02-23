@@ -7,8 +7,10 @@ import {
   parseDateInput,
   parseOptionalPositiveInt,
   requireGroupFinanceContext,
+  toAmountNumber,
   toDecimal,
 } from "@/lib/groups/financeShared";
+import { validateGroupReceiptDebt } from "@/lib/groups/groupReceiptDebtValidation";
 
 async function findReceipt(
   agencyId: number,
@@ -16,13 +18,24 @@ async function findReceipt(
   receiptId: number,
 ) {
   const rows = await prisma.$queryRaw<
-    Array<{ id_travel_group_receipt: number }>
+    Array<{
+      id_travel_group_receipt: number;
+      travel_group_passenger_id: number;
+      service_refs: number[] | null;
+      booking_id: number | null;
+    }>
   >(Prisma.sql`
-    SELECT "id_travel_group_receipt"
-    FROM "TravelGroupReceipt"
-    WHERE "id_travel_group_receipt" = ${receiptId}
-      AND "id_agency" = ${agencyId}
-      AND "travel_group_id" = ${groupId}
+    SELECT
+      r."id_travel_group_receipt",
+      r."travel_group_passenger_id",
+      r."service_refs",
+      p."booking_id"
+    FROM "TravelGroupReceipt" r
+    LEFT JOIN "TravelGroupPassenger" p
+      ON p."id_travel_group_passenger" = r."travel_group_passenger_id"
+    WHERE r."id_travel_group_receipt" = ${receiptId}
+      AND r."id_agency" = ${agencyId}
+      AND r."travel_group_id" = ${groupId}
     LIMIT 1
   `);
   return rows[0] ?? null;
@@ -135,11 +148,88 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
         .map((item) => parseOptionalPositiveInt(item))
         .filter((item): item is number => !!item)
     : [];
-  const serviceIds = Array.isArray(body.serviceIds)
+  const serviceIdsRaw = Array.isArray(body.serviceIds)
     ? body.serviceIds
+    : null;
+  const serviceIds = Array.isArray(serviceIdsRaw)
+    ? serviceIdsRaw
         .map((item) => parseOptionalPositiveInt(item))
         .filter((item): item is number => !!item)
     : [];
+
+  let finalServiceIds = Array.from(
+    new Set(
+      serviceIdsRaw
+        ? serviceIds
+        : Array.isArray(existing.service_refs)
+          ? existing.service_refs
+          : [],
+    ),
+  );
+  if (existing.booking_id) {
+    const [services, existingReceipts] = await Promise.all([
+      prisma.service.findMany({
+        where: {
+          id_agency: ctx.auth.id_agency,
+          booking_id: existing.booking_id,
+        },
+        select: {
+          id_service: true,
+          currency: true,
+          sale_price: true,
+          card_interest: true,
+          taxableCardInterest: true,
+          vatOnCardInterest: true,
+        },
+      }),
+      prisma.travelGroupReceipt.findMany({
+        where: {
+          id_agency: ctx.auth.id_agency,
+          travel_group_id: ctx.group.id_travel_group,
+          travel_group_passenger_id: existing.travel_group_passenger_id,
+          id_travel_group_receipt: { not: receiptId },
+        },
+        select: {
+          service_refs: true,
+          amount: true,
+          amount_currency: true,
+          payment_fee_amount: true,
+          base_amount: true,
+          base_currency: true,
+        },
+      }),
+    ]);
+
+    const validation = validateGroupReceiptDebt({
+      selectedServiceIds: finalServiceIds,
+      services,
+      existingReceipts,
+      currentReceipt: {
+        amount: toAmountNumber(amount),
+        amountCurrency,
+        paymentFeeAmount: paymentFeeAmount
+          ? toAmountNumber(paymentFeeAmount)
+          : 0,
+        baseAmount: baseAmount ? toAmountNumber(baseAmount) : null,
+        baseCurrency,
+      },
+    });
+    if (!validation.ok) {
+      return groupApiError(res, validation.status, validation.message, {
+        code: validation.code,
+      });
+    }
+    finalServiceIds = validation.normalizedServiceIds;
+  } else if (finalServiceIds.length > 0) {
+    return groupApiError(
+      res,
+      400,
+      "No podés asociar servicios si el pasajero no tiene una reserva vinculada.",
+      {
+        code: "GROUP_FINANCE_SERVICE_WITHOUT_BOOKING",
+      },
+    );
+  }
 
   await prisma.$executeRaw(Prisma.sql`
     UPDATE "TravelGroupReceipt"
@@ -157,7 +247,7 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
         "counter_amount" = ${counterAmount},
         "counter_currency" = ${counterCurrency},
         "client_ids" = ${clientIds},
-        "service_refs" = ${serviceIds},
+        "service_refs" = ${finalServiceIds},
         "updated_at" = NOW()
     WHERE "id_travel_group_receipt" = ${receiptId}
       AND "id_agency" = ${ctx.auth.id_agency}

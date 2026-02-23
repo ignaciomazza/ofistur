@@ -84,6 +84,7 @@ type OperatorInsightsResponse = {
     services: number;
     bookings: number;
     receipts: number;
+    otherIncomes: number;
     investments: number;
     investmentsUnlinked: number;
     debtServices: number;
@@ -157,6 +158,18 @@ type OperatorInsightsResponse = {
       currency: string;
       booking_id: number | null;
       booking_agency_id?: number | null;
+    }[];
+    otherIncomes: {
+      id_other_income: number;
+      agency_other_income_id?: number | null;
+      issue_date: string;
+      concept: string;
+      amount: number;
+      currency: string;
+      category_name?: string | null;
+      operator_name?: string | null;
+      booking_id: null;
+      booking_agency_id?: null;
     }[];
     investments: {
       id_investment: number;
@@ -602,6 +615,63 @@ export default function OperatorInsightsPage() {
       .length;
   }, [data]);
 
+  const incomeMovements = useMemo(() => {
+    if (!data) return [] as Array<{
+      key: string;
+      kind: "receipt" | "other_income";
+      id_receipt?: number;
+      agency_receipt_id?: number | null;
+      id_other_income?: number;
+      agency_other_income_id?: number | null;
+      idLabel: string;
+      issue_date: string;
+      concept: string;
+      amount: number;
+      currency: string;
+      booking_id: number | null;
+      booking_agency_id?: number | null;
+      category_name?: string | null;
+    }>;
+
+    const receipts = data.lists.receipts.map((item) => ({
+      key: `receipt:${item.id_receipt}`,
+      kind: "receipt" as const,
+      id_receipt: item.id_receipt,
+      agency_receipt_id: item.agency_receipt_id ?? null,
+      idLabel: `Recibo N° ${getReceiptDisplayNumber(item)}`,
+      issue_date: item.issue_date,
+      concept: item.concept,
+      amount: item.amount,
+      currency: item.currency,
+      booking_id: item.booking_id,
+      booking_agency_id: item.booking_agency_id ?? null,
+      category_name: null,
+    }));
+
+    const otherIncomes = (data.lists.otherIncomes || []).map((item) => ({
+      key: `other_income:${item.id_other_income}`,
+      kind: "other_income" as const,
+      id_other_income: item.id_other_income,
+      agency_other_income_id: item.agency_other_income_id ?? null,
+      idLabel: `Ingreso N° ${
+        item.agency_other_income_id ?? item.id_other_income
+      }`,
+      issue_date: item.issue_date,
+      concept: item.concept,
+      amount: item.amount,
+      currency: item.currency,
+      booking_id: null,
+      booking_agency_id: null,
+      category_name: item.category_name ?? null,
+    }));
+
+    return [...receipts, ...otherIncomes].sort((a, b) => {
+      const aTime = Date.parse(a.issue_date);
+      const bTime = Date.parse(b.issue_date);
+      return bTime - aTime;
+    });
+  }, [data, getReceiptDisplayNumber]);
+
   const showIncomeCard =
     view === "all" || view === "incomes" || view === "cashflow";
   const showExpenseCard =
@@ -740,8 +810,14 @@ export default function OperatorInsightsPage() {
                   tone="emerald"
                 />
                 <KpiCard
-                  label="Recibos"
-                  value={data ? formatNumber(data.counts.receipts) : "--"}
+                  label="Ingresos"
+                  value={
+                    data
+                      ? formatNumber(
+                          data.counts.receipts + data.counts.otherIncomes,
+                        )
+                      : "--"
+                  }
                   tone="amber"
                 />
                 <KpiCard
@@ -1457,6 +1533,12 @@ export default function OperatorInsightsPage() {
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
+                        <span>Ingresos extra</span>
+                        <span className="font-semibold">
+                          {formatNumber(data.counts.otherIncomes)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
                         <span>Pagos a operador</span>
                         <span className="font-semibold">
                           {formatNumber(data.counts.investments)}
@@ -1518,40 +1600,47 @@ export default function OperatorInsightsPage() {
                       <div className="mb-3 flex items-center justify-between text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         <span>Movimientos - Ingresos</span>
                         <StatusPill
-                          label={`${data.lists.receipts.length} items`}
+                          label={`${incomeMovements.length} items`}
                           tone="slate"
                         />
                       </div>
-                      {data.lists.receipts.length === 0 ? (
+                      {incomeMovements.length === 0 ? (
                         <div className="text-sm text-slate-500 dark:text-slate-400">
-                          Sin recibos asociados a reservas en el periodo.
+                          Sin ingresos en el periodo.
                         </div>
                       ) : (
                         <div className="space-y-3 text-sm">
-                          {data.lists.receipts.map((item) => (
+                          {incomeMovements.map((item) => (
                             <div
-                              key={item.id_receipt}
+                              key={item.key}
                               className="rounded-2xl border border-white/10 bg-white/60 p-3 text-slate-800 shadow-sm dark:bg-slate-900/60 dark:text-slate-100"
                             >
                               <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                                <span>
-                                  Recibo N° {getReceiptDisplayNumber(item)}
-                                </span>
+                                <span>{item.idLabel}</span>
                                 <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => downloadReceiptPdf(item)}
-                                    disabled={
-                                      downloadingReceiptId === item.id_receipt
-                                    }
-                                    className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-900 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-sky-500/20 dark:text-sky-100"
-                                    title="Descargar comprobante"
-                                    aria-label="Descargar comprobante"
-                                  >
-                                    {downloadingReceiptId === item.id_receipt
-                                      ? "..."
-                                      : <DownloadIcon />}
-                                  </button>
+                                  {item.kind === "receipt" && item.id_receipt ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        downloadReceiptPdf({
+                                          id_receipt: item.id_receipt as number,
+                                          agency_receipt_id:
+                                            item.agency_receipt_id ?? null,
+                                          issue_date: item.issue_date,
+                                        })
+                                      }
+                                      disabled={
+                                        downloadingReceiptId === item.id_receipt
+                                      }
+                                      className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-900 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-sky-500/20 dark:text-sky-100"
+                                      title="Descargar comprobante"
+                                      aria-label="Descargar comprobante"
+                                    >
+                                      {downloadingReceiptId === item.id_receipt
+                                        ? "..."
+                                        : <DownloadIcon />}
+                                    </button>
+                                  ) : null}
                                   <span>{formatDate(item.issue_date)}</span>
                                 </div>
                               </div>
@@ -1565,9 +1654,18 @@ export default function OperatorInsightsPage() {
                                         item.booking_agency_id ??
                                         item.booking_id
                                       }`
-                                    : "Sin reserva"}
+                                    : item.kind === "other_income"
+                                      ? "Ingreso extra (sin reserva)"
+                                      : "Sin reserva"}
                                 </span>
-                                <span className="flex items-center gap-2">
+                                <span className="flex items-center gap-2 text-[11px]">
+                                  {item.kind === "other_income" &&
+                                  item.category_name ? (
+                                    <StatusPill
+                                      label={item.category_name}
+                                      tone="amber"
+                                    />
+                                  ) : null}
                                   <StatusPill
                                     label={item.currency}
                                     tone="sky"

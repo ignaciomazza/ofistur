@@ -85,6 +85,7 @@ type PaymentDraft = {
 };
 
 type ReceiptForDebt = {
+  id_receipt?: number | null;
   amount?: number | string | null;
   amount_currency?: string | null;
   base_amount?: number | string | null;
@@ -93,6 +94,8 @@ type ReceiptForDebt = {
   payment_fee_currency?: string | null;
   serviceIds?: number[] | null;
 };
+
+const DEBT_TOLERANCE = 0.01;
 
 const uid = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -928,6 +931,17 @@ export default function GroupReceiptForm({
   const [counterCurrency, setCounterCurrency] = useState(
     initialCounterCurrency ? String(initialCounterCurrency) : "",
   );
+  const [conversionEnabled, setConversionEnabled] = useState(() =>
+    Boolean(
+      initialBaseAmount != null ||
+        (initialBaseCurrency && String(initialBaseCurrency).trim()) ||
+        initialCounterAmount != null ||
+        (initialCounterCurrency && String(initialCounterCurrency).trim()) ||
+        currencyOverride,
+    ),
+  );
+  const conversionRequired = currencyOverride;
+  const conversionActive = conversionRequired || conversionEnabled;
 
   const toNum = useCallback((v: number | string | null | undefined) => {
     const n = typeof v === "number" ? v : Number(v ?? NaN);
@@ -989,7 +1003,13 @@ export default function GroupReceiptForm({
         );
         if (!res.ok) throw new Error("fetch failed");
         const json = await safeJson<unknown>(res);
-        const list = asArray<ReceiptForDebt>(json);
+        const list = asArray<ReceiptForDebt>(json).filter((receipt) => {
+          if (!editingReceiptId) return true;
+          const receiptId = Number(
+            (receipt as { id_receipt?: unknown }).id_receipt ?? NaN,
+          );
+          return !Number.isFinite(receiptId) || receiptId !== editingReceiptId;
+        });
         if (alive) setBookingReceipts(list);
       } catch {
         if (alive) setBookingReceipts([]);
@@ -1002,7 +1022,7 @@ export default function GroupReceiptForm({
       alive = false;
       ac.abort();
     };
-  }, [groupId, groupPassengerId, mode, selectedBookingId, token]);
+  }, [editingReceiptId, groupId, groupPassengerId, mode, selectedBookingId, token]);
 
   const relevantReceipts = useMemo(() => {
     if (!bookingReceipts.length || !selectedServiceIds.length) return [];
@@ -1013,6 +1033,83 @@ export default function GroupReceiptForm({
       return ids.some((id) => svcSet.has(id));
     });
   }, [bookingReceipts, selectedServiceIds]);
+
+  const serviceById = useMemo(() => {
+    const out = new Map<number, ServiceLite>();
+    services.forEach((service) => {
+      out.set(service.id_service, service);
+    });
+    return out;
+  }, [services]);
+
+  const serviceDisabledReasons = useMemo(() => {
+    if (!bookingReceiptsLoaded || mode !== "booking" || services.length === 0) {
+      return {} as Record<number, string>;
+    }
+
+    const paidByServiceId: Record<number, number> = {};
+    bookingReceipts.forEach((receipt) => {
+      const refs = Array.isArray(receipt.serviceIds)
+        ? Array.from(
+            new Set(
+              receipt.serviceIds
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value) && value > 0),
+            ),
+          )
+        : [];
+      if (refs.length !== 1) return;
+      const serviceId = refs[0];
+      const service = serviceById.get(serviceId);
+      if (!service) return;
+
+      const serviceCurrency = normalizeCurrencyCode(service.currency || "ARS");
+      const baseCur = receipt.base_currency
+        ? normalizeCurrencyCode(String(receipt.base_currency))
+        : null;
+      const baseVal = toNum(receipt.base_amount ?? 0);
+      const amountCur = receipt.amount_currency
+        ? normalizeCurrencyCode(String(receipt.amount_currency))
+        : null;
+      const amountVal = toNum(receipt.amount ?? 0);
+      const feeVal = toNum(receipt.payment_fee_amount ?? 0);
+
+      let credited = 0;
+      if (baseCur && baseCur === serviceCurrency && baseVal > 0) {
+        credited = baseVal + (amountCur === baseCur ? feeVal : 0);
+      } else if (amountCur === serviceCurrency) {
+        credited = amountVal + feeVal;
+      }
+      if (credited <= 0) return;
+      paidByServiceId[serviceId] = (paidByServiceId[serviceId] || 0) + credited;
+    });
+
+    const reasons: Record<number, string> = {};
+    services.forEach((service) => {
+      const sale = toNum(service.sale_price);
+      const split =
+        toNum(service.taxableCardInterest) + toNum(service.vatOnCardInterest);
+      const interest = split > 0 ? split : toNum(service.card_interest);
+      const total = sale + interest;
+      if (total <= 0) return;
+
+      const paid = paidByServiceId[service.id_service] || 0;
+      const remaining = total - paid;
+      if (remaining <= DEBT_TOLERANCE) {
+        reasons[service.id_service] = "Servicio saldado";
+      }
+    });
+
+    return reasons;
+  }, [
+    bookingReceiptsLoaded,
+    mode,
+    services,
+    bookingReceipts,
+    serviceById,
+    normalizeCurrencyCode,
+    toNum,
+  ]);
 
   const salesByCurrency = useMemo(() => {
     return selectedServices.reduce<Record<string, number>>((acc, s) => {
@@ -1069,10 +1166,11 @@ export default function GroupReceiptForm({
       ? normalizeCurrencyCode(effectiveCurrency)
       : null;
 
-    const baseVal = parseAmountInput(baseAmount);
-    const baseCur = baseCurrency
-      ? normalizeCurrencyCode(baseCurrency)
-      : null;
+    const baseVal = conversionActive ? parseAmountInput(baseAmount) : null;
+    const baseCur =
+      conversionActive && baseCurrency
+        ? normalizeCurrencyCode(baseCurrency)
+        : null;
 
     if (baseCur && baseVal != null && baseVal > 0) {
       const val = baseVal + (amountCur === baseCur ? feeVal : 0);
@@ -1091,6 +1189,7 @@ export default function GroupReceiptForm({
     effectiveCurrency,
     baseAmount,
     baseCurrency,
+    conversionActive,
     normalizeCurrencyCode,
   ]);
 
@@ -1191,23 +1290,37 @@ export default function GroupReceiptForm({
   );
 
   useEffect(() => {
-    if (!lockedCurrency) return;
-    setBaseCurrency((prev) => prev || lockedCurrency);
-  }, [lockedCurrency]);
+    if (!conversionRequired) return;
+    setConversionEnabled(true);
+  }, [conversionRequired]);
 
   useEffect(() => {
-    if (!currencyOverride) return;
+    if (conversionActive) return;
+    setBaseAmount("");
+    setBaseCurrency("");
+    setCounterAmount("");
+    setCounterCurrency("");
+  }, [conversionActive]);
+
+  useEffect(() => {
+    if (!lockedCurrency) return;
+    if (!conversionActive) return;
+    setBaseCurrency((prev) => prev || lockedCurrency);
+  }, [conversionActive, lockedCurrency]);
+
+  useEffect(() => {
+    if (!conversionActive) return;
     setCounterCurrency((prev) => prev || effectiveCurrency);
-  }, [currencyOverride, effectiveCurrency]);
+  }, [conversionActive, effectiveCurrency]);
 
   useEffect(() => {
     if (amountWordsISO) return;
-    if (currencyOverride && baseCurrency) {
+    if (conversionActive && baseCurrency) {
       setAmountWordsISO(baseCurrency);
       return;
     }
     if (effectiveCurrency) setAmountWordsISO(effectiveCurrency);
-  }, [amountWordsISO, baseCurrency, currencyOverride, effectiveCurrency]);
+  }, [amountWordsISO, baseCurrency, conversionActive, effectiveCurrency]);
 
   /* ===== Attach search ===== */
   const attachSearchEnabled = attachEnabled && action === "attach";
@@ -1285,7 +1398,7 @@ export default function GroupReceiptForm({
     const issueDateOk = /^\d{4}-\d{2}-\d{2}$/.test(issueDate);
     if (!issueDateOk) e.issue_date = "Elegí la fecha del recibo.";
     const baseNum = parseAmountInput(baseAmount);
-    if (baseAmount.trim() !== "") {
+    if (conversionActive) {
       if (!baseNum || baseNum <= 0) {
         e.base = "Ingresá un valor base válido.";
       } else if (!baseCurrency) {
@@ -1296,12 +1409,19 @@ export default function GroupReceiptForm({
     }
 
     const counterNum = parseAmountInput(counterAmount);
-    if (counterAmount.trim() !== "") {
+    if (conversionActive && counterAmount.trim() !== "") {
       if (!counterNum || counterNum <= 0) {
         e.counter = "Ingresá un contravalor válido.";
       } else if (!counterCurrency) {
         e.counter = "Elegí la moneda del contravalor.";
       }
+    }
+
+    const overpaidCurrencies = Object.entries(debtByCurrency)
+      .filter(([, value]) => value < -DEBT_TOLERANCE)
+      .map(([currency]) => currency);
+    if (overpaidCurrencies.length > 0) {
+      e.amount = `El cobro excede el saldo pendiente en ${overpaidCurrencies.join(", ")}.`;
     }
 
     if (!amountWords.trim()) e.amountWords = "Ingresá el importe en palabras.";
@@ -1434,8 +1554,8 @@ export default function GroupReceiptForm({
     const counterAmountNum = parseAmountInput(counterAmount);
     const baseAmountValid = baseAmountNum != null && baseAmountNum > 0;
     const counterAmountValid = counterAmountNum != null && counterAmountNum > 0;
-    const baseReady = baseAmountValid && !!baseCurrency;
-    const useConversion = currencyOverride && baseReady;
+    const baseReady = conversionActive && baseAmountValid && !!baseCurrency;
+    const useConversion = conversionActive && baseReady;
 
     const payloadBaseAmount = baseReady ? baseAmountNum : undefined;
     const payloadBaseCurrency = baseReady ? baseCurrency || undefined : undefined;
@@ -1672,6 +1792,7 @@ export default function GroupReceiptForm({
                 loadingServices={loadingServices}
                 selectedServiceIds={selectedServiceIds}
                 toggleService={toggleService}
+                serviceDisabledReasons={serviceDisabledReasons}
                 lockedCurrency={lockedCurrency}
                 effectiveCurrency={effectiveCurrency}
                 errors={errors}
@@ -1712,6 +1833,9 @@ export default function GroupReceiptForm({
                   setFreeCurrency={handleCurrencyChange}
                   effectiveCurrency={effectiveCurrency}
                   currencyOverride={currencyOverride}
+                  conversionEnabled={conversionActive}
+                  conversionRequired={conversionRequired}
+                  setConversionEnabled={setConversionEnabled}
                   suggestions={suggestions}
                   applySuggestedAmounts={applySuggestedAmounts}
                   formatNum={formatNum}

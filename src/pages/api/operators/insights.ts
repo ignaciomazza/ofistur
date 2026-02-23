@@ -45,6 +45,7 @@ type OperatorInsightsResponse = {
     services: number;
     bookings: number;
     receipts: number;
+    otherIncomes: number;
     investments: number;
     investmentsUnlinked: number;
     debtServices: number;
@@ -112,6 +113,18 @@ type OperatorInsightsResponse = {
       amount: number;
       currency: string;
       booking_id: number | null;
+      booking_agency_id?: number | null;
+    }[];
+    otherIncomes: {
+      id_other_income: number;
+      agency_other_income_id?: number | null;
+      issue_date: string;
+      concept: string;
+      amount: number;
+      currency: string;
+      category_name?: string | null;
+      operator_name?: string | null;
+      booking_id: null;
     }[];
     investments: {
       id_investment: number;
@@ -510,7 +523,30 @@ export default async function handler(
       orderBy: { issue_date: "desc" },
     });
 
+    const otherIncomes = await prisma.otherIncome.findMany({
+      where: {
+        id_agency: auth.id_agency,
+        operator_id: operatorId,
+        issue_date: {
+          gte: fromDate,
+          lt: toExclusive,
+        },
+      },
+      select: {
+        id_other_income: true,
+        agency_other_income_id: true,
+        issue_date: true,
+        description: true,
+        amount: true,
+        currency: true,
+        category: { select: { name: true } },
+        operator: { select: { name: true } },
+      },
+      orderBy: { issue_date: "desc" },
+    });
+
     const incomesByCurrency: MoneyMap = {};
+    const receiptIncomeByCurrency: MoneyMap = {};
     const incomeCounts: Record<string, number> = {};
     receipts.forEach((rec) => {
       const { cur, val } = pickMoney(
@@ -520,7 +556,15 @@ export default async function handler(
         rec.base_currency,
       );
       addMoney(incomesByCurrency, cur, val);
+      addMoney(receiptIncomeByCurrency, cur, val);
       incomeCounts[cur] = (incomeCounts[cur] ?? 0) + 1;
+    });
+    otherIncomes.forEach((item) => {
+      addMoney(
+        incomesByCurrency,
+        String(item.currency || "ARS").toUpperCase(),
+        Number(item.amount) || 0,
+      );
     });
 
     const serviceIds = services.map((svc) => svc.id_service);
@@ -919,7 +963,7 @@ export default async function handler(
     });
 
     const avgIncomePerReceipt: MoneyMap = {};
-    Object.entries(incomesByCurrency).forEach(([cur, total]) => {
+    Object.entries(receiptIncomeByCurrency).forEach(([cur, total]) => {
       const count = incomeCounts[cur] ?? 0;
       if (count > 0) avgIncomePerReceipt[cur] = total / count;
     });
@@ -944,6 +988,20 @@ export default async function handler(
         booking_agency_id: rec.booking?.agency_booking_id ?? null,
       };
     });
+
+    const recentOtherIncomes = otherIncomes.slice(0, 10).map((item) => ({
+      id_other_income: item.id_other_income,
+      agency_other_income_id: item.agency_other_income_id ?? null,
+      issue_date:
+        toDateKeyInBuenosAiresLegacySafe(item.issue_date) ??
+        item.issue_date.toISOString(),
+      concept: item.description || "Ingreso",
+      amount: Number(item.amount) || 0,
+      currency: String(item.currency || "ARS").toUpperCase(),
+      category_name: item.category?.name ?? null,
+      operator_name: item.operator?.name ?? null,
+      booking_id: null as null,
+    }));
 
     const recentInvestments = investmentsWithBooking.slice(0, 10).map((inv) => {
       const { cur, val } = pickInvestmentAmount(inv);
@@ -985,6 +1043,7 @@ export default async function handler(
           services: services.length,
           bookings: bookingCount,
           receipts: receipts.length,
+          otherIncomes: otherIncomes.length,
           investments: investmentsWithBooking.length,
           investmentsUnlinked: investmentsUnlinked.length,
           debtServices: debtServices.length,
@@ -1021,6 +1080,7 @@ export default async function handler(
             concept: due.concept,
           })),
           receipts: recentReceipts,
+          otherIncomes: recentOtherIncomes,
           investments: recentInvestments,
           investmentsUnlinked: recentInvestmentsUnlinked,
         },

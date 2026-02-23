@@ -1095,6 +1095,7 @@ model Investment {
   agency                        Agency                        @relation(fields: [id_agency], references: [id_agency], onDelete: Cascade)
   category                      String
   description                   String
+  counterparty_name             String?
   amount                        Decimal                       @db.Decimal(18, 2)
   currency                      String
   created_at                    DateTime                      @default(now())

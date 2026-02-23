@@ -6,6 +6,10 @@ import type { JWTPayload } from "jose";
 import { getFinanceSectionGrants } from "@/lib/accessControl";
 import { canAccessFinanceSection } from "@/utils/permissions";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
+import {
+  startOfDayUtcFromDateKeyInBuenosAires,
+  toDateKeyInBuenosAiresLegacySafe,
+} from "@/lib/buenosAiresDate";
 
 /* =========================================================
  * Tipos de dominio para Cashbox
@@ -56,6 +60,9 @@ export type CashboxMovement = {
   // NUEVO: clasificación de caja
   paymentMethod?: string | null; // Efectivo, Transferencia, MP, etc.
   account?: string | null; // Banco / billetera / caja física, etc.
+  categoryName?: string | null;
+  counterpartyName?: string | null; // Quién paga (ingresos)
+  payeeName?: string | null; // A quién se le paga (egresos)
 
   // Detalle de cobros múltiples (si aplica)
   payments?: PaymentBreakdown[];
@@ -233,9 +240,22 @@ function getNumberFromQuery(
 }
 
 function buildMonthRange(year: number, month: number) {
-  // month: 1-12
-  const from = new Date(year, month - 1, 1, 0, 0, 0, 0);
-  const to = new Date(year, month, 0, 23, 59, 59, 999); // último día del mes
+  const monthSafe = Math.min(Math.max(Math.trunc(month), 1), 12);
+  const monthLabel = String(monthSafe).padStart(2, "0");
+  const fromKey = `${year}-${monthLabel}-01`;
+  const from =
+    startOfDayUtcFromDateKeyInBuenosAires(fromKey) ||
+    new Date(Date.UTC(year, monthSafe - 1, 1, 3, 0, 0, 0));
+
+  const nextYear = monthSafe === 12 ? year + 1 : year;
+  const nextMonth = monthSafe === 12 ? 1 : monthSafe + 1;
+  const nextMonthLabel = String(nextMonth).padStart(2, "0");
+  const nextFromKey = `${nextYear}-${nextMonthLabel}-01`;
+  const nextFrom =
+    startOfDayUtcFromDateKeyInBuenosAires(nextFromKey) ||
+    new Date(Date.UTC(nextYear, nextMonth - 1, 1, 3, 0, 0, 0));
+
+  const to = new Date(nextFrom.getTime() - 1);
   return { from, to };
 }
 
@@ -243,6 +263,57 @@ function decimalToNumber(value: DecimalLike | null | undefined): number {
   if (value == null) return 0;
   if (typeof value === "number") return value;
   return Number(value);
+}
+
+const round2 = (value: number) =>
+  Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+function toCashboxDateIso(value: Date | null | undefined): string {
+  if (!value || !Number.isFinite(value.getTime())) return new Date().toISOString();
+
+  const isExactUtcMidnight =
+    value.getUTCHours() === 0 &&
+    value.getUTCMinutes() === 0 &&
+    value.getUTCSeconds() === 0 &&
+    value.getUTCMilliseconds() === 0;
+
+  if (!isExactUtcMidnight) {
+    return value.toISOString();
+  }
+
+  const key = toDateKeyInBuenosAiresLegacySafe(value);
+  const normalized = key ? startOfDayUtcFromDateKeyInBuenosAires(key) : null;
+  return normalized?.toISOString() ?? value.toISOString();
+}
+
+function toAccountCurrencyKey(account: string, currency: string): string {
+  return `${account.trim().toLowerCase()}::${currency.trim().toUpperCase()}`;
+}
+
+function getCashFlowEntries(m: CashboxMovement): {
+  amount: number;
+  paymentMethod: string;
+  account: string;
+}[] {
+  const fallback = [
+    {
+      amount: Number.isFinite(m.amount) ? m.amount : 0,
+      paymentMethod: (m.paymentMethod ?? "Sin método").trim() || "Sin método",
+      account: (m.account ?? "Sin cuenta").trim() || "Sin cuenta",
+    },
+  ];
+
+  const rows =
+    Array.isArray(m.payments) && m.payments.length > 0
+      ? m.payments.map((entry) => ({
+          amount: Number(entry.amount),
+          paymentMethod:
+            (entry.paymentMethod ?? "Sin método").trim() || "Sin método",
+          account: (entry.account ?? "Sin cuenta").trim() || "Sin cuenta",
+        }))
+      : fallback;
+
+  return rows.filter((entry) => Number.isFinite(entry.amount) && entry.amount > 0);
 }
 
 /**
@@ -318,23 +389,13 @@ function aggregateCashbox(
         }
       }
 
-      const paymentEntries =
-        Array.isArray(m.payments) && m.payments.length > 0
-          ? m.payments
-          : [
-              {
-                amount: m.amount,
-                paymentMethod: m.paymentMethod,
-                account: m.account,
-              },
-            ];
-
-      for (const entry of paymentEntries) {
+      const entries = getCashFlowEntries(m);
+      for (const entry of entries) {
         const entryAmount = Number(entry.amount);
         if (!Number.isFinite(entryAmount) || entryAmount <= 0) continue;
 
         // === NUEVO: totales por medio de pago ===
-        const pmLabel = entry.paymentMethod?.trim() || "Sin método";
+        const pmLabel = entry.paymentMethod || "Sin método";
         const pmKey = `${pmLabel.toLowerCase()}::${m.currency}`;
 
         if (!totalsByPaymentMethodMap.has(pmKey)) {
@@ -355,8 +416,8 @@ function aggregateCashbox(
         }
 
         // === NUEVO: totales por cuenta ===
-        const accLabel = entry.account?.trim() || "Sin cuenta";
-        const accKey = `${accLabel.toLowerCase()}::${m.currency}`;
+        const accLabel = entry.account || "Sin cuenta";
+        const accKey = toAccountCurrencyKey(accLabel, m.currency);
 
         if (!totalsByAccountMap.has(accKey)) {
           totalsByAccountMap.set(accKey, {
@@ -403,7 +464,7 @@ function aggregateCashbox(
     openingByCurrencyMap.set(ob.currency, currentOpening + ob.amount);
 
     const accLabel = ob.account?.trim() || "Sin cuenta";
-    const accKey = `${accLabel.toLowerCase()}::${ob.currency}`;
+    const accKey = toAccountCurrencyKey(accLabel, ob.currency);
     if (!totalsByAccountMap.has(accKey)) {
       totalsByAccountMap.set(accKey, {
         account: accLabel,
@@ -653,7 +714,7 @@ async function getMonthlyMovements(
 
     return {
       id: `receipt:${r.id_receipt}`,
-      date: r.issue_date.toISOString(),
+      date: toCashboxDateIso(r.issue_date),
       type: "income",
       source: "receipt",
       description: r.concept ?? `Recibo ${r.receipt_number}`,
@@ -691,10 +752,21 @@ async function getMonthlyMovements(
       id_other_income: true,
       issue_date: true,
       description: true,
+      counterparty_name: true,
       currency: true,
       amount: true,
       payment_method_id: true,
       account_id: true,
+      category: {
+        select: {
+          name: true,
+        },
+      },
+      operator: {
+        select: {
+          name: true,
+        },
+      },
       payments: {
         select: {
           amount: true,
@@ -731,13 +803,16 @@ async function getMonthlyMovements(
 
     return {
       id: `other_income:${inc.id_other_income}`,
-      date: inc.issue_date.toISOString(),
+      date: toCashboxDateIso(inc.issue_date),
       type: "income",
       source: "other_income",
       description: inc.description || "Ingresos",
       currency: inc.currency,
       amount: decimalToNumber(inc.amount),
       dueDate: null,
+      operatorName: inc.operator?.name ?? null,
+      categoryName: inc.category?.name ?? null,
+      counterpartyName: inc.counterparty_name ?? null,
       paymentMethod: useSingle
         ? payments[0]?.paymentMethod ?? null
         : useMultiple
@@ -789,6 +864,7 @@ async function getMonthlyMovements(
       id_investment: true,
       category: true,
       description: true,
+      counterparty_name: true,
       amount: true,
       currency: true,
       created_at: true,
@@ -817,13 +893,14 @@ async function getMonthlyMovements(
 
     const descriptionParts = [inv.category, inv.description].filter(Boolean);
     const description =
-      descriptionParts.length > 0
+      inv.description?.trim() ||
+      (descriptionParts.length > 0
         ? descriptionParts.join(" • ")
-        : "Gasto / inversión";
+        : "Gasto / inversión");
 
     return {
       id: `investment:${inv.id_investment}`,
-      date: date.toISOString(),
+      date: toCashboxDateIso(date),
       type: "expense",
       source: "investment",
       description,
@@ -832,6 +909,8 @@ async function getMonthlyMovements(
       operatorName,
       bookingLabel,
       dueDate: null,
+      categoryName: inv.category ?? null,
+      payeeName: inv.counterparty_name ?? null,
       paymentMethod: inv.payment_method ?? null,
       account: inv.account ?? null,
     };
@@ -879,7 +958,7 @@ async function getMonthlyMovements(
     if (originAmount > 0) {
       transferMovements.push({
         id: `finance_transfer:${tf.id_transfer}:origin`,
-        date: tf.transfer_date.toISOString(),
+        date: toCashboxDateIso(tf.transfer_date),
         type: "expense",
         source: "manual",
         description: `${baseDescription} (origen)`,
@@ -899,7 +978,7 @@ async function getMonthlyMovements(
     if (destinationAmount > 0) {
       transferMovements.push({
         id: `finance_transfer:${tf.id_transfer}:destination`,
-        date: tf.transfer_date.toISOString(),
+        date: toCashboxDateIso(tf.transfer_date),
         type: "income",
         source: "manual",
         description: `${baseDescription} (destino)`,
@@ -921,7 +1000,7 @@ async function getMonthlyMovements(
     if (feeAmount > 0 && tf.fee_currency) {
       transferMovements.push({
         id: `finance_transfer:${tf.id_transfer}:fee`,
-        date: tf.transfer_date.toISOString(),
+        date: toCashboxDateIso(tf.transfer_date),
         type: "expense",
         source: "manual",
         description: tf.fee_note?.trim()
@@ -968,7 +1047,7 @@ async function getMonthlyMovements(
 
     adjustmentMovements.push({
       id: `account_adjustment:${adj.id_adjustment}`,
-      date: adj.effective_date.toISOString(),
+      date: toCashboxDateIso(adj.effective_date),
       type: rawAmount >= 0 ? "income" : "expense",
       source: "manual",
       description: adj.note?.trim()
@@ -1022,7 +1101,7 @@ async function getMonthlyMovements(
 
     return {
       id: `client_payment:${cp.id_payment}`,
-      date: cp.created_at.toISOString(),
+      date: toCashboxDateIso(cp.created_at),
       type: "client_debt",
       source: "client_payment",
       description: "Pago de pax pendiente",
@@ -1030,7 +1109,7 @@ async function getMonthlyMovements(
       amount: decimalToNumber(cp.amount),
       clientName,
       bookingLabel,
-      dueDate: cp.due_date.toISOString(),
+      dueDate: toCashboxDateIso(cp.due_date),
       // Para deudas no usamos método / cuenta
     };
   });
@@ -1086,7 +1165,7 @@ async function getMonthlyMovements(
 
     return {
       id: `operator_due:${od.id_due}`,
-      date: od.created_at.toISOString(),
+      date: toCashboxDateIso(od.created_at),
       type: "operator_debt",
       source: "operator_due",
       description,
@@ -1094,7 +1173,7 @@ async function getMonthlyMovements(
       amount: decimalToNumber(od.amount),
       operatorName,
       bookingLabel,
-      dueDate: od.due_date.toISOString(),
+      dueDate: toCashboxDateIso(od.due_date),
       // Deuda, sin método / cuenta
     };
   });
@@ -1181,10 +1260,17 @@ async function getDebtBalances(agencyId: number): Promise<{
   return { clientDebtByCurrency, operatorDebtByCurrency };
 }
 
-async function getOpeningBalancesByAccount(
+type OpeningBalanceSeed = {
+  account: string;
+  currency: string;
+  amount: number;
+  effectiveDate: Date;
+};
+
+async function getOpeningBalanceSeedsByAccount(
   agencyId: number,
   from: Date,
-): Promise<{ account: string; currency: string; amount: number }[]> {
+): Promise<OpeningBalanceSeed[]> {
   const rows = await prisma.financeAccountOpeningBalance.findMany({
     where: {
       id_agency: agencyId,
@@ -1203,20 +1289,96 @@ async function getOpeningBalancesByAccount(
   });
 
   const seen = new Set<string>();
-  const result: { account: string; currency: string; amount: number }[] = [];
+  const result: OpeningBalanceSeed[] = [];
 
   for (const row of rows) {
-    const key = `${row.account_id}::${row.currency}`;
+    const key = `${row.account_id}::${row.currency.toUpperCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push({
       account: row.account?.name ?? "Sin cuenta",
-      currency: row.currency,
+      currency: String(row.currency || "ARS").toUpperCase(),
       amount: decimalToNumber(row.amount),
+      effectiveDate: row.effective_date,
     });
   }
 
   return result;
+}
+
+async function getOpeningBalancesByAccount(
+  agencyId: number,
+  from: Date,
+  options: GetMonthlyMovementsOptions = {},
+): Promise<{ account: string; currency: string; amount: number }[]> {
+  const seeds = await getOpeningBalanceSeedsByAccount(agencyId, from);
+  const seedByKey = new Map<string, OpeningBalanceSeed>();
+  const balancesMap = new Map<
+    string,
+    { account: string; currency: string; amount: number }
+  >();
+
+  for (const seed of seeds) {
+    const key = toAccountCurrencyKey(seed.account, seed.currency);
+    seedByKey.set(key, seed);
+    balancesMap.set(key, {
+      account: seed.account,
+      currency: seed.currency,
+      amount: seed.amount,
+    });
+  }
+
+  const historyTo = new Date(from.getTime() - 1);
+  const historyFrom = new Date(Date.UTC(2000, 0, 1, 0, 0, 0, 0));
+  if (historyTo < historyFrom) {
+    return Array.from(balancesMap.values());
+  }
+
+  const historyMovements = await getMonthlyMovements(
+    agencyId,
+    historyFrom,
+    historyTo,
+    options,
+  );
+
+  for (const movement of historyMovements) {
+    if (movement.type !== "income" && movement.type !== "expense") continue;
+
+    const movementDate = new Date(movement.date);
+    const movementTime = movementDate.getTime();
+    if (!Number.isFinite(movementTime)) continue;
+
+    const entries = getCashFlowEntries(movement);
+    for (const entry of entries) {
+      const key = toAccountCurrencyKey(entry.account, movement.currency);
+      const seed = seedByKey.get(key);
+      if (seed && movementTime <= seed.effectiveDate.getTime()) {
+        continue;
+      }
+
+      const delta = movement.type === "income" ? entry.amount : -entry.amount;
+      if (!Number.isFinite(delta) || delta === 0) continue;
+
+      const current = balancesMap.get(key) ?? {
+        account: entry.account,
+        currency: movement.currency,
+        amount: 0,
+      };
+      current.amount += delta;
+      balancesMap.set(key, current);
+    }
+  }
+
+  return Array.from(balancesMap.values())
+    .map((row) => ({
+      ...row,
+      amount: round2(row.amount),
+    }))
+    .sort((a, b) => {
+      const byAccount = a.account.localeCompare(b.account, "es");
+      if (byAccount !== 0) return byAccount;
+      return a.currency.localeCompare(b.currency, "es");
+    });
 }
 
 /* =========================================================
@@ -1335,6 +1497,11 @@ export default async function handler(
     const openingBalancesByAccount = await getOpeningBalancesByAccount(
       agencyId,
       from,
+      {
+        hideOperatorExpenses,
+        accountNameById,
+        methodNameById,
+      },
     );
 
     // 6) Agregación / resumen

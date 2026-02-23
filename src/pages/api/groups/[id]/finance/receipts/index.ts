@@ -13,6 +13,7 @@ import {
   toAmountNumber,
   toDecimal,
 } from "@/lib/groups/financeShared";
+import { validateGroupReceiptDebt } from "@/lib/groups/groupReceiptDebtValidation";
 
 type ReceiptRow = {
   id_travel_group_receipt: number;
@@ -212,6 +213,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       id_travel_group_passenger: true,
       travel_group_departure_id: true,
       client_id: true,
+      booking_id: true,
     },
   });
   if (!passenger) {
@@ -298,6 +300,71 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     });
   }
 
+  let finalServiceIds = Array.from(new Set(serviceIds));
+  if (passenger.booking_id) {
+    const [services, existingReceipts] = await Promise.all([
+      prisma.service.findMany({
+        where: {
+          id_agency: ctx.auth.id_agency,
+          booking_id: passenger.booking_id,
+        },
+        select: {
+          id_service: true,
+          currency: true,
+          sale_price: true,
+          card_interest: true,
+          taxableCardInterest: true,
+          vatOnCardInterest: true,
+        },
+      }),
+      prisma.travelGroupReceipt.findMany({
+        where: {
+          id_agency: ctx.auth.id_agency,
+          travel_group_id: ctx.group.id_travel_group,
+          travel_group_passenger_id: passenger.id_travel_group_passenger,
+        },
+        select: {
+          service_refs: true,
+          amount: true,
+          amount_currency: true,
+          payment_fee_amount: true,
+          base_amount: true,
+          base_currency: true,
+        },
+      }),
+    ]);
+
+    const validation = validateGroupReceiptDebt({
+      selectedServiceIds: finalServiceIds,
+      services,
+      existingReceipts,
+      currentReceipt: {
+        amount: toAmountNumber(amount),
+        amountCurrency,
+        paymentFeeAmount: paymentFeeAmount
+          ? toAmountNumber(paymentFeeAmount)
+          : 0,
+        baseAmount: baseAmount ? toAmountNumber(baseAmount) : null,
+        baseCurrency,
+      },
+    });
+    if (!validation.ok) {
+      return groupApiError(res, validation.status, validation.message, {
+        code: validation.code,
+      });
+    }
+    finalServiceIds = validation.normalizedServiceIds;
+  } else if (finalServiceIds.length > 0) {
+    return groupApiError(
+      res,
+      400,
+      "No podés asociar servicios si el pasajero no tiene una reserva vinculada.",
+      {
+        code: "GROUP_FINANCE_SERVICE_WITHOUT_BOOKING",
+      },
+    );
+  }
+
   const created = await prisma.$transaction(async (tx) => {
     const agencyReceiptId = await getNextAgencyCounter(
       tx,
@@ -348,7 +415,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         ${counterAmount},
         ${counterCurrency},
         ${finalClientIds},
-        ${serviceIds}
+        ${finalServiceIds}
       )
       RETURNING
         "id_travel_group_receipt",

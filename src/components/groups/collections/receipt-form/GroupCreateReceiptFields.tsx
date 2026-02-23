@@ -63,6 +63,9 @@ export default function GroupCreateReceiptFields(props: {
   setFreeCurrency: (v: CurrencyCode) => void;
   effectiveCurrency: CurrencyCode;
   currencyOverride: boolean;
+  conversionEnabled: boolean;
+  conversionRequired: boolean;
+  setConversionEnabled: (next: boolean) => void;
 
   suggestions: {
     base: number | null;
@@ -149,6 +152,9 @@ export default function GroupCreateReceiptFields(props: {
     setFreeCurrency,
     effectiveCurrency,
     currencyOverride,
+    conversionEnabled,
+    conversionRequired,
+    setConversionEnabled,
 
     suggestions,
     applySuggestedAmounts,
@@ -740,104 +746,128 @@ export default function GroupCreateReceiptFields(props: {
         title="Conversión (opcional)"
         desc="Usalo si cobrás en una moneda distinta al servicio."
       >
-        {currencyOverride && (
-          <div className="rounded-2xl border border-sky-200/70 bg-sky-50/45 p-4 text-xs text-slate-700 dark:border-sky-900/40 dark:bg-slate-900/55 dark:text-slate-300 md:col-span-2">
-            <p>
-              Servicio en {lockedCurrency}. Cobro en {effectiveCurrency}. El PDF
-              mostrará el valor base.
-            </p>
-            <div className="mt-2 grid gap-1 text-[11px]">
-              <div>
-                <span className="font-medium">Recibo (PDF):</span>{" "}
-                {fmtMaybe(baseAmount, baseNum, baseCurrency || lockedCurrency)}
-              </div>
-              <div>
-                <span className="font-medium">
-                  Administración (entra al banco/caja):
-                </span>{" "}
-                {fmtMaybe(amountReceived, paymentsNum, effectiveCurrency)}
-              </div>
-              <div>
-                <span className="font-medium">Contravalor:</span>{" "}
-                {fmtMaybe(
-                  counterAmount || amountReceived,
-                  counterNum ?? paymentsNum,
-                  counterCurrency || effectiveCurrency,
-                )}
-              </div>
-            </div>
-            <p className="mt-2 text-[10px] opacity-70">
-              Si dejás contravalor vacío, se toma el total cobrado.
-            </p>
-          </div>
-        )}
-        <Field
-          id="base"
-          label="Valor base (moneda del servicio)"
-          hint="Ej.: 1500 USD (si es pago parcial, ingresá el parcial)."
-        >
-          <div className="flex gap-2">
+        <div className="md:col-span-2">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-slate-700 dark:text-slate-200 md:text-sm">
             <input
-              type="number"
-              step="0.01"
-              value={baseAmount}
-              onChange={(e) => setBaseAmount(e.target.value)}
-              placeholder="1500"
-              className={inputBase}
+              type="checkbox"
+              className="mt-0.5 size-4 rounded border-slate-300 bg-white text-sky-600 shadow-sm shadow-slate-900/10 focus:ring-sky-300 dark:border-slate-600 dark:bg-slate-900"
+              checked={conversionEnabled}
+              onChange={(e) => setConversionEnabled(e.target.checked)}
+              disabled={conversionRequired}
             />
-            <select
-              value={baseCurrency}
-              onChange={(e) => setBaseCurrency(e.target.value)}
-              className={`${inputBase} cursor-pointer appearance-none`}
-            >
-              <option value="">Moneda</option>
-              {currencies
-                .filter((c) => c.enabled)
-                .map((c) => (
-                  <option key={`bc-${c.code}`} value={c.code}>
-                    {c.code}
-                  </option>
-                ))}
-            </select>
-          </div>
-          {errors.base && (
-            <p className="mt-1 text-xs text-red-600">{errors.base}</p>
+            Registrar valor / contravalor
+          </label>
+          {conversionRequired && (
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+              Obligatorio cuando cobrás en una moneda distinta al servicio.
+            </p>
           )}
-        </Field>
+        </div>
 
-        <Field
-          id="counter"
-          label="Contravalor (moneda del cobro)"
-          hint="Ej.: 2.000.000 ARS"
-        >
-          <div className="flex gap-2">
-            <input
-              type="number"
-              step="0.01"
-              value={counterAmount}
-              onChange={(e) => setCounterAmount(e.target.value)}
-              placeholder="2000000"
-              className={inputBase}
-            />
-            <select
-              value={counterCurrency}
-              onChange={(e) => setCounterCurrency(e.target.value)}
-              className={`${inputBase} cursor-pointer appearance-none`}
+        {conversionEnabled && (
+          <>
+            {currencyOverride && (
+              <div className="rounded-2xl border border-sky-200/70 bg-sky-50/45 p-4 text-xs text-slate-700 dark:border-sky-900/40 dark:bg-slate-900/55 dark:text-slate-300 md:col-span-2">
+                <p>
+                  Servicio en {lockedCurrency}. Cobro en {effectiveCurrency}. El
+                  PDF mostrará el valor base.
+                </p>
+                <div className="mt-2 grid gap-1 text-[11px]">
+                  <div>
+                    <span className="font-medium">Recibo (PDF):</span>{" "}
+                    {fmtMaybe(baseAmount, baseNum, baseCurrency || lockedCurrency)}
+                  </div>
+                  <div>
+                    <span className="font-medium">
+                      Administración (entra al banco/caja):
+                    </span>{" "}
+                    {fmtMaybe(amountReceived, paymentsNum, effectiveCurrency)}
+                  </div>
+                  <div>
+                    <span className="font-medium">Contravalor:</span>{" "}
+                    {fmtMaybe(
+                      counterAmount || amountReceived,
+                      counterNum ?? paymentsNum,
+                      counterCurrency || effectiveCurrency,
+                    )}
+                  </div>
+                </div>
+                <p className="mt-2 text-[10px] opacity-70">
+                  Si dejás contravalor vacío, se toma el total cobrado.
+                </p>
+              </div>
+            )}
+
+            <Field
+              id="base"
+              label="Valor base (moneda del servicio)"
+              hint="Ej.: 1500 USD (si es pago parcial, ingresá el parcial)."
+              required={conversionRequired}
             >
-              <option value="">Moneda</option>
-              {currencies
-                .filter((c) => c.enabled)
-                .map((c) => (
-                  <option key={`cc-${c.code}`} value={c.code}>
-                    {c.code}
-                  </option>
-                ))}
-            </select>
-          </div>
-          {errors.counter && (
-            <p className="mt-1 text-xs text-red-600">{errors.counter}</p>
-          )}
-        </Field>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={baseAmount}
+                  onChange={(e) => setBaseAmount(e.target.value)}
+                  placeholder="1500"
+                  className={inputBase}
+                />
+                <select
+                  value={baseCurrency}
+                  onChange={(e) => setBaseCurrency(e.target.value)}
+                  className={`${inputBase} cursor-pointer appearance-none`}
+                >
+                  <option value="">Moneda</option>
+                  {currencies
+                    .filter((c) => c.enabled)
+                    .map((c) => (
+                      <option key={`bc-${c.code}`} value={c.code}>
+                        {c.code}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              {errors.base && (
+                <p className="mt-1 text-xs text-red-600">{errors.base}</p>
+              )}
+            </Field>
+
+            <Field
+              id="counter"
+              label="Contravalor (moneda del cobro)"
+              hint="Ej.: 2.000.000 ARS"
+            >
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={counterAmount}
+                  onChange={(e) => setCounterAmount(e.target.value)}
+                  placeholder="2000000"
+                  className={inputBase}
+                />
+                <select
+                  value={counterCurrency}
+                  onChange={(e) => setCounterCurrency(e.target.value)}
+                  className={`${inputBase} cursor-pointer appearance-none`}
+                >
+                  <option value="">Moneda</option>
+                  {currencies
+                    .filter((c) => c.enabled)
+                    .map((c) => (
+                      <option key={`cc-${c.code}`} value={c.code}>
+                        {c.code}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              {errors.counter && (
+                <p className="mt-1 text-xs text-red-600">{errors.counter}</p>
+              )}
+            </Field>
+          </>
+        )}
       </Section>
     </>
   );

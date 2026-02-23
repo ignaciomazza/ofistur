@@ -35,6 +35,7 @@ export default function GroupContextSection(props: {
   loadingServices: boolean;
   selectedServiceIds: number[];
   toggleService: (svc: ServiceLite) => void;
+  serviceDisabledReasons: Record<number, string>;
 
   lockedCurrency: string | null;
   effectiveCurrency: string;
@@ -68,6 +69,7 @@ export default function GroupContextSection(props: {
     loadingServices,
     selectedServiceIds,
     toggleService,
+    serviceDisabledReasons,
 
     lockedCurrency,
     effectiveCurrency,
@@ -227,8 +229,11 @@ export default function GroupContextSection(props: {
                   <div className="space-y-2">
                     {services.map((svc) => {
                       const checked = selectedServiceIds.includes(svc.id_service);
-                      const disabled =
+                      const currencyLocked =
                         !!lockedCurrency && svc.currency !== lockedCurrency && !checked;
+                      const settledReason = serviceDisabledReasons[svc.id_service];
+                      const settledLocked = !!settledReason && !checked;
+                      const disabled = currencyLocked || settledLocked;
 
                       return (
                         <label
@@ -264,6 +269,15 @@ export default function GroupContextSection(props: {
                                     (svc.sale_price ?? 0) + (svc.card_interest ?? 0),
                                     (svc.currency || "ARS").toUpperCase(),
                                   )}
+                                </>
+                              )}
+                              {settledReason && (
+                                <>
+                                  {" "}
+                                  •{" "}
+                                  <span className="font-semibold text-rose-600 dark:text-rose-300">
+                                    {settledReason}
+                                  </span>
                                 </>
                               )}
                             </div>

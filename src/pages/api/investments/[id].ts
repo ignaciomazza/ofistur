@@ -276,6 +276,7 @@ function buildInvestmentFullSelect(
     id_agency: true,
     category: true,
     description: true,
+    counterparty_name: true,
     amount: true,
     currency: true,
     created_at: true,
@@ -934,8 +935,17 @@ export default async function handler(
         typeof b.category === "string" ? b.category.trim() : undefined;
       const description =
         typeof b.description === "string" ? b.description.trim() : undefined;
+      const counterparty_name = normStrUpdate(b.counterparty_name);
       const rawCurrency =
         typeof b.currency === "string" ? b.currency.trim() : undefined;
+      if (
+        typeof counterparty_name === "string" &&
+        counterparty_name.length > 160
+      ) {
+        return res.status(400).json({
+          error: "counterparty_name supera 160 caracteres",
+        });
+      }
 
       if (category !== undefined || restrictToOperatorPayments) {
         await loadOperatorCategories();
@@ -1463,6 +1473,8 @@ export default async function handler(
         const data: Prisma.InvestmentUncheckedUpdateInput = {};
         if (category !== undefined) data.category = category;
         if (description !== undefined) data.description = description;
+        if (counterparty_name !== undefined)
+          data.counterparty_name = counterparty_name;
         if (currency !== undefined) data.currency = currency;
         if (amount !== undefined) data.amount = amount;
         if (paid_at !== undefined) data.paid_at = paid_at;

@@ -28,6 +28,8 @@ type InvestmentsListProps = {
   q: string;
   setQ: Dispatch<SetStateAction<string>>;
   fetchList: () => void | Promise<void>;
+  onExportCSV: () => void | Promise<void>;
+  exportingCsv?: boolean;
   itemLabel?: string;
   searchPlaceholder?: string;
   showCategoryFilter?: boolean;
@@ -276,6 +278,11 @@ function InvestmentCard({
             <b>Operador:</b> {item.operator.name}
           </span>
         )}
+        {item.counterparty_name && (
+          <span>
+            <b>A quién se le paga:</b> {item.counterparty_name}
+          </span>
+        )}
         {item.user && (
           <span>
             <b>Usuario:</b> {item.user.first_name} {item.user.last_name}
@@ -359,6 +366,8 @@ export default function InvestmentsList({
   q,
   setQ,
   fetchList,
+  onExportCSV,
+  exportingCsv = false,
   itemLabel = "gasto",
   searchPlaceholder = "Buscar por texto, usuario u operador…",
   showCategoryFilter = true,
@@ -586,6 +595,16 @@ export default function InvestmentsList({
               />
             </svg>
           </button>
+
+          <button
+            type="button"
+            onClick={onExportCSV}
+            disabled={exportingCsv}
+            className={filterControlClass}
+            title="Exportar CSV"
+          >
+            {exportingCsv ? "Exportando..." : "Exportar CSV"}
+          </button>
         </div>
       </div>
 
@@ -726,7 +745,9 @@ export default function InvestmentsList({
                             ? `Operador: ${it.operator.name}`
                             : it.user
                               ? `Usuario: ${it.user.first_name} ${it.user.last_name}`
-                              : "-"}
+                              : it.counterparty_name
+                                ? `A quién se le paga: ${it.counterparty_name}`
+                                : "-"}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -801,6 +822,9 @@ export default function InvestmentsList({
                             <div className="text-xs opacity-70">
                               {formatDate(it.paid_at ?? it.created_at)} ·{" "}
                               {it.category}
+                              {it.counterparty_name
+                                ? ` · ${it.counterparty_name}`
+                                : ""}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">

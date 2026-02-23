@@ -29,6 +29,10 @@ type Totals = Record<string, number>;
 type MyEarningsResponse = {
   totals: { seller: Totals; beneficiary: Totals; grandTotal: Totals };
 };
+type ServiceCalcConfigResponse = {
+  billing_breakdown_mode?: string | null;
+  use_booking_sale_total?: boolean | null;
+};
 
 type UserLite = {
   id_user: number;
@@ -43,21 +47,26 @@ type Booking = {
   agency_booking_id?: number | null;
   public_id?: string | null;
   clientStatus: string;
+  sale_totals?: Record<string, number | string> | null;
   departure_date?: string | null;
   return_date?: string | null;
   titular: { first_name: string; last_name: string };
   services: {
-    sale_price: number;
-    currency: "ARS" | "USD";
-    card_interest?: number;
+    sale_price: number | string | null;
+    currency: string;
+    card_interest?: number | string | null;
+    taxableCardInterest?: number | string | null;
+    vatOnCardInterest?: number | string | null;
   }[];
   Receipt: {
-    amount: number;
-    amount_currency: "ARS" | "USD";
+    amount: number | string | null;
+    amount_currency: string;
     base_amount?: number | string | null;
-    base_currency?: "ARS" | "USD" | null;
+    base_currency?: string | null;
     counter_amount?: number | string | null;
-    counter_currency?: "ARS" | "USD" | null;
+    counter_currency?: string | null;
+    payment_fee_amount?: number | string | null;
+    payment_fee_currency?: string | null;
   }[];
   user?: { id_user: number } | null;
 };
@@ -174,6 +183,14 @@ const toNum = (v: number | string | null | undefined) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const normCurrency = (raw: string | null | undefined): "ARS" | "USD" => {
+  const s = String(raw || "")
+    .trim()
+    .toUpperCase();
+  if (s === "USD" || s === "U$D" || s === "U$S" || s === "US$") return "USD";
+  return "ARS";
+};
+
 /* ===================== UI helpers ===================== */
 const glass =
   "rounded-3xl border border-white/10 bg-white/10 backdrop-blur shadow-lg shadow-sky-900/10 dark:bg-white/10 dark:border-white/5";
@@ -225,6 +242,8 @@ export default function DashboardShortcuts() {
     { booking: Booking; debtARS: number; debtUSD: number }[]
   >([]);
   const [teamsMine, setTeamsMine] = useState<SalesTeam[]>([]);
+  const [calcMode, setCalcMode] = useState<"auto" | "manual">("auto");
+  const [useBookingSaleTotal, setUseBookingSaleTotal] = useState(false);
 
   const abortedRef = useRef(false);
 
@@ -284,26 +303,77 @@ export default function DashboardShortcuts() {
     [token],
   );
 
+  const fetchCalcConfig = useCallback(async () => {
+    const r = await authFetch(
+      "/api/service-calc-config",
+      { cache: "no-store" },
+      token || undefined,
+    );
+    if (!r.ok) {
+      console.error("[dashboard] calc-config status:", r.status);
+      throw new Error("Error calculo comisiones");
+    }
+    const data = (await r.json()) as ServiceCalcConfigResponse;
+    return {
+      calcMode:
+        String(data?.billing_breakdown_mode || "").toLowerCase() === "manual"
+          ? ("manual" as const)
+          : ("auto" as const),
+      useBookingSaleTotal: Boolean(data?.use_booking_sale_total),
+    };
+  }, [token]);
+
+  const normalizeSaleTotals = (input: Booking["sale_totals"]) => {
+    const out: Record<"ARS" | "USD", number> = { ARS: 0, USD: 0 };
+    if (!input || typeof input !== "object") return out;
+    for (const [keyRaw, val] of Object.entries(input)) {
+      const cur = normCurrency(keyRaw);
+      const n = toNum(val);
+      if (Number.isFinite(n) && n >= 0) out[cur] = n;
+    }
+    return out;
+  };
+
   const sumServices = (services: Booking["services"], withInterest: boolean) =>
-    services.reduce<Record<string, number>>((acc, s) => {
-      const extra = withInterest ? (s.card_interest ?? 0) : 0;
-      const cur = String(s.currency || "").toUpperCase();
-      if (!cur) return acc;
-      acc[cur] = (acc[cur] || 0) + s.sale_price + extra;
-      return acc;
-    }, {});
+    services.reduce<Record<"ARS" | "USD", number>>(
+      (acc, s) => {
+        const cur = normCurrency(s.currency);
+        const split =
+          toNum(s.taxableCardInterest ?? 0) + toNum(s.vatOnCardInterest ?? 0);
+        const interest = split > 0 ? split : toNum(s.card_interest ?? 0);
+        const extra = withInterest ? interest : 0;
+        acc[cur] = (acc[cur] || 0) + toNum(s.sale_price) + extra;
+        return acc;
+      },
+      { ARS: 0, USD: 0 },
+    );
 
   const sumReceipts = (receipts: Booking["Receipt"]) =>
-    receipts.reduce<Record<string, number>>((acc, r) => {
-      if (r.base_currency && r.base_amount != null) {
-        const cur = String(r.base_currency).toUpperCase();
-        if (cur) acc[cur] = (acc[cur] || 0) + toNum(r.base_amount);
-      } else {
-        const cur = String(r.amount_currency || "").toUpperCase();
-        if (cur) acc[cur] = (acc[cur] || 0) + toNum(r.amount);
+    receipts.reduce<Record<"ARS" | "USD", number>>((acc, r) => {
+      const baseCur = r.base_currency ? normCurrency(r.base_currency) : null;
+      const baseVal = toNum(r.base_amount ?? 0);
+
+      const amountCur = r.amount_currency ? normCurrency(r.amount_currency) : null;
+      const amountVal = toNum(r.amount ?? 0);
+
+      const feeCurRaw = r.payment_fee_currency;
+      const feeCur =
+        feeCurRaw && String(feeCurRaw).trim() !== ""
+          ? normCurrency(feeCurRaw)
+          : (amountCur ?? baseCur);
+      const feeVal = toNum(r.payment_fee_amount ?? 0);
+
+      if (baseCur) {
+        const val = baseVal + (feeCur === baseCur ? feeVal : 0);
+        if (val) acc[baseCur] = (acc[baseCur] || 0) + val;
+      } else if (amountCur) {
+        const val = amountVal + (feeCur === amountCur ? feeVal : 0);
+        if (val) acc[amountCur] = (acc[amountCur] || 0) + val;
+      } else if (feeCur) {
+        if (feeVal) acc[feeCur] = (acc[feeCur] || 0) + feeVal;
       }
       return acc;
-    }, {});
+    }, { ARS: 0, USD: 0 });
 
   /* ------------------- carga inicial ------------------- */
   useEffect(() => {
@@ -314,11 +384,18 @@ export default function DashboardShortcuts() {
       setLoading(true);
       try {
         // 1) Perfil + picks (en paralelo)
-        const [p, picks] = await Promise.all([
+        const [p, picks, calcCfg] = await Promise.all([
           fetchProfile(),
           loadFinancePicks(token).catch((e) => {
             console.error("[dashboard] loadFinancePicks:", e);
             return { currencies: [] as FinanceCurrency[] };
+          }),
+          fetchCalcConfig().catch((e) => {
+            console.error("[dashboard] calc-config:", e);
+            return {
+              calcMode: "auto" as const,
+              useBookingSaleTotal: false,
+            };
           }),
         ]);
         if (abortedRef.current) return;
@@ -326,6 +403,8 @@ export default function DashboardShortcuts() {
         setProfile(p);
         const enabled = (picks.currencies || []).filter((c) => c.enabled);
         setEnabledCurrencies(enabled);
+        setCalcMode(calcCfg.calcMode);
+        setUseBookingSaleTotal(calcCfg.useBookingSaleTotal);
 
         // Preparo monedas a consultar (fallback ARS/USD)
         const curCodes =
@@ -383,10 +462,17 @@ export default function DashboardShortcuts() {
 
             const withDebt = items
               .map((b) => {
-                const sale = sumServices(b.services, true);
+                const saleNoInt = calcCfg.useBookingSaleTotal
+                  ? normalizeSaleTotals(b.sale_totals)
+                  : sumServices(b.services, false);
+                const saleWithInt = calcCfg.useBookingSaleTotal
+                  ? saleNoInt
+                  : sumServices(b.services, true);
                 const paid = sumReceipts(b.Receipt);
-                const debtARS = (sale.ARS || 0) - (paid.ARS || 0);
-                const debtUSD = (sale.USD || 0) - (paid.USD || 0);
+                const saleForDebt =
+                  calcCfg.calcMode === "manual" ? saleNoInt : saleWithInt;
+                const debtARS = (saleForDebt.ARS || 0) - (paid.ARS || 0);
+                const debtUSD = (saleForDebt.USD || 0) - (paid.USD || 0);
                 return { booking: b, debtARS, debtUSD };
               })
               .filter((d) => d.debtARS > 1 || d.debtUSD > 0.01);
@@ -492,6 +578,7 @@ export default function DashboardShortcuts() {
     fetchProfile,
     fetchEarnings,
     fetchBookingsPage,
+    fetchCalcConfig,
   ]);
 
   /* ===================== UI ===================== */
@@ -576,6 +663,13 @@ export default function DashboardShortcuts() {
               Ver más
             </Link>
           </div>
+          <p className="mb-3 text-xs opacity-70">
+            Modo:{" "}
+            {calcMode === "manual"
+              ? "Venta sin interés tarjeta"
+              : "Venta con interés tarjeta"}
+            {useBookingSaleTotal ? " · Venta total de reserva" : ""}
+          </p>
 
           {debts.length === 0 ? (
             <p className="text-sm opacity-70">Sin deudas visibles 🎉</p>

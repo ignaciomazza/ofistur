@@ -408,9 +408,30 @@ export default function InvestmentsForm({
                   </Field>
                 )}
 
+                <Field
+                  id="counterparty_name"
+                  label="A quién se le paga"
+                  hint="Opcional. Nombre de empresa o persona."
+                  className="md:col-span-2"
+                >
+                  <input
+                    id="counterparty_name"
+                    className={inputClass}
+                    value={form.counterparty_name}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        counterparty_name: e.target.value,
+                      }))
+                    }
+                    placeholder="Empresa o persona"
+                    maxLength={160}
+                  />
+                </Field>
+
                 {!isOperador && !isUserCategory && (
                   <div className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-70 md:col-span-2">
-                    Sin referencias adicionales para esta categoría.
+                    No hay operador/usuario obligatorio para esta categoría.
                   </div>
                 )}
               </Section>

@@ -845,13 +845,16 @@ export default function ReceiptsPage() {
         if (next === null) break;
       }
 
-      const csv = [headers, ...rows].join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const csv = [headers, ...rows].join("\r\n");
+      const blob = new Blob(["\uFEFF", csv], {
+        type: "text/csv;charset=utf-8;",
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `receipts_${todayDateKeyInBuenosAires()}.csv`;
       a.click();
+      URL.revokeObjectURL(url);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error al descargar CSV";
       toast.error(msg);
@@ -1544,6 +1547,25 @@ export default function ReceiptsPage() {
 
         {/* Toolbar */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="flex min-w-[280px] flex-1 items-center gap-2 rounded-2xl border border-sky-200 bg-white/50 px-3 py-2 text-sky-950 shadow-sm shadow-sky-950/10 outline-none backdrop-blur focus-within:border-emerald-300/60 focus-within:ring-2 focus-within:ring-emerald-200/40 dark:border-sky-200/60 dark:bg-sky-100/10 dark:text-white">
+            <input
+              className="w-full bg-transparent text-sm outline-none placeholder:text-sky-900/50 dark:placeholder:text-white/60"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSearch();
+              }}
+              placeholder="Buscar por N° recibo, concepto o N° reserva..."
+            />
+            <button
+              type="button"
+              onClick={handleSearch}
+              className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-100"
+            >
+              Buscar
+            </button>
+          </div>
+
           <button
             onClick={() => setFiltersOpen((v) => !v)}
             className={ICON_BTN}

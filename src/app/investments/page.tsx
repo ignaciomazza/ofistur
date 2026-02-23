@@ -314,6 +314,7 @@ export default function Page() {
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [listCounts, setListCounts] = useState<{
     total: number | null;
@@ -356,6 +357,7 @@ export default function Page() {
   const [form, setForm] = useState<InvestmentFormState>({
     category: "",
     description: "",
+    counterparty_name: "",
     amount: "",
     currency: "",
     paid_at: "",
@@ -449,6 +451,7 @@ export default function Page() {
   const [recurringForm, setRecurringForm] = useState<RecurringFormState>({
     category: "",
     description: "",
+    counterparty_name: "",
     amount: "",
     currency: "",
     start_date: todayISO(),
@@ -548,6 +551,7 @@ export default function Page() {
     setForm({
       category: operatorOnly ? operatorCategory : "",
       description: "",
+      counterparty_name: "",
       amount: "",
       currency: "",
       paid_at: "",
@@ -575,6 +579,7 @@ export default function Page() {
     setRecurringForm({
       category: "",
       description: "",
+      counterparty_name: "",
       amount: "",
       currency: "",
       start_date: todayISO(),
@@ -611,6 +616,7 @@ export default function Page() {
     setForm({
       category: inv.category ?? "",
       description: inv.description ?? "",
+      counterparty_name: inv.counterparty_name ?? "",
       amount: String(inv.amount ?? ""),
       currency: (inv.currency ?? "").toUpperCase(),
       paid_at: inv.paid_at ? inv.paid_at.slice(0, 10) : "",
@@ -700,6 +706,7 @@ export default function Page() {
     setRecurringForm({
       category: rule.category ?? "",
       description: rule.description ?? "",
+      counterparty_name: "",
       amount: String(rule.amount ?? ""),
       currency: (rule.currency ?? "").toUpperCase(),
       start_date: rule.start_date ? rule.start_date.slice(0, 10) : todayISO(),
@@ -1149,6 +1156,119 @@ export default function Page() {
     }
   }, [token, nextCursor, loadingMore, buildQuery]);
 
+  const downloadCSV = useCallback(async () => {
+    if (!token) return;
+    setExportingCsv(true);
+    try {
+      const headers = [
+        "Fecha",
+        "N°",
+        "Categoría",
+        "Descripción",
+        "A quién se le paga",
+        "Operador",
+        "Usuario",
+        "Moneda",
+        "Monto",
+        "Método de pago",
+        "Cuenta",
+        "Reserva",
+        "Cargado por",
+      ].join(";");
+
+      let next: number | null = null;
+      const rows: string[] = [];
+
+      for (let i = 0; i < 300; i += 1) {
+        const qs = new URLSearchParams(buildQuery(next));
+        qs.set("take", "200");
+
+        const res = await authFetch(
+          `/api/investments?${qs.toString()}`,
+          { cache: "no-store" },
+          token,
+        );
+        if (!res.ok) {
+          const body = (await safeJson<ApiError>(res)) ?? {};
+          throw new Error(
+            getApiErrorMessage(body, "No se pudo exportar el CSV"),
+          );
+        }
+        const data = (await safeJson<ListResponse>(res)) ?? {
+          items: [],
+          nextCursor: null,
+        };
+
+        for (const item of data.items || []) {
+          const operatorName = item.operator?.name ?? "";
+          const userName = item.user
+            ? `${item.user.first_name} ${item.user.last_name}`.trim()
+            : "";
+          const createdByName = item.createdBy
+            ? `${item.createdBy.first_name} ${item.createdBy.last_name}`.trim()
+            : "";
+          const bookingNumber =
+            item.booking?.agency_booking_id ?? item.booking_id ?? "";
+          const amountLabel = new Intl.NumberFormat("es-AR", {
+            style: "currency",
+            currency: item.currency || "ARS",
+          }).format(Number(item.amount || 0));
+
+          const paymentLabel =
+            Array.isArray(item.payments) && item.payments.length > 0
+              ? item.payments
+                  .map((line) => {
+                    const method = line.payment_method || "Sin método";
+                    const account = line.account ? ` (${line.account})` : "";
+                    return `${method}${account}`;
+                  })
+                  .join(" | ")
+              : item.payment_method || "";
+
+          const cells = [
+            formatDateInBuenosAires(item.paid_at ?? item.created_at),
+            String(item.agency_investment_id ?? item.id_investment),
+            item.category || "",
+            item.description || "",
+            item.counterparty_name || "",
+            operatorName,
+            userName,
+            (item.currency || "ARS").toUpperCase(),
+            amountLabel,
+            paymentLabel,
+            item.account || "",
+            String(bookingNumber),
+            createdByName,
+          ];
+
+          rows.push(
+            cells
+              .map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`)
+              .join(";"),
+          );
+        }
+
+        next = data.nextCursor ?? null;
+        if (next === null) break;
+      }
+
+      const csv = [headers, ...rows].join("\r\n");
+      const blob = new Blob(["\uFEFF", csv], {
+        type: "text/csv;charset=utf-8;",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `inversion_${todayDateKeyInBuenosAires()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Error al exportar CSV");
+    } finally {
+      setExportingCsv(false);
+    }
+  }, [buildQuery, token]);
+
   /* ========= Opciones desde Finance (sin fallbacks) ========= */
   const enabledCategories = useMemo(
     () =>
@@ -1444,6 +1564,7 @@ export default function Page() {
     e.preventDefault();
 
     const amountNum = Number(form.amount);
+    const counterpartyName = form.counterparty_name.trim();
     const needsUser = isUserCategory(form.category);
 
     if (!form.category || !form.description || !form.currency) {
@@ -1470,6 +1591,10 @@ export default function Page() {
     }
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
       toast.error("El monto debe ser un número positivo");
+      return;
+    }
+    if (counterpartyName.length > 160) {
+      toast.error("A quién se le paga no puede superar 160 caracteres");
       return;
     }
     if (needsUser && !form.user_id) {
@@ -1524,6 +1649,7 @@ export default function Page() {
     const payload: Record<string, unknown> = {
       category: form.category,
       description: form.description,
+      counterparty_name: counterpartyName || undefined,
       amount: amountNum,
       currency: form.currency.toUpperCase(),
       paid_at,
@@ -2330,6 +2456,8 @@ export default function Page() {
           q={q}
           setQ={setQ}
           fetchList={fetchList}
+          onExportCSV={downloadCSV}
+          exportingCsv={exportingCsv}
           itemLabel={itemLabel}
           searchPlaceholder={
             operatorOnly

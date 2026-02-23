@@ -9,7 +9,10 @@ import "react-toastify/dist/ReactToastify.css";
 import { authFetch } from "@/utils/authFetch";
 import { useAuth } from "@/context/AuthContext";
 import { loadFinancePicks } from "@/utils/loadFinancePicks";
-import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
+import {
+  formatDateInBuenosAires,
+  todayDateKeyInBuenosAires,
+} from "@/lib/buenosAiresDate";
 
 /* =========================================================
  * Tipos (alineados con /api/cashbox)
@@ -54,6 +57,9 @@ type CashboxMovement = {
   // Nuevos campos
   paymentMethod?: string | null;
   account?: string | null;
+  categoryName?: string | null;
+  counterpartyName?: string | null;
+  payeeName?: string | null;
 
   // Detalle de cobros múltiples (si aplica)
   payments?: PaymentBreakdown[];
@@ -242,6 +248,7 @@ export default function CashboxPage() {
   const [cashbox, setCashbox] = useState<CashboxSummaryResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [exportingCsv, setExportingCsv] = useState<boolean>(false);
 
   // Filtros locales para tabla
   const [filterCurrency, setFilterCurrency] = useState<string>("ALL");
@@ -570,6 +577,100 @@ export default function CashboxPage() {
   const handleRefreshClick = () => {
     void fetchCashbox({ initial: false });
   };
+
+  const downloadCSV = useCallback(() => {
+    setExportingCsv(true);
+    try {
+      const headers = [
+        "Fecha",
+        "Tipo",
+        "Origen",
+        "Categoría",
+        "Detalle",
+        "Quién paga",
+        "A quién se le paga",
+        "Moneda",
+        "Monto",
+        "Medio",
+        "Cuenta",
+        "Relacionado",
+        "Vence",
+      ].join(";");
+
+      const rows = sortedFilteredMovements.map((movement) => {
+        const paymentEntries =
+          Array.isArray(movement.payments) && movement.payments.length > 0
+            ? movement.payments
+            : [
+                {
+                  amount: movement.amount,
+                  paymentMethod: movement.paymentMethod,
+                  account: movement.account,
+                },
+              ];
+
+        const methodText = Array.from(
+          new Set(
+            paymentEntries
+              .map((entry) => (entry.paymentMethod ?? "Sin método").trim())
+              .filter(Boolean),
+          ),
+        ).join(" | ");
+
+        const accountText = Array.from(
+          new Set(
+            paymentEntries
+              .map((entry) => (entry.account ?? "Sin cuenta").trim())
+              .filter(Boolean),
+          ),
+        ).join(" | ");
+
+        const relatedText = [
+          movement.clientName ? `Pax: ${movement.clientName}` : "",
+          movement.operatorName ? `Operador: ${movement.operatorName}` : "",
+          movement.bookingLabel || "",
+        ]
+          .filter(Boolean)
+          .join(" | ");
+
+        const cells = [
+          formatDateShort(movement.date),
+          movementTypeLabel(movement.type),
+          movement.source,
+          movement.categoryName || "",
+          movement.description || "",
+          movement.counterpartyName || "",
+          movement.payeeName || "",
+          normCurrency(movement.currency),
+          formatAmount(movement.amount, movement.currency),
+          methodText || "",
+          accountText || "",
+          relatedText,
+          movement.dueDate ? formatDateShort(movement.dueDate) : "",
+        ];
+
+        return cells
+          .map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`)
+          .join(";");
+      });
+
+      const csv = [headers, ...rows].join("\r\n");
+      const blob = new Blob(["\uFEFF", csv], {
+        type: "text/csv;charset=utf-8;",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `caja_movimientos_${todayDateKeyInBuenosAires()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("[cashbox/page] Error exportando CSV:", error);
+      toast.error("No se pudo exportar los movimientos.");
+    } finally {
+      setExportingCsv(false);
+    }
+  }, [sortedFilteredMovements]);
 
   return (
     <ProtectedRoute>
@@ -1005,10 +1106,23 @@ export default function CashboxPage() {
                       Ingresos y egresos registrados en el período seleccionado.
                     </p>
                   </div>
-                  <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-800 shadow-sm shadow-zinc-900/10 dark:bg-sky-800/10 dark:text-zinc-200">
-                    {sortedFilteredMovements.length} movimiento
-                    {sortedFilteredMovements.length === 1 ? "" : "s"} (con filtros)
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={downloadCSV}
+                      disabled={
+                        exportingCsv || sortedFilteredMovements.length === 0
+                      }
+                      className="rounded-full border border-emerald-500/40 bg-emerald-500/20 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-60 dark:text-emerald-100"
+                    >
+                      {exportingCsv ? "Exportando..." : "Exportar CSV"}
+                    </button>
+                    <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-zinc-800 shadow-sm shadow-zinc-900/10 dark:bg-sky-800/10 dark:text-zinc-200">
+                      {sortedFilteredMovements.length} movimiento
+                      {sortedFilteredMovements.length === 1 ? "" : "s"} (con
+                      filtros)
+                    </span>
+                  </div>
                 </div>
 
                 {movements.length === 0 ? (
@@ -1204,6 +1318,27 @@ export default function CashboxPage() {
                                     <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
                                       Registrado: {formatDateTime(m.date)}
                                     </p>
+                                    {(m.categoryName ||
+                                      m.counterpartyName ||
+                                      m.payeeName) && (
+                                      <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-zinc-600 dark:text-zinc-300">
+                                        {m.categoryName && (
+                                          <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-violet-800 dark:bg-violet-500/20 dark:text-violet-100">
+                                            Categoría: {m.categoryName}
+                                          </span>
+                                        )}
+                                        {m.counterpartyName && (
+                                          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-100">
+                                            Quién paga: {m.counterpartyName}
+                                          </span>
+                                        )}
+                                        {m.payeeName && (
+                                          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-800 dark:bg-amber-500/20 dark:text-amber-100">
+                                            A quién se le paga: {m.payeeName}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
                                     {(m.paymentMethod || m.account) && (
                                       <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-zinc-600 dark:text-zinc-300">
                                         {m.paymentMethod && (
