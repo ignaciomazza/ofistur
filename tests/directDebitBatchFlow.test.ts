@@ -1283,6 +1283,95 @@ describe("direct debit batch flow (integration-like)", () => {
     expect(batches.filter((item) => item.direction === "INBOUND")).toHaveLength(1);
   });
 
+  it("import de respuesta es idempotente por hash aunque cambie el filename", async () => {
+    process.env.BILLING_PD_ADAPTER = "debug_csv";
+
+    const { importResponseBatch } = await import(
+      "@/services/collections/galicia/direct-debit/batches"
+    );
+    const { buildDebugResponseCsv } = await import(
+      "@/services/collections/galicia/direct-debit/adapters/debugCsvAdapter"
+    );
+
+    const { outbound, outboundItems } = await seedAndCreateOutbound();
+    const firstOutbound = outboundItems[0];
+    const paidAmount = round2(charges[0]?.amount_ars_due || 0);
+
+    const responseBytes = buildDebugResponseCsv({
+      records: [
+        {
+          externalReference: String(firstOutbound.external_reference),
+          result: "PAID",
+          amountArs: paidAmount,
+          paidReference: "PD-IDEMP-HASH-1",
+        },
+      ],
+    });
+
+    const firstImport = await importResponseBatch({
+      outboundBatchId: outbound.batch.id_batch,
+      uploadedFile: {
+        fileName: "respuesta-hash-a.csv",
+        bytes: responseBytes,
+        contentType: "text/csv",
+      },
+      actorUserId: 36,
+    });
+
+    const secondImport = await importResponseBatch({
+      outboundBatchId: outbound.batch.id_batch,
+      uploadedFile: {
+        fileName: "respuesta-hash-b.csv",
+        bytes: responseBytes,
+        contentType: "text/csv",
+      },
+      actorUserId: 36,
+    });
+
+    expect(firstImport.already_imported).toBe(false);
+    expect(secondImport.already_imported).toBe(true);
+    expect(batches.filter((item) => item.direction === "INBOUND")).toHaveLength(1);
+  });
+
+  it("rechaza import con adapter/layout incompatible", async () => {
+    process.env.BILLING_PD_ADAPTER = "galicia_pd_v1";
+
+    const { importResponseBatch } = await import(
+      "@/services/collections/galicia/direct-debit/batches"
+    );
+    const { buildDebugResponseCsv } = await import(
+      "@/services/collections/galicia/direct-debit/adapters/debugCsvAdapter"
+    );
+
+    const { outbound, outboundItems } = await seedAndCreateOutbound();
+    const firstOutbound = outboundItems[0];
+    const paidAmount = round2(charges[0]?.amount_ars_due || 0);
+    const incompatibleBytes = buildDebugResponseCsv({
+      records: [
+        {
+          externalReference: String(firstOutbound.external_reference),
+          result: "PAID",
+          amountArs: paidAmount,
+          paidReference: "PD-MISMATCH-1",
+        },
+      ],
+    });
+
+    await expect(
+      importResponseBatch({
+        outboundBatchId: outbound.batch.id_batch,
+        uploadedFile: {
+          fileName: "respuesta-debug.csv",
+          bytes: incompatibleBytes,
+          contentType: "text/csv",
+        },
+        actorUserId: 36,
+      }),
+    ).rejects.toThrow("adapter mismatch");
+
+    expect(batches.filter((item) => item.direction === "INBOUND")).toHaveLength(0);
+  });
+
   it("prepare/export separados con debug_csv son idempotentes", async () => {
     process.env.BILLING_PD_ADAPTER = "debug_csv";
 

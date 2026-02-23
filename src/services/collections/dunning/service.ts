@@ -6,6 +6,12 @@ import type {
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { logBillingEvent } from "@/services/billing/events";
+import {
+  canAutoSyncFallbackForAgency,
+  getAgencyCollectionsRolloutMap,
+  isAgencyEnabledForDunning,
+  isAgencyEnabledForFallback,
+} from "@/services/collections/core/agencyCollectionsRollout";
 import { resolveFallbackProvider } from "@/services/collections/fallback/providers";
 
 type BillingDbClient = Prisma.TransactionClient | typeof prisma;
@@ -339,7 +345,7 @@ export async function createFallbackIntentForCharge(input: {
   const client = input.tx ?? prisma;
   const config = fallbackConfig();
   const now = new Date();
-  const provider = input.provider || config.defaultProvider;
+  let provider = input.provider || config.defaultProvider;
 
   if (provider === "MP" && !config.mpEnabled) {
     return {
@@ -383,6 +389,45 @@ export async function createFallbackIntentForCharge(input: {
   });
 
   if (!charge) throw new Error(`Charge ${input.chargeId} no encontrado`);
+
+  const rolloutMap = await getAgencyCollectionsRolloutMap({
+    agencyIds: [charge.id_agency],
+    tx: client,
+  });
+  const rollout = rolloutMap.get(charge.id_agency);
+  if (!isAgencyEnabledForFallback(rollout)) {
+    return {
+      created: false,
+      no_op: true,
+      reason: "fallback_disabled_for_agency",
+      charge_id: charge.id_charge,
+      provider,
+      fallback_intent_id: null,
+      status: null,
+      payment_url: null,
+      qr_payload: null,
+      expires_at: null,
+    };
+  }
+
+  if (!input.provider && rollout?.collections_fallback_provider) {
+    provider = rollout.collections_fallback_provider;
+  }
+
+  if (provider === "MP" && !config.mpEnabled) {
+    return {
+      created: false,
+      no_op: true,
+      reason: "provider_mp_disabled",
+      charge_id: charge.id_charge,
+      provider,
+      fallback_intent_id: null,
+      status: null,
+      payment_url: null,
+      qr_payload: null,
+      expires_at: null,
+    };
+  }
 
   if (charge.status === "PAID") {
     return {
@@ -586,6 +631,37 @@ export async function onPdAttemptRejected(input: {
       fallback_created: false,
       fallback_intent_id: null,
       reason: "attempt_not_found",
+    };
+  }
+
+  const charge = await client.agencyBillingCharge.findUnique({
+    where: { id_charge: input.chargeId },
+    select: {
+      id_agency: true,
+      dunning_stage: true,
+    },
+  });
+
+  if (!charge) {
+    return {
+      stage: 0,
+      fallback_created: false,
+      fallback_intent_id: null,
+      reason: "charge_not_found",
+    };
+  }
+
+  const rolloutMap = await getAgencyCollectionsRolloutMap({
+    agencyIds: [charge.id_agency],
+    tx: client,
+  });
+  const rollout = rolloutMap.get(charge.id_agency);
+  if (!isAgencyEnabledForDunning(rollout)) {
+    return {
+      stage: Number(charge.dunning_stage || 0),
+      fallback_created: false,
+      fallback_intent_id: null,
+      reason: "dunning_disabled_for_agency",
     };
   }
 
@@ -992,6 +1068,7 @@ export async function syncFallbackStatuses(input?: {
   fallbackIntentId?: number | null;
   limit?: number;
   actorUserId?: number | null;
+  onlyAutoSyncEnabled?: boolean;
 }): Promise<{
   considered: number;
   paid: number;
@@ -1031,12 +1108,36 @@ export async function syncFallbackStatuses(input?: {
     };
   }
 
+  const rolloutMap = await getAgencyCollectionsRolloutMap({
+    agencyIds: intents.map((intent) => intent.agency_id),
+  });
+  const eligibleIntents = intents.filter((intent) => {
+    const rollout = rolloutMap.get(intent.agency_id);
+    if (!isAgencyEnabledForFallback(rollout)) return false;
+    if (input?.onlyAutoSyncEnabled) {
+      return canAutoSyncFallbackForAgency(rollout);
+    }
+    return true;
+  });
+
+  if (!eligibleIntents.length) {
+    return {
+      considered: 0,
+      paid: 0,
+      pending: 0,
+      expired: 0,
+      failed: 0,
+      no_op: true,
+      ids: [],
+    };
+  }
+
   let paid = 0;
   let pending = 0;
   let expired = 0;
   let failed = 0;
 
-  for (const intent of intents) {
+  for (const intent of eligibleIntents) {
     const providerApi = resolveFallbackProvider(intent.provider);
     const status = await providerApi.getPaymentStatus({
       id_fallback_intent: intent.id_fallback_intent,
@@ -1128,19 +1229,20 @@ export async function syncFallbackStatuses(input?: {
   }
 
   return {
-    considered: intents.length,
+    considered: eligibleIntents.length,
     paid,
     pending,
     expired,
     failed,
     no_op: false,
-    ids: intents.map((item) => item.id_fallback_intent),
+    ids: eligibleIntents.map((item) => item.id_fallback_intent),
   };
 }
 
 export async function createFallbackForEligibleCharges(input?: {
   chargeId?: number | null;
   provider?: BillingFallbackProvider | null;
+  allowedAgencyIds?: number[];
   limit?: number;
   dryRun?: boolean;
   actorUserId?: number | null;
@@ -1155,6 +1257,9 @@ export async function createFallbackForEligibleCharges(input?: {
   const charges = await prisma.agencyBillingCharge.findMany({
     where: {
       ...(input?.chargeId ? { id_charge: input.chargeId } : {}),
+      ...(input?.allowedAgencyIds && input.allowedAgencyIds.length > 0
+        ? { id_agency: { in: input.allowedAgencyIds } }
+        : {}),
       status: { not: "PAID" },
       dunning_stage: { gte: 3 },
     },
@@ -1162,6 +1267,7 @@ export async function createFallbackForEligibleCharges(input?: {
     take: limit,
     select: {
       id_charge: true,
+      id_agency: true,
     },
   });
 
@@ -1178,8 +1284,16 @@ export async function createFallbackForEligibleCharges(input?: {
   let created = 0;
   const ids: number[] = [];
   const reasons: string[] = [];
+  const rolloutMap = await getAgencyCollectionsRolloutMap({
+    agencyIds: charges.map((charge) => charge.id_agency),
+  });
 
   for (const charge of charges) {
+    if (!isAgencyEnabledForFallback(rolloutMap.get(charge.id_agency))) {
+      reasons.push(`charge_${charge.id_charge}:fallback_disabled_for_agency`);
+      continue;
+    }
+
     const result = await createFallbackIntentForCharge({
       chargeId: charge.id_charge,
       provider: input?.provider ?? null,

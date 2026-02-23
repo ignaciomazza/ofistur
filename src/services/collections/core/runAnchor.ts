@@ -1,9 +1,11 @@
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { BUENOS_AIRES_TIME_ZONE } from "@/lib/buenosAiresDate";
 import { getNextAgencyCounter } from "@/lib/agencyCounters";
 import { getBillingConfig } from "@/lib/billingConfig";
 import { toDateKeyInBuenosAires } from "@/lib/buenosAiresDate";
 import { logBillingEvent } from "@/services/billing/events";
+import { addBusinessDaysAr } from "@/services/collections/core/businessCalendarAr";
 import {
   addDaysLocal,
   dateKeyInTimeZone,
@@ -18,6 +20,7 @@ type RunAnchorInput = {
   overrideFx?: boolean;
   actorUserId?: number | null;
   actorAgencyId?: number | null;
+  agencyIds?: number[] | null;
 };
 
 type RunAnchorSummary = {
@@ -139,9 +142,19 @@ export async function runAnchor(input: RunAnchorInput): Promise<RunAnchorSummary
   const config = getBillingConfig();
   const overrideFx = Boolean(input.overrideFx);
   const baseDate = input.anchorDate;
+  const agencyIds = Array.from(
+    new Set(
+      (input.agencyIds || []).filter(
+        (agencyId) => Number.isInteger(agencyId) && Number(agencyId) > 0,
+      ),
+    ),
+  );
 
   const subscriptions = await prisma.agencyBillingSubscription.findMany({
-    where: { status: "ACTIVE" },
+    where: {
+      status: "ACTIVE",
+      ...(agencyIds.length > 0 ? { id_agency: { in: agencyIds } } : {}),
+    },
     select: {
       id_subscription: true,
       id_agency: true,
@@ -287,7 +300,12 @@ export async function runAnchor(input: RunAnchorInput): Promise<RunAnchorSummary
         for (let i = 0; i < retryOffsets.length; i += 1) {
           const attemptNo = i + 1;
           const offsetDays = retryOffsets[i];
-          const scheduledFor = addDaysLocal(anchorDate, offsetDays, timezone);
+          const scheduledFor =
+            config.dunningUseBusinessDays &&
+            timezone === BUENOS_AIRES_TIME_ZONE &&
+            offsetDays > 0
+              ? addBusinessDaysAr(anchorDate, offsetDays)
+              : addDaysLocal(anchorDate, offsetDays, timezone);
 
           const existingAttempt = await tx.agencyBillingAttempt.findUnique({
             where: {

@@ -16,6 +16,10 @@ export type BillingJobsConfig = {
   lockTtlSeconds: number;
   runnerSecret: string | null;
   batchCutoffHourAr: number | null;
+  rolloutRequireAgencyFlag: boolean;
+  reviewCasesEnabled: boolean;
+  healthStaleExportHours: number;
+  healthStaleReconcileHours: number;
 };
 
 function parseBoolean(input: string | undefined, fallback: boolean): boolean {
@@ -73,5 +77,18 @@ export function getBillingJobsConfig(): BillingJobsConfig {
     ),
     runnerSecret: process.env.BILLING_JOB_RUNNER_SECRET?.trim() || null,
     batchCutoffHourAr: parseBatchCutoffHour(process.env.BILLING_BATCH_CUTOFF_HOUR_AR),
+    rolloutRequireAgencyFlag: parseBoolean(
+      process.env.BILLING_COLLECTIONS_ROLLOUT_REQUIRE_AGENCY_FLAG,
+      true,
+    ),
+    reviewCasesEnabled: parseBoolean(process.env.BILLING_REVIEW_CASES_ENABLED, true),
+    healthStaleExportHours: Math.max(
+      1,
+      parseInteger(process.env.BILLING_HEALTH_STALE_EXPORT_HOURS, 24),
+    ),
+    healthStaleReconcileHours: Math.max(
+      1,
+      parseInteger(process.env.BILLING_HEALTH_STALE_RECONCILE_HOURS, 24),
+    ),
   };
 }

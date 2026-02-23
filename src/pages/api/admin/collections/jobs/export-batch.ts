@@ -26,6 +26,27 @@ function readNumber(req: NextApiRequest, key: string): number | null {
   return parsed;
 }
 
+function readBoolean(req: NextApiRequest, key: string, fallback = false): boolean {
+  const bodyValue =
+    req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>)[key] : null;
+  const queryValue = req.query[key];
+
+  const raw =
+    typeof bodyValue === "boolean"
+      ? String(bodyValue)
+      : typeof bodyValue === "string"
+        ? bodyValue
+        : typeof queryValue === "string"
+          ? queryValue
+          : "";
+
+  if (!raw) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "si", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
@@ -47,6 +68,7 @@ export default async function handler(
     const targetDateAr = readString(req, "date");
     const adapter = readString(req, "adapter");
     const batchId = readNumber(req, "batchId");
+    const force = readBoolean(req, "force", false);
 
     const result = await exportPdBatchJob({
       source: "MANUAL",
@@ -54,6 +76,7 @@ export default async function handler(
       targetDateAr,
       adapter,
       batchId,
+      force,
     });
 
     return res.status(200).json({ result });
@@ -63,4 +86,3 @@ export default async function handler(
     return res.status(400).json({ error: message });
   }
 }
-

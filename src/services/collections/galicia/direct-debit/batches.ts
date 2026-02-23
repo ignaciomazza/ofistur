@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getBillingConfig } from "@/lib/billingConfig";
+import { toDateKeyInBuenosAires } from "@/lib/buenosAiresDate";
+import { hourInBuenosAires } from "@/services/collections/core/businessCalendarAr";
+import {
+  getAgencyCollectionsRolloutMap,
+  isAgencyEnabledForPdAutomation,
+  resolveAgencyCutoffHourAr,
+} from "@/services/collections/core/agencyCollectionsRollout";
 import {
   dateKeyInTimeZone,
   normalizeLocalDay,
@@ -21,6 +28,7 @@ import {
   onPdAttemptPaid,
   onPdAttemptRejected,
 } from "@/services/collections/dunning/service";
+import { createLateDuplicatePaymentReviewCase } from "@/services/collections/review-cases/service";
 import { maybeAutorunFiscalForPaidCharges } from "@/services/collections/fiscal/autorunOnChargePaid";
 import { logBillingEvent } from "@/services/billing/events";
 
@@ -35,6 +43,8 @@ export type PreparePresentmentBatchInput = {
   adapterName?: string | null;
   dryRun?: boolean;
   cutoffDate?: Date;
+  globalCutoffHourAr?: number | null;
+  force?: boolean;
 };
 
 export type PreparePresentmentBatchResult = {
@@ -45,6 +55,10 @@ export type PreparePresentmentBatchResult = {
   attempts_count: number;
   amount_total: number;
   eligible_attempts: number;
+  deferred_by_cutoff?: number;
+  agencies_considered?: number;
+  agencies_processed?: number;
+  agencies_skipped_disabled?: number;
 };
 
 export type ExportPresentmentBatchResult = {
@@ -157,6 +171,34 @@ function resolveContentType(fileName: string, fallback?: string): string {
   return "application/octet-stream";
 }
 
+function isInboundFileCompatibleWithAdapter(input: {
+  adapterName: string;
+  fileName: string;
+  bytes: Buffer;
+}): boolean {
+  const adapter = normalizeAdapterName(input.adapterName);
+  const header = input.bytes.toString("utf8", 0, Math.min(512, input.bytes.length));
+  const firstLine = header.split(/\r?\n/)[0] || "";
+  const normalizedFileName = input.fileName.toLowerCase();
+
+  if (adapter === "galicia_pd_v1") {
+    if (firstLine.startsWith("H|GALICIA_PD_RESP|")) return true;
+    if (firstLine.startsWith("H|GALICIA_PD|")) return true;
+    return false;
+  }
+
+  if (adapter === "debug_csv") {
+    const headerLower = firstLine.toLowerCase();
+    return (
+      normalizedFileName.endsWith(".csv") ||
+      (headerLower.includes("external_reference") &&
+        (headerLower.includes("result") || headerLower.includes("bank_result_code")))
+    );
+  }
+
+  return true;
+}
+
 function normalizeExternalReference(raw: string | null | undefined, fallback: string): string {
   const normalized = String(raw || "").trim();
   return normalized || fallback;
@@ -215,6 +257,59 @@ async function updateBatchStatus(
   });
 }
 
+async function createBillingFileImportRun(input: {
+  agencyIds: number[];
+  outboundBatchId: number | null;
+  fileName: string;
+  fileHash: string;
+  adapter: string;
+  actorUserId?: number | null;
+  source?: "MANUAL" | "CRON" | "SYSTEM";
+  status: "SUCCESS" | "FAILED" | "DUPLICATE" | "INVALID";
+  detectedTotals?: Record<string, unknown> | null;
+  parsedRows?: number | null;
+  errorMessage?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<void> {
+  const importRunDelegate = (prisma as unknown as {
+    billingFileImportRun?: { create?: (args: unknown) => Promise<unknown> };
+  }).billingFileImportRun;
+  if (!importRunDelegate || typeof importRunDelegate.create !== "function") {
+    return;
+  }
+
+  const uniqueAgencyIds = Array.from(
+    new Set(
+      input.agencyIds.filter(
+        (agencyId) => Number.isInteger(agencyId) && Number(agencyId) > 0,
+      ),
+    ),
+  );
+
+  if (uniqueAgencyIds.length === 0) {
+    return;
+  }
+
+  for (const agencyId of uniqueAgencyIds) {
+    await importRunDelegate.create({
+      data: {
+        agency_id: agencyId,
+        batch_id: input.outboundBatchId,
+        file_name: input.fileName,
+        file_hash: input.fileHash,
+        adapter: input.adapter,
+        uploaded_by: input.actorUserId ?? null,
+        source: input.source || "MANUAL",
+        status: input.status,
+        detected_totals: toJsonValue(input.detectedTotals || null),
+        parsed_rows: input.parsedRows ?? null,
+        error_message: input.errorMessage ?? null,
+        metadata_json: toJsonValue(input.metadata || null),
+      },
+    });
+  }
+}
+
 async function resolveAgencyIdsFromOutboundItems(
   outboundItems: Array<{ charge_id: number | null }>,
 ): Promise<number[]> {
@@ -237,9 +332,19 @@ async function resolveAgencyIdsFromOutboundItems(
 }
 
 async function buildPresentmentRows(params: {
+  businessDate: Date;
+  now: Date;
   scheduledUntil: Date;
   requireActiveMandate: boolean;
-}): Promise<Array<PresentmentRow & { attemptId: number }>> {
+  globalCutoffHourAr?: number | null;
+  force?: boolean;
+}): Promise<{
+  rows: Array<PresentmentRow & { attemptId: number }>;
+  deferredByCutoff: number;
+  agenciesConsidered: number;
+  agenciesProcessed: number;
+  agenciesSkippedDisabled: number;
+}> {
   const attempts = await prisma.agencyBillingAttempt.findMany({
     where: {
       status: "PENDING",
@@ -272,19 +377,55 @@ async function buildPresentmentRows(params: {
     take: 5000,
   });
 
+  const agencyIds = Array.from(
+    new Set(
+      attempts
+        .map((attempt) => attempt.charge?.id_agency)
+        .filter((agencyId): agencyId is number => Number.isInteger(agencyId) && Number(agencyId) > 0),
+    ),
+  );
+  const rolloutMap = await getAgencyCollectionsRolloutMap({ agencyIds });
+  const nowDateKey = toDateKeyInBuenosAires(params.now);
+  const businessDateKey = toDateKeyInBuenosAires(params.businessDate);
+  const currentHourAr = hourInBuenosAires(params.now);
+
+  let deferredByCutoff = 0;
+  const agenciesConsidered = new Set<number>();
+  const agenciesProcessed = new Set<number>();
+  const agenciesSkippedDisabled = new Set<number>();
+
   const filtered = attempts.filter((attempt) => {
     if (!attempt.charge) return false;
     if (attempt.charge.status === "PAID") return false;
+    agenciesConsidered.add(attempt.charge.id_agency);
+
+    const rollout = rolloutMap.get(attempt.charge.id_agency);
+    if (!params.force && !isAgencyEnabledForPdAutomation(rollout)) {
+      agenciesSkippedDisabled.add(attempt.charge.id_agency);
+      return false;
+    }
 
     if (params.requireActiveMandate) {
       const mandateStatus = attempt.paymentMethod?.mandate?.status;
-      return mandateStatus === "ACTIVE";
+      if (mandateStatus !== "ACTIVE") return false;
     }
 
+    if (!params.force && nowDateKey && businessDateKey && nowDateKey === businessDateKey) {
+      const cutoffHour = resolveAgencyCutoffHourAr({
+        rollout,
+        globalCutoffHourAr: params.globalCutoffHourAr ?? null,
+      });
+      if (cutoffHour != null && currentHourAr >= cutoffHour) {
+        deferredByCutoff += 1;
+        return false;
+      }
+    }
+
+    agenciesProcessed.add(attempt.charge.id_agency);
     return true;
   });
 
-  return filtered.map((attempt) => {
+  const rows = filtered.map((attempt) => {
     const externalReference = normalizeExternalReference(
       attempt.external_reference,
       `AT-${attempt.id_attempt}`,
@@ -302,6 +443,14 @@ async function buildPresentmentRows(params: {
       cbuLast4: attempt.paymentMethod?.mandate?.cbu_last4 || null,
     };
   });
+
+  return {
+    rows,
+    deferredByCutoff,
+    agenciesConsidered: agenciesConsidered.size,
+    agenciesProcessed: agenciesProcessed.size,
+    agenciesSkippedDisabled: agenciesSkippedDisabled.size,
+  };
 }
 
 function endOfLocalDay(date: Date): Date {
@@ -347,6 +496,7 @@ export async function preparePresentmentBatch(
   input: PreparePresentmentBatchInput,
 ): Promise<PreparePresentmentBatchResult> {
   const config = getBillingConfig();
+  const now = new Date();
   const businessDate = normalizeLocalDay(input.businessDate, config.timezone);
   const cutoffDate = input.cutoffDate
     ? new Date(input.cutoffDate)
@@ -358,10 +508,15 @@ export async function preparePresentmentBatch(
     true,
   );
 
-  const rows = await buildPresentmentRows({
+  const selection = await buildPresentmentRows({
+    businessDate,
+    now,
     scheduledUntil: cutoffDate,
     requireActiveMandate,
+    globalCutoffHourAr: input.globalCutoffHourAr ?? null,
+    force: Boolean(input.force),
   });
+  const rows = selection.rows;
   const totalAmount = round2(rows.reduce((acc, row) => acc + row.amountArs, 0));
 
   if (!rows.length) {
@@ -373,6 +528,10 @@ export async function preparePresentmentBatch(
       attempts_count: 0,
       amount_total: 0,
       eligible_attempts: 0,
+      deferred_by_cutoff: selection.deferredByCutoff,
+      agencies_considered: selection.agenciesConsidered,
+      agencies_processed: selection.agenciesProcessed,
+      agencies_skipped_disabled: selection.agenciesSkippedDisabled,
     };
   }
 
@@ -385,6 +544,10 @@ export async function preparePresentmentBatch(
       attempts_count: rows.length,
       amount_total: totalAmount,
       eligible_attempts: rows.length,
+      deferred_by_cutoff: selection.deferredByCutoff,
+      agencies_considered: selection.agenciesConsidered,
+      agencies_processed: selection.agenciesProcessed,
+      agencies_skipped_disabled: selection.agenciesSkippedDisabled,
     };
   }
 
@@ -476,6 +639,10 @@ export async function preparePresentmentBatch(
     attempts_count: rows.length,
     amount_total: totalAmount,
     eligible_attempts: rows.length,
+    deferred_by_cutoff: selection.deferredByCutoff,
+    agencies_considered: selection.agenciesConsidered,
+    agencies_processed: selection.agenciesProcessed,
+    agencies_skipped_disabled: selection.agenciesSkippedDisabled,
   };
 }
 
@@ -1114,23 +1281,90 @@ export async function importResponseBatch(
     },
   });
 
-  if (!outbound || outbound.direction !== "OUTBOUND") {
+  if (
+    !outbound ||
+    outbound.direction !== "OUTBOUND" ||
+    outbound.file_type !== OUTBOUND_FILE_TYPE
+  ) {
     throw new Error("Batch outbound no encontrado");
   }
+  const outboundAlreadyReconciled =
+    String(outbound.status || "").toUpperCase() === "RECONCILED";
+
+  const agencyIds = await resolveAgencyIdsFromOutboundItems(outbound.items);
+  const inboundSha = sha256OfBuffer(input.uploadedFile.bytes);
 
   const adapter = resolveAdapterByName(
     outbound.adapter || process.env.BILLING_PD_ADAPTER || "debug_csv",
   );
-  const parsed = adapter.parseInboundFile({ fileBuffer: input.uploadedFile.bytes });
+  if (
+    !isInboundFileCompatibleWithAdapter({
+      adapterName: adapter.name,
+      fileName: input.uploadedFile.fileName,
+      bytes: input.uploadedFile.bytes,
+    })
+  ) {
+    await createBillingFileImportRun({
+      agencyIds,
+      outboundBatchId: outbound.id_batch,
+      fileName: input.uploadedFile.fileName,
+      fileHash: inboundSha,
+      adapter: adapter.name,
+      actorUserId: input.actorUserId ?? null,
+      source: "MANUAL",
+      status: "INVALID",
+      errorMessage: "adapter mismatch",
+      metadata: {
+        expected_adapter: adapter.name,
+        file_name: input.uploadedFile.fileName,
+      },
+    });
+    throw new Error("adapter mismatch");
+  }
+
+  let parsed: ReturnType<GaliciaPdAdapter["parseInboundFile"]>;
+  try {
+    parsed = adapter.parseInboundFile({ fileBuffer: input.uploadedFile.bytes });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "layout parse error";
+    await createBillingFileImportRun({
+      agencyIds,
+      outboundBatchId: outbound.id_batch,
+      fileName: input.uploadedFile.fileName,
+      fileHash: inboundSha,
+      adapter: adapter.name,
+      actorUserId: input.actorUserId ?? null,
+      source: "MANUAL",
+      status: "INVALID",
+      errorMessage: message,
+      metadata: {
+        expected_adapter: adapter.name,
+      },
+    });
+    throw error;
+  }
 
   const inboundValidation = adapter.validateInboundControlTotals({ parsed });
   if (!inboundValidation.ok) {
+    await createBillingFileImportRun({
+      agencyIds,
+      outboundBatchId: outbound.id_batch,
+      fileName: input.uploadedFile.fileName,
+      fileHash: inboundSha,
+      adapter: adapter.name,
+      actorUserId: input.actorUserId ?? null,
+      source: "MANUAL",
+      status: "INVALID",
+      detectedTotals: parsed.controlTotals,
+      parsedRows: parsed.rows.length,
+      errorMessage: `totals mismatch: ${inboundValidation.errors.join("; ")}`,
+    });
     throw new Error(
       `Control totals inbound inválidos (${adapter.name}): ${inboundValidation.errors.join("; ")}`,
     );
   }
 
-  const inboundSha = sha256OfBuffer(input.uploadedFile.bytes);
   const inboundRecordCount = parsed.controlTotals.record_count;
   const inboundAmountTotal = round2(parsed.controlTotals.amount_total);
 
@@ -1155,7 +1389,22 @@ export async function importResponseBatch(
   });
 
   if (duplicate) {
-    const agencyIds = await resolveAgencyIdsFromOutboundItems(outbound.items);
+    await createBillingFileImportRun({
+      agencyIds,
+      outboundBatchId: outbound.id_batch,
+      fileName: input.uploadedFile.fileName,
+      fileHash: inboundSha,
+      adapter: adapter.name,
+      actorUserId: input.actorUserId ?? null,
+      source: "MANUAL",
+      status: "DUPLICATE",
+      detectedTotals: parsed.controlTotals,
+      parsedRows: parsed.rows.length,
+      metadata: {
+        inbound_batch_id: duplicate.id_batch,
+      },
+    });
+
     await logBatchEventForAgencies({
       agencyIds,
       eventType: "PD_BATCH_INBOUND_ALREADY_IMPORTED",
@@ -1184,10 +1433,15 @@ export async function importResponseBatch(
     };
   }
 
-  const config = getBillingConfig();
-  const businessDate = normalizeLocalDay(new Date(), config.timezone);
+  if (outboundAlreadyReconciled) {
+    throw new Error("batch already reconciled");
+  }
 
-  const inbound = await prisma.agencyBillingFileBatch.create({
+  try {
+    const config = getBillingConfig();
+    const businessDate = normalizeLocalDay(new Date(), config.timezone);
+
+    const inbound = await prisma.agencyBillingFileBatch.create({
     data: {
       parent_batch_id: outbound.id_batch,
       direction: "INBOUND",
@@ -1211,14 +1465,14 @@ export async function importResponseBatch(
     },
   });
 
-  const inboundStorageKey = buildStorageKey({
+    const inboundStorageKey = buildStorageKey({
     direction: "INBOUND",
     batchId: inbound.id_batch,
     fileName: input.uploadedFile.fileName,
     businessDate,
   });
 
-  await uploadBatchFile({
+    await uploadBatchFile({
     storageKey: inboundStorageKey,
     bytes: input.uploadedFile.bytes,
     contentType: resolveContentType(
@@ -1227,22 +1481,22 @@ export async function importResponseBatch(
     ),
   });
 
-  const byExternal = new Map<string, (typeof outbound.items)[number]>();
-  const byRawHash = new Map<string, (typeof outbound.items)[number]>();
-  const touchedAgencyIds = new Set<number>();
+    const byExternal = new Map<string, (typeof outbound.items)[number]>();
+    const byRawHash = new Map<string, (typeof outbound.items)[number]>();
+    const touchedAgencyIds = new Set<number>();
 
-  for (const item of outbound.items) {
-    if (item.external_reference) byExternal.set(item.external_reference, item);
-    if (item.raw_hash) byRawHash.set(item.raw_hash, item);
-  }
+    for (const item of outbound.items) {
+      if (item.external_reference) byExternal.set(item.external_reference, item);
+      if (item.raw_hash) byRawHash.set(item.raw_hash, item);
+    }
 
-  let matchedRows = 0;
-  let paidRows = 0;
-  let rejectedRows = 0;
-  let errorRows = 0;
-  const paidChargeIds = new Set<number>();
+    let matchedRows = 0;
+    let paidRows = 0;
+    let rejectedRows = 0;
+    let errorRows = 0;
+    const paidChargeIds = new Set<number>();
 
-  for (const row of parsed.rows) {
+    for (const row of parsed.rows) {
     const paidReference = row.operation_id || row.processor_trace_id || null;
 
     const match =
@@ -1434,6 +1688,27 @@ export async function importResponseBatch(
             closeResult.paid_via_channel &&
             closeResult.paid_via_channel !== "PD_GALICIA"
           ) {
+            await createLateDuplicatePaymentReviewCase({
+              agencyId: charge.id_agency,
+              chargeId: charge.id_charge,
+              primaryPaidChannel: closeResult.paid_via_channel,
+              secondaryLateChannel: "PD_GALICIA",
+              amountArs: paidAmount,
+              detectedAt: paidAt,
+              dedupeKey: `late-duplicate:${charge.id_charge}:pd:${attempt.id_attempt}:${paidReference || row.raw_hash}`,
+              metadata: {
+                outbound_batch_id: outbound.id_batch,
+                inbound_batch_id: inbound.id_batch,
+                attempt_id: attempt.id_attempt,
+                paid_reference: paidReference,
+                processor_trace_id: row.processor_trace_id || null,
+                bank_result_code: row.bank_result_code || null,
+              },
+              actorUserId: input.actorUserId ?? null,
+              source: "PD_RECONCILIATION",
+              tx,
+            });
+
             await logBillingEvent(
               {
                 id_agency: charge.id_agency,
@@ -1637,12 +1912,12 @@ export async function importResponseBatch(
     );
   }
 
-  const fiscalAutorun = await maybeAutorunFiscalForPaidCharges({
+    const fiscalAutorun = await maybeAutorunFiscalForPaidCharges({
     chargeIds: Array.from(paidChargeIds),
     actorUserId: input.actorUserId ?? null,
   });
 
-  await prisma.$transaction(
+    await prisma.$transaction(
     async (tx) => {
       await tx.agencyBillingFileBatch.update({
         where: { id_batch: inbound.id_batch },
@@ -1679,7 +1954,7 @@ export async function importResponseBatch(
     pdTxOptions(),
   );
 
-  await logBatchEventForAgencies({
+    await logBatchEventForAgencies({
     agencyIds: Array.from(touchedAgencyIds),
     eventType: "PD_BATCH_INBOUND_IMPORTED",
     payload: {
@@ -1701,16 +1976,55 @@ export async function importResponseBatch(
     createdBy: input.actorUserId ?? null,
   });
 
-  return {
-    inbound_batch_id: inbound.id_batch,
-    already_imported: false,
-    summary: {
-      matched_rows: matchedRows,
-      error_rows: errorRows,
-      rejected: rejectedRows,
-      paid: paidRows,
-      fiscal_issued: fiscalAutorun.issued,
-      fiscal_failed: fiscalAutorun.failed,
-    },
-  };
+    await createBillingFileImportRun({
+      agencyIds: Array.from(touchedAgencyIds),
+      outboundBatchId: outbound.id_batch,
+      fileName: input.uploadedFile.fileName,
+      fileHash: inboundSha,
+      adapter: adapter.name,
+      actorUserId: input.actorUserId ?? null,
+      source: "MANUAL",
+      status: "SUCCESS",
+      detectedTotals: parsed.controlTotals,
+      parsedRows: parsed.rows.length,
+      metadata: {
+        inbound_batch_id: inbound.id_batch,
+        paid_rows: paidRows,
+        rejected_rows: rejectedRows,
+        error_rows: errorRows,
+      },
+    });
+
+    return {
+      inbound_batch_id: inbound.id_batch,
+      already_imported: false,
+      summary: {
+        matched_rows: matchedRows,
+        error_rows: errorRows,
+        rejected: rejectedRows,
+        paid: paidRows,
+        fiscal_issued: fiscalAutorun.issued,
+        fiscal_failed: fiscalAutorun.failed,
+      },
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Error al importar respuesta bancaria";
+
+    await createBillingFileImportRun({
+      agencyIds,
+      outboundBatchId: outbound.id_batch,
+      fileName: input.uploadedFile.fileName,
+      fileHash: inboundSha,
+      adapter: adapter.name,
+      actorUserId: input.actorUserId ?? null,
+      source: "MANUAL",
+      status: "FAILED",
+      detectedTotals: parsed.controlTotals,
+      parsedRows: parsed.rows.length,
+      errorMessage: message,
+    });
+
+    throw error;
+  }
 }

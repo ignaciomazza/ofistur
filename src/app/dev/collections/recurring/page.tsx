@@ -161,8 +161,35 @@ type JobsOverview = {
     fallback_expired_today: number;
     paid_via_pd_last_30d: number;
     paid_via_fallback_last_30d: number;
+    jobs_failed_last_24h: number;
+    stale_prepared_batches: number;
+    stale_exported_batches: number;
+    fallback_expiring_24h: number;
+    review_cases_open: number;
+    charges_escalated_suspended: number;
+    late_duplicates_last_30d: number;
+    recovery_rate_30d: number;
   };
   recent_runs: BillingJobRunRow[];
+};
+
+type ReviewCaseRow = {
+  id_review_case: number;
+  agency_id: number;
+  charge_id: number;
+  type: string;
+  status: "OPEN" | "IN_REVIEW" | "RESOLVED" | "IGNORED";
+  primary_paid_channel: string | null;
+  secondary_late_channel: string | null;
+  amount_ars: number | null;
+  detected_at: string;
+  resolution_type: string | null;
+  resolution_notes: string | null;
+  resolved_by_user_id: number | null;
+  resolved_at: string | null;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
 };
 
 function dateInputToday(): string {
@@ -286,12 +313,14 @@ export default function RecurringCollectionsDevPage() {
   const [charges, setCharges] = useState<ChargeRow[]>([]);
   const [batches, setBatches] = useState<BatchRow[]>([]);
   const [jobsOverview, setJobsOverview] = useState<JobsOverview | null>(null);
+  const [reviewCases, setReviewCases] = useState<ReviewCaseRow[]>([]);
   const [jobResult, setJobResult] = useState<BillingJobResult | null>(null);
   const [runningJob, setRunningJob] = useState<string | null>(null);
   const [creatingBatch, setCreatingBatch] = useState(false);
   const [uploadingBatchId, setUploadingBatchId] = useState<number | null>(null);
   const [retryingFiscalChargeId, setRetryingFiscalChargeId] = useState<number | null>(null);
   const [updatingFallbackIntentId, setUpdatingFallbackIntentId] = useState<number | null>(null);
+  const [updatingReviewCaseId, setUpdatingReviewCaseId] = useState<number | null>(null);
   const [lastImportSummary, setLastImportSummary] = useState<{
     outboundBatchId: number;
     already_imported: boolean;
@@ -308,7 +337,7 @@ export default function RecurringCollectionsDevPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [cyclesRes, chargesRes, batchesRes, jobsRes] = await Promise.all([
+      const [cyclesRes, chargesRes, batchesRes, jobsRes, reviewCasesRes] = await Promise.all([
         authFetch(
           `/api/admin/collections/cycles?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
           { cache: "no-store" },
@@ -325,6 +354,11 @@ export default function RecurringCollectionsDevPage() {
           token,
         ),
         authFetch("/api/admin/collections/jobs?limit=12", { cache: "no-store" }, token),
+        authFetch(
+          `/api/admin/collections/review-cases?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`,
+          { cache: "no-store" },
+          token,
+        ),
       ]);
 
       if (!cyclesRes.ok) {
@@ -343,15 +377,21 @@ export default function RecurringCollectionsDevPage() {
         const json = (await jobsRes.json().catch(() => null)) as { error?: string } | null;
         throw new Error(json?.error || "No se pudo cargar el estado de jobs");
       }
+      if (!reviewCasesRes.ok) {
+        const json = (await reviewCasesRes.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(json?.error || "No se pudieron cargar los casos contables");
+      }
 
       const cyclesJson = (await cyclesRes.json()) as { items: CycleRow[] };
       const chargesJson = (await chargesRes.json()) as { items: ChargeRow[] };
       const batchesJson = (await batchesRes.json()) as { items: BatchRow[] };
       const jobsJson = (await jobsRes.json()) as JobsOverview;
+      const reviewCasesJson = (await reviewCasesRes.json()) as { items: ReviewCaseRow[] };
       setCycles(cyclesJson.items || []);
       setCharges(chargesJson.items || []);
       setBatches(batchesJson.items || []);
       setJobsOverview(jobsJson || null);
+      setReviewCases(reviewCasesJson.items || []);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "No se pudo cargar la vista";
@@ -365,6 +405,17 @@ export default function RecurringCollectionsDevPage() {
     if (!token || !canAccess) return;
     void loadData();
   }, [token, canAccess, loadData]);
+
+  const openReviewCaseByCharge = useMemo(() => {
+    const map = new Map<number, ReviewCaseRow>();
+    for (const row of reviewCases) {
+      if (row.status !== "OPEN" && row.status !== "IN_REVIEW") continue;
+      if (!map.has(row.charge_id)) {
+        map.set(row.charge_id, row);
+      }
+    }
+    return map;
+  }, [reviewCases]);
 
   async function handleRunAnchor(e: React.FormEvent) {
     e.preventDefault();
@@ -576,6 +627,103 @@ export default function RecurringCollectionsDevPage() {
       toast.error(message);
     } finally {
       setUpdatingFallbackIntentId(null);
+    }
+  }
+
+  async function handleStartReviewCase(reviewCaseId: number) {
+    if (!token) return;
+    setUpdatingReviewCaseId(reviewCaseId);
+    try {
+      const res = await authFetch(
+        `/api/admin/collections/review-cases/${reviewCaseId}/start-review`,
+        { method: "POST" },
+        token,
+      );
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(json?.error || "No se pudo iniciar revisión");
+      }
+      toast.success("Caso pasado a IN_REVIEW");
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo iniciar revisión";
+      toast.error(message);
+    } finally {
+      setUpdatingReviewCaseId(null);
+    }
+  }
+
+  async function handleResolveReviewCase(reviewCaseId: number) {
+    if (!token) return;
+    const resolutionTypeRaw = window
+      .prompt(
+        "Resolution type: BALANCE_CREDIT | REFUND_MANUAL | NO_ACTION | OTHER",
+        "NO_ACTION",
+      )
+      ?.trim()
+      .toUpperCase();
+    if (!resolutionTypeRaw) return;
+
+    if (!["BALANCE_CREDIT", "REFUND_MANUAL", "NO_ACTION", "OTHER"].includes(resolutionTypeRaw)) {
+      toast.error("resolutionType inválido");
+      return;
+    }
+
+    const notes = window.prompt("Notas de resolución (opcional)", "")?.trim() || null;
+
+    setUpdatingReviewCaseId(reviewCaseId);
+    try {
+      const res = await authFetch(
+        `/api/admin/collections/review-cases/${reviewCaseId}/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resolutionType: resolutionTypeRaw,
+            notes,
+          }),
+        },
+        token,
+      );
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(json?.error || "No se pudo resolver el caso");
+      }
+      toast.success("Caso resuelto");
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo resolver el caso";
+      toast.error(message);
+    } finally {
+      setUpdatingReviewCaseId(null);
+    }
+  }
+
+  async function handleIgnoreReviewCase(reviewCaseId: number) {
+    if (!token) return;
+    const notes = window.prompt("Notas de ignore (opcional)", "")?.trim() || null;
+    setUpdatingReviewCaseId(reviewCaseId);
+    try {
+      const res = await authFetch(
+        `/api/admin/collections/review-cases/${reviewCaseId}/ignore`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes }),
+        },
+        token,
+      );
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(json?.error || "No se pudo ignorar el caso");
+      }
+      toast.success("Caso marcado como ignorado");
+      await loadData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo ignorar el caso";
+      toast.error(message);
+    } finally {
+      setUpdatingReviewCaseId(null);
     }
   }
 
@@ -895,6 +1043,30 @@ export default function RecurringCollectionsDevPage() {
                 <div className="rounded-2xl border border-white/25 bg-white/10 p-3">
                   Paid via fallback (30d): <span className="font-semibold">{jobsOverview.metrics.paid_via_fallback_last_30d}</span>
                 </div>
+                <div className="rounded-2xl border border-rose-300/40 bg-rose-100/10 p-3">
+                  Jobs failed 24h: <span className="font-semibold">{jobsOverview.metrics.jobs_failed_last_24h}</span>
+                </div>
+                <div className="rounded-2xl border border-amber-300/40 bg-amber-100/10 p-3">
+                  Prepared stale: <span className="font-semibold">{jobsOverview.metrics.stale_prepared_batches}</span>
+                </div>
+                <div className="rounded-2xl border border-amber-300/40 bg-amber-100/10 p-3">
+                  Exported stale: <span className="font-semibold">{jobsOverview.metrics.stale_exported_batches}</span>
+                </div>
+                <div className="rounded-2xl border border-fuchsia-300/40 bg-fuchsia-100/10 p-3">
+                  Fallback vence 24h: <span className="font-semibold">{jobsOverview.metrics.fallback_expiring_24h}</span>
+                </div>
+                <div className="rounded-2xl border border-rose-300/40 bg-rose-100/10 p-3">
+                  Review cases open: <span className="font-semibold">{jobsOverview.metrics.review_cases_open}</span>
+                </div>
+                <div className="rounded-2xl border border-violet-300/40 bg-violet-100/10 p-3">
+                  Escalated/suspended: <span className="font-semibold">{jobsOverview.metrics.charges_escalated_suspended}</span>
+                </div>
+                <div className="rounded-2xl border border-indigo-300/40 bg-indigo-100/10 p-3">
+                  Late duplicates (30d): <span className="font-semibold">{jobsOverview.metrics.late_duplicates_last_30d}</span>
+                </div>
+                <div className="rounded-2xl border border-emerald-300/40 bg-emerald-100/10 p-3">
+                  Recovery rate (30d): <span className="font-semibold">{jobsOverview.metrics.recovery_rate_30d}%</span>
+                </div>
               </div>
 
               <div className="mt-5 overflow-auto">
@@ -931,6 +1103,104 @@ export default function RecurringCollectionsDevPage() {
               </div>
             </>
           ) : null}
+        </article>
+
+        <article className="rounded-3xl border border-white/30 bg-white/10 p-6 shadow-lg shadow-sky-900/10 backdrop-blur">
+          <h2 className="text-lg font-semibold">Review cases contables</h2>
+          <p className="mt-1 text-xs opacity-75">
+            Casos de duplicados/pagos tardíos para resolución manual (first win).
+          </p>
+          <div className="mt-5 overflow-auto">
+            <table className="min-w-full text-xs sm:text-sm">
+              <thead>
+                <tr className="text-left text-[11px] opacity-70">
+                  <th className="pb-2 pr-3">Case</th>
+                  <th className="pb-2 pr-3">Charge</th>
+                  <th className="pb-2 pr-3">Tipo</th>
+                  <th className="pb-2 pr-3">Canales</th>
+                  <th className="pb-2 pr-3">Monto</th>
+                  <th className="pb-2 pr-3">Status</th>
+                  <th className="pb-2 pr-3">Detectado</th>
+                  <th className="pb-2 pr-3">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reviewCases.length === 0 ? (
+                  <tr>
+                    <td className="py-2 opacity-70" colSpan={8}>
+                      Sin casos de revisión para el rango seleccionado.
+                    </td>
+                  </tr>
+                ) : (
+                  reviewCases.map((item) => (
+                    <tr key={item.id_review_case} className="border-t border-white/20 align-top">
+                      <td className="py-2 pr-3">#{item.id_review_case}</td>
+                      <td className="py-2 pr-3">
+                        #{item.charge_id}
+                        <div className="text-[11px] opacity-70">agencia #{item.agency_id}</div>
+                      </td>
+                      <td className="py-2 pr-3">{item.type}</td>
+                      <td className="py-2 pr-3">
+                        {(item.primary_paid_channel || "-")} {"->"} {(item.secondary_late_channel || "-")}
+                      </td>
+                      <td className="py-2 pr-3">{formatArs(item.amount_ars)}</td>
+                      <td className="py-2 pr-3">
+                        <span className="inline-flex rounded-full border border-white/35 px-2 py-0.5 text-[11px]">
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3">{formatDateTime(item.detected_at)}</td>
+                      <td className="py-2 pr-3">
+                        <div className="flex flex-col gap-2">
+                          {item.status === "OPEN" ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleStartReviewCase(item.id_review_case)}
+                              disabled={updatingReviewCaseId === item.id_review_case}
+                              className="w-fit rounded-full border border-sky-300/60 bg-sky-100/10 px-3 py-1 text-xs font-medium transition hover:brightness-110 disabled:opacity-50"
+                            >
+                              {updatingReviewCaseId === item.id_review_case
+                                ? "Procesando..."
+                                : "Start review"}
+                            </button>
+                          ) : null}
+                          {item.status === "OPEN" || item.status === "IN_REVIEW" ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void handleResolveReviewCase(item.id_review_case)}
+                                disabled={updatingReviewCaseId === item.id_review_case}
+                                className="w-fit rounded-full border border-emerald-300/60 bg-emerald-100/10 px-3 py-1 text-xs font-medium transition hover:brightness-110 disabled:opacity-50"
+                              >
+                                Resolver
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleIgnoreReviewCase(item.id_review_case)}
+                                disabled={updatingReviewCaseId === item.id_review_case}
+                                className="w-fit rounded-full border border-slate-300/60 bg-slate-100/10 px-3 py-1 text-xs font-medium transition hover:brightness-110 disabled:opacity-50"
+                              >
+                                Ignorar
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-[11px] opacity-70">
+                              {item.resolution_type || "Sin acción"}
+                            </span>
+                          )}
+                          {item.resolution_notes ? (
+                            <div className="max-w-xs text-[11px] opacity-70">
+                              {item.resolution_notes}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </article>
 
         <article className="rounded-3xl border border-white/30 bg-white/10 p-6 shadow-lg shadow-sky-900/10 backdrop-blur">
@@ -1237,6 +1507,7 @@ export default function RecurringCollectionsDevPage() {
                         ? ["CREATED", "PENDING", "PRESENTED"].includes(latestFallback.status)
                         : false;
                       const stageMeta = dunningStageMeta(charge.dunning_stage);
+                      const reviewCase = openReviewCaseByCharge.get(charge.id_charge);
 
                       return (
                         <tr key={charge.id_charge} className="border-t border-white/20">
@@ -1266,6 +1537,13 @@ export default function RecurringCollectionsDevPage() {
                           </td>
                           <td className="py-2 pr-3">
                             {charge.paid_via_channel || charge.collection_channel || "-"}
+                            {reviewCase ? (
+                              <div className="mt-1">
+                                <span className="inline-flex rounded-full border border-rose-300/60 bg-rose-100/10 px-2 py-0.5 text-[11px] text-rose-100">
+                                  review pending #{reviewCase.id_review_case}
+                                </span>
+                              </div>
+                            ) : null}
                           </td>
                           <td className="py-2 pr-3 text-xs">
                             {latestFallback ? (

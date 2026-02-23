@@ -69,8 +69,10 @@ model Agency {
   billingCycles                AgencyBillingCycle[]
   billingCharges               AgencyBillingCharge[]
   billingFallbackIntents       AgencyBillingFallbackIntent[]
+  billingPaymentReviewCases    AgencyBillingPaymentReviewCase[]
   billingSubscription          AgencyBillingSubscription?
   billingEvents                AgencyBillingEvent[]
+  billingFileImportRuns        BillingFileImportRun[]
   storageConfig                AgencyStorageConfig?
   storageUsage                 AgencyStorageUsage?
   files                        FileAsset[]
@@ -189,6 +191,8 @@ model User {
   loadedBillingFxRates               BillingFxRate[]
   billingEventsCreated               AgencyBillingEvent[]
   billingJobRunsCreated              BillingJobRun[]              @relation("BillingJobRunCreatedBy")
+  billingPaymentReviewCasesResolved  AgencyBillingPaymentReviewCase[] @relation("BillingReviewCaseResolvedBy")
+  billingFileImportRunsUploaded      BillingFileImportRun[]       @relation("BillingFileImportRunUploadedBy")
 
   @@unique([id_agency, agency_user_id], name: "agency_user_id_unique")
 }
@@ -1547,6 +1551,14 @@ model AgencyBillingConfig {
   currency      String    @default("USD")
   start_date    DateTime?
   notes         String?
+  collections_pd_enabled                 Boolean @default(false)
+  collections_dunning_enabled            Boolean @default(false)
+  collections_fallback_enabled           Boolean @default(false)
+  collections_fallback_provider          String?
+  collections_fallback_auto_sync_enabled Boolean @default(false)
+  collections_suspended                  Boolean @default(false)
+  collections_cutoff_override_hour_ar    Int?
+  collections_notes                      String?
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -1671,6 +1683,7 @@ model AgencyBillingCharge {
   batchItems      AgencyBillingFileBatchItem[]
   fiscalDocuments AgencyBillingFiscalDocument[]
   fallbackIntents AgencyBillingFallbackIntent[]
+  paymentReviewCases AgencyBillingPaymentReviewCase[]
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -1775,6 +1788,33 @@ enum BillingJobRunStatus {
   FAILED
   SKIPPED_LOCKED
   NO_OP
+}
+
+enum BillingFileImportRunStatus {
+  SUCCESS
+  FAILED
+  DUPLICATE
+  INVALID
+}
+
+enum BillingPaymentReviewCaseType {
+  LATE_DUPLICATE_PAYMENT
+  AMOUNT_MISMATCH
+  OTHER
+}
+
+enum BillingPaymentReviewCaseStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  IGNORED
+}
+
+enum BillingPaymentReviewResolutionType {
+  BALANCE_CREDIT
+  REFUND_MANUAL
+  NO_ACTION
+  OTHER
 }
 
 model BillingFxRate {
@@ -2004,6 +2044,7 @@ model AgencyBillingFileBatch {
   updated_at DateTime @updatedAt
 
   items AgencyBillingFileBatchItem[]
+  fileImportRuns BillingFileImportRun[]
 
   @@index([direction, business_date])
   @@index([status, business_date])
@@ -2097,6 +2138,61 @@ model BillingJobRun {
   @@index([source, started_at])
   @@index([status, started_at])
   @@index([run_id])
+}
+
+model BillingFileImportRun {
+  id_file_import_run Int                        @id @default(autoincrement())
+  agency_id          Int
+  agency             Agency                     @relation(fields: [agency_id], references: [id_agency], onDelete: Cascade)
+  batch_id           Int?
+  batch              AgencyBillingFileBatch?    @relation(fields: [batch_id], references: [id_batch], onDelete: SetNull)
+  file_name          String
+  file_hash          String
+  adapter            String?
+  uploaded_by        Int?
+  uploadedBy         User?                      @relation("BillingFileImportRunUploadedBy", fields: [uploaded_by], references: [id_user], onDelete: SetNull)
+  source             BillingJobSource           @default(MANUAL)
+  status             BillingFileImportRunStatus
+  detected_totals    Json?
+  parsed_rows        Int?
+  error_message      String?
+  metadata_json      Json?
+  created_at         DateTime                   @default(now())
+  updated_at         DateTime                   @updatedAt
+
+  @@index([agency_id, created_at])
+  @@index([batch_id, created_at])
+  @@index([status, created_at])
+  @@index([file_hash])
+}
+
+model AgencyBillingPaymentReviewCase {
+  id_review_case         Int                                @id @default(autoincrement())
+  agency_id              Int
+  agency                 Agency                             @relation(fields: [agency_id], references: [id_agency], onDelete: Cascade)
+  charge_id              Int
+  charge                 AgencyBillingCharge                @relation(fields: [charge_id], references: [id_charge], onDelete: Cascade)
+  type                   BillingPaymentReviewCaseType
+  status                 BillingPaymentReviewCaseStatus     @default(OPEN)
+  primary_paid_channel   BillingCollectionChannel?
+  secondary_late_channel BillingCollectionChannel?
+  amount_ars             Decimal?                           @db.Decimal(18, 2)
+  detected_at            DateTime                           @default(now())
+  resolution_type        BillingPaymentReviewResolutionType?
+  resolution_notes       String?
+  resolved_by_user_id    Int?
+  resolvedBy             User?                              @relation("BillingReviewCaseResolvedBy", fields: [resolved_by_user_id], references: [id_user], onDelete: SetNull)
+  resolved_at            DateTime?
+  dedupe_key             String?
+  metadata_json          Json?
+  created_at             DateTime                           @default(now())
+  updated_at             DateTime                           @updatedAt
+
+  @@unique([dedupe_key])
+  @@index([agency_id, status])
+  @@index([charge_id, status])
+  @@index([type, status, detected_at])
+  @@index([detected_at])
 }
 
 model BillingJobLock {

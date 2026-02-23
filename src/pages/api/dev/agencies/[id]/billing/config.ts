@@ -135,6 +135,31 @@ const ConfigSchema = z
       .string()
       .optional()
       .transform((v) => (v ? v.trim() : "")),
+    collections_pd_enabled: z.boolean().optional(),
+    collections_dunning_enabled: z.boolean().optional(),
+    collections_fallback_enabled: z.boolean().optional(),
+    collections_fallback_provider: z
+      .string()
+      .optional()
+      .transform((v) => {
+        const normalized = String(v || "")
+          .trim()
+          .toUpperCase();
+        if (!normalized) return null;
+        if (normalized === "CIG_QR") return "CIG_QR";
+        if (normalized === "MP") return "MP";
+        if (normalized === "OTHER") return "OTHER";
+        return null;
+      }),
+    collections_fallback_auto_sync_enabled: z.boolean().optional(),
+    collections_suspended: z.boolean().optional(),
+    collections_cutoff_override_hour_ar: z
+      .union([z.number().int().min(0).max(23), z.null()])
+      .optional(),
+    collections_notes: z
+      .string()
+      .optional()
+      .transform((v) => (v ? v.trim() : "")),
   })
   .strict();
 
@@ -166,6 +191,14 @@ async function handleGET(req: NextApiRequest, res: NextApiResponse) {
     currency: "USD",
     start_date: null,
     notes: "",
+    collections_pd_enabled: false,
+    collections_dunning_enabled: false,
+    collections_fallback_enabled: false,
+    collections_fallback_provider: null,
+    collections_fallback_auto_sync_enabled: false,
+    collections_suspended: false,
+    collections_cutoff_override_hour_ar: null,
+    collections_notes: "",
   };
 
   return res.status(200).json({
@@ -190,6 +223,36 @@ async function handlePUT(req: NextApiRequest, res: NextApiResponse) {
     currency: parsed.currency || "USD",
     start_date: toDate(parsed.start_date),
     notes: parsed.notes?.trim() || null,
+    ...(parsed.collections_pd_enabled !== undefined
+      ? { collections_pd_enabled: parsed.collections_pd_enabled }
+      : {}),
+    ...(parsed.collections_dunning_enabled !== undefined
+      ? { collections_dunning_enabled: parsed.collections_dunning_enabled }
+      : {}),
+    ...(parsed.collections_fallback_enabled !== undefined
+      ? { collections_fallback_enabled: parsed.collections_fallback_enabled }
+      : {}),
+    ...(parsed.collections_fallback_provider !== undefined
+      ? { collections_fallback_provider: parsed.collections_fallback_provider }
+      : {}),
+    ...(parsed.collections_fallback_auto_sync_enabled !== undefined
+      ? {
+          collections_fallback_auto_sync_enabled:
+            parsed.collections_fallback_auto_sync_enabled,
+        }
+      : {}),
+    ...(parsed.collections_suspended !== undefined
+      ? { collections_suspended: parsed.collections_suspended }
+      : {}),
+    ...(parsed.collections_cutoff_override_hour_ar !== undefined
+      ? {
+          collections_cutoff_override_hour_ar:
+            parsed.collections_cutoff_override_hour_ar,
+        }
+      : {}),
+    ...(parsed.collections_notes !== undefined
+      ? { collections_notes: parsed.collections_notes?.trim() || null }
+      : {}),
   };
 
   const saved = await prisma.$transaction(async (tx) => {

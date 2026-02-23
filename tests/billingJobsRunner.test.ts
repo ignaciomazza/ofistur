@@ -41,6 +41,18 @@ type JobRunRow = {
 
 let locks: LockRow[] = [];
 let runs: JobRunRow[] = [];
+let subscriptions: Array<{ id_agency: number; status: "ACTIVE" | "CANCELED" }> = [];
+let agencyConfigs: Array<{
+  id_agency: number;
+  collections_pd_enabled: boolean;
+  collections_dunning_enabled: boolean;
+  collections_fallback_enabled: boolean;
+  collections_fallback_provider: string | null;
+  collections_fallback_auto_sync_enabled: boolean;
+  collections_suspended: boolean;
+  collections_cutoff_override_hour_ar: number | null;
+  collections_notes: string | null;
+}> = [];
 
 const runAnchorMock = vi.fn();
 const preparePresentmentBatchMock = vi.fn();
@@ -72,6 +84,26 @@ vi.mock("@/services/collections/dunning/service", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   default: {
+    agencyBillingSubscription: {
+      findMany: vi.fn(
+        async ({ where }: { where?: { status?: "ACTIVE" | "CANCELED" } } = {}) =>
+          clone(
+            subscriptions
+              .filter((item) =>
+                where?.status ? item.status === where.status : true,
+              )
+              .map((item) => ({ id_agency: item.id_agency })),
+          ),
+      ),
+    },
+    agencyBillingConfig: {
+      findMany: vi.fn(async ({ where }: { where?: { id_agency?: { in?: number[] } } } = {}) => {
+        const ids = where?.id_agency?.in || [];
+        return clone(
+          agencyConfigs.filter((item) => (ids.length ? ids.includes(item.id_agency) : true)),
+        );
+      }),
+    },
     billingJobLock: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         const lockKey = String(data.lock_key);
@@ -211,6 +243,34 @@ describe("billing jobs runner", () => {
   beforeEach(() => {
     locks = [];
     runs = [];
+    subscriptions = [
+      { id_agency: 1, status: "ACTIVE" },
+      { id_agency: 2, status: "ACTIVE" },
+    ];
+    agencyConfigs = [
+      {
+        id_agency: 1,
+        collections_pd_enabled: true,
+        collections_dunning_enabled: true,
+        collections_fallback_enabled: true,
+        collections_fallback_provider: "CIG_QR",
+        collections_fallback_auto_sync_enabled: true,
+        collections_suspended: false,
+        collections_cutoff_override_hour_ar: null,
+        collections_notes: null,
+      },
+      {
+        id_agency: 2,
+        collections_pd_enabled: false,
+        collections_dunning_enabled: false,
+        collections_fallback_enabled: false,
+        collections_fallback_provider: null,
+        collections_fallback_auto_sync_enabled: false,
+        collections_suspended: false,
+        collections_cutoff_override_hour_ar: null,
+        collections_notes: null,
+      },
+    ];
     runAnchorMock.mockReset();
     preparePresentmentBatchMock.mockReset();
     exportPendingPreparedBatchesMock.mockReset();
@@ -230,6 +290,8 @@ describe("billing jobs runner", () => {
     process.env.BILLING_FALLBACK_AUTO_SYNC = "false";
     process.env.BILLING_FALLBACK_SYNC_BATCH_SIZE = "100";
     process.env.BILLING_JOB_LOCK_TTL_SECONDS = "60";
+    process.env.BILLING_COLLECTIONS_ROLLOUT_REQUIRE_AGENCY_FLAG = "true";
+    delete process.env.BILLING_BATCH_CUTOFF_HOUR_AR;
   });
 
   it("runAnchorDailyJob twice same date keeps idempotent counters and persists BillingJobRun", async () => {
@@ -274,11 +336,18 @@ describe("billing jobs runner", () => {
       actorUserId: 7,
     });
 
-    const firstInput = runAnchorMock.mock.calls[0][0] as { anchorDate: Date };
+    const firstInput = runAnchorMock.mock.calls[0][0] as {
+      anchorDate: Date;
+      agencyIds?: number[];
+    };
     expect(toDateKeyInBuenosAires(firstInput.anchorDate)).toBe("2026-03-08");
+    expect(firstInput.agencyIds).toEqual([1]);
     expect(first.status).toBe("SUCCESS");
     expect(second.status).toBe("SUCCESS");
     expect((second.counters.skipped_idempotent as number) || 0).toBe(1);
+    expect((first.counters.agencies_considered as number) || 0).toBe(2);
+    expect((first.counters.agencies_processed as number) || 0).toBe(1);
+    expect((first.counters.agencies_skipped_disabled as number) || 0).toBe(1);
     expect(runs).toHaveLength(2);
     expect(runs.every((item) => item.status !== "RUNNING")).toBe(true);
     const lockRow = locks.find((item) => item.lock_key === "billing:run_anchor:2026-03-08");
@@ -373,6 +442,42 @@ describe("billing jobs runner", () => {
 
     expect(result.status).toBe("NO_OP");
     expect((result.counters.already_exported as number) || 0).toBe(1);
+  });
+
+  it("prepare job in CRON skips non business day", async () => {
+    const { preparePdBatchJob } = await import(
+      "@/services/collections/jobs/runner"
+    );
+
+    const result = await preparePdBatchJob({
+      source: "CRON",
+      targetDateAr: "2026-03-08", // domingo
+      adapter: "debug_csv",
+      now: new Date("2026-03-08T10:00:00.000Z"),
+    });
+
+    expect(result.status).toBe("NO_OP");
+    expect((result.counters.skipped_non_business_day as number) || 0).toBe(1);
+    expect(preparePresentmentBatchMock).not.toHaveBeenCalled();
+  });
+
+  it("export job in CRON defers when cutoff already passed", async () => {
+    process.env.BILLING_BATCH_CUTOFF_HOUR_AR = "15";
+
+    const { exportPdBatchJob } = await import(
+      "@/services/collections/jobs/runner"
+    );
+
+    const result = await exportPdBatchJob({
+      source: "CRON",
+      targetDateAr: "2026-03-09",
+      adapter: "debug_csv",
+      now: new Date("2026-03-09T19:00:00.000Z"), // 16:00 AR
+    });
+
+    expect(result.status).toBe("NO_OP");
+    expect((result.counters.deferred_by_cutoff as number) || 0).toBe(1);
+    expect(exportPendingPreparedBatchesMock).not.toHaveBeenCalled();
   });
 
   it("fallback create job persists SUCCESS counters", async () => {

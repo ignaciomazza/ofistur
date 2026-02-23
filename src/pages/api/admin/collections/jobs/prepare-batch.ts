@@ -54,6 +54,7 @@ export default async function handler(
     const targetDateAr = readString(req, "date");
     const adapter = readString(req, "adapter");
     const dryRun = readBoolean(req, "dryRun", false);
+    const force = readBoolean(req, "force", false);
 
     const result = await preparePdBatchJob({
       source: "MANUAL",
@@ -61,6 +62,7 @@ export default async function handler(
       targetDateAr,
       adapter,
       dryRun,
+      force,
     });
 
     return res.status(200).json({ result });
@@ -70,4 +72,3 @@ export default async function handler(
     return res.status(400).json({ error: message });
   }
 }
-

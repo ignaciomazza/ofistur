@@ -8,6 +8,8 @@ export type BillingConfig = {
   timezone: string;
   anchorDay: number;
   dunningRetryDays: number[];
+  dunningUseBusinessDays: boolean;
+  arHolidaysDateKeys: string[];
   suspendAfterDays: number;
   directDebitDiscountPct: number;
   defaultVatRate: number;
@@ -40,6 +42,27 @@ function parseBoolean(input: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
+function parseHolidayDateKeys(raw: string | undefined): string[] {
+  const value = String(raw || "").trim();
+  if (!value) return [];
+
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => String(item || "").trim())
+        .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item));
+    }
+  } catch {
+    // Fallback a formato CSV.
+  }
+
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item));
+}
+
 export function parseRetryDaysEnv(raw: string | undefined): number[] {
   const value = String(raw ?? "")
     .split(",")
@@ -64,6 +87,11 @@ export function getBillingConfig(): BillingConfig {
     timezone,
     anchorDay,
     dunningRetryDays: retries.length ? retries : [2, 4],
+    dunningUseBusinessDays: parseBoolean(
+      process.env.BILLING_DUNNING_USE_BUSINESS_DAYS,
+      true,
+    ),
+    arHolidaysDateKeys: parseHolidayDateKeys(process.env.BILLING_AR_HOLIDAYS_JSON),
     suspendAfterDays: Math.max(
       1,
       parseInteger(process.env.BILLING_SUSPEND_AFTER_DAYS, 7),

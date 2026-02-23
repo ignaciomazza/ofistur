@@ -5,6 +5,15 @@ import type {
   BillingJobSource,
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { toDateKeyInBuenosAires } from "@/lib/buenosAiresDate";
+import {
+  hourInBuenosAires,
+  isBusinessDayAr,
+} from "@/services/collections/core/businessCalendarAr";
+import {
+  getAgencyCollectionsRolloutMap,
+  isAgencyEnabledForPdAutomation,
+} from "@/services/collections/core/agencyCollectionsRollout";
 import {
   addDaysLocal,
   dateKeyInTimeZone,
@@ -88,6 +97,7 @@ async function executeBillingJob(input: {
   jobName: BillingJobName;
   source: BillingJobSource;
   lockKey: string;
+  now?: Date;
   targetDateAr?: string | null;
   adapter?: string | null;
   actorUserId?: number | null;
@@ -180,7 +190,7 @@ async function executeBillingJob(input: {
   try {
     const result = await input.onExecute({
       runId: run.runId,
-      now: new Date(),
+      now: input.now || new Date(),
     });
 
     const finishedAt = new Date();
@@ -295,6 +305,64 @@ function resolveFallbackProvider(
   return "CIG_QR";
 }
 
+function hasPassedGlobalCutoff(input: {
+  now: Date;
+  targetDateAr: string;
+  cutoffHourAr: number | null;
+}): boolean {
+  if (input.cutoffHourAr == null) return false;
+  const nowKey = toDateKeyInBuenosAires(input.now);
+  if (!nowKey || nowKey !== input.targetDateAr) return false;
+  return hourInBuenosAires(input.now) >= input.cutoffHourAr;
+}
+
+function shouldEnforceOperationalWindow(source: BillingJobSource): boolean {
+  return source === "CRON";
+}
+
+async function resolvePdRolloutStats(): Promise<{
+  agenciesConsidered: number;
+  agenciesEnabled: number;
+  agenciesSkippedDisabled: number;
+  eligibleAgencyIds: number[];
+  applyAgencyFilter: boolean;
+}> {
+  const subscriptionsDelegate = (prisma as unknown as {
+    agencyBillingSubscription?: {
+      findMany?: (args: unknown) => Promise<Array<{ id_agency: number }>>;
+    };
+  }).agencyBillingSubscription;
+
+  if (!subscriptionsDelegate || typeof subscriptionsDelegate.findMany !== "function") {
+    return {
+      agenciesConsidered: 0,
+      agenciesEnabled: 0,
+      agenciesSkippedDisabled: 0,
+      eligibleAgencyIds: [],
+      applyAgencyFilter: false,
+    };
+  }
+
+  const subscriptions = await subscriptionsDelegate.findMany({
+    where: { status: "ACTIVE" },
+    select: { id_agency: true },
+  });
+
+  const agencyIds = Array.from(new Set(subscriptions.map((sub) => sub.id_agency)));
+  const rolloutMap = await getAgencyCollectionsRolloutMap({ agencyIds });
+  const eligibleAgencyIds = agencyIds.filter((agencyId) =>
+    isAgencyEnabledForPdAutomation(rolloutMap.get(agencyId)),
+  );
+
+  return {
+    agenciesConsidered: agencyIds.length,
+    agenciesEnabled: eligibleAgencyIds.length,
+    agenciesSkippedDisabled: Math.max(0, agencyIds.length - eligibleAgencyIds.length),
+    eligibleAgencyIds,
+    applyAgencyFilter: true,
+  };
+}
+
 export async function runAnchorDailyJob(input?: {
   source?: BillingJobSource;
   actorUserId?: number | null;
@@ -315,14 +383,39 @@ export async function runAnchorDailyJob(input?: {
   return executeBillingJob({
     jobName: "run_anchor_daily",
     source,
+    now: input?.now,
     lockKey: `billing:run_anchor:${targetDateAr}`,
     targetDateAr,
     actorUserId: input?.actorUserId ?? null,
     onExecute: async () => {
+      const rollout = await resolvePdRolloutStats();
+      if (rollout.applyAgencyFilter && rollout.eligibleAgencyIds.length === 0) {
+        return {
+          status: "NO_OP" as JobTerminalStatus,
+          noOp: true,
+          counters: {
+            anchor_date: targetDateAr,
+            subscriptions_considered: 0,
+            subscriptions_processed: 0,
+            cycles_created: 0,
+            charges_created: 0,
+            attempts_created: 0,
+            skipped_idempotent: 0,
+            errors_count: 0,
+            agencies_considered: rollout.agenciesConsidered,
+            agencies_processed: 0,
+            agencies_skipped_disabled: rollout.agenciesSkippedDisabled,
+          },
+        };
+      }
+
       const summary = await runAnchor({
         anchorDate,
         overrideFx,
         actorUserId: input?.actorUserId ?? null,
+        agencyIds: rollout.applyAgencyFilter
+          ? rollout.eligibleAgencyIds
+          : undefined,
       });
 
       const status: JobTerminalStatus =
@@ -346,6 +439,11 @@ export async function runAnchorDailyJob(input?: {
           attempts_created: summary.attempts_created,
           skipped_idempotent: summary.skipped_idempotent ?? 0,
           errors_count: summary.errors.length,
+          agencies_considered: rollout.agenciesConsidered,
+          agencies_processed: rollout.applyAgencyFilter
+            ? rollout.agenciesEnabled
+            : 0,
+          agencies_skipped_disabled: rollout.agenciesSkippedDisabled,
         },
         metadata: {
           fx_rates_used: summary.fx_rates_used,
@@ -365,6 +463,10 @@ function summarizePrepareResult(result: PreparePresentmentBatchResult): BillingJ
     attempts_count: result.attempts_count,
     amount_total: result.amount_total,
     eligible_attempts: result.eligible_attempts,
+    deferred_by_cutoff: result.deferred_by_cutoff ?? 0,
+    agencies_considered: result.agencies_considered ?? 0,
+    agencies_processed: result.agencies_processed ?? 0,
+    agencies_skipped_disabled: result.agencies_skipped_disabled ?? 0,
   };
 }
 
@@ -374,6 +476,7 @@ export async function preparePdBatchJob(input?: {
   targetDateAr?: string | null;
   adapter?: string | null;
   dryRun?: boolean;
+  force?: boolean;
   now?: Date;
 }): Promise<BillingJobResult> {
   const config = getBillingJobsConfig();
@@ -386,23 +489,66 @@ export async function preparePdBatchJob(input?: {
   const adapter = String(input?.adapter || config.pdAdapter).trim().toLowerCase();
   const businessDate = startOfLocalDay(targetDateAr, config.timezone);
   const dryRun = Boolean(input?.dryRun);
+  const force = Boolean(input?.force);
 
   return executeBillingJob({
     jobName: "prepare_pd_batch",
     source,
+    now: input?.now,
     lockKey: `billing:prepare_batch:${adapter}:${targetDateAr}`,
     targetDateAr,
     adapter,
     actorUserId: input?.actorUserId ?? null,
     metadata: {
       dry_run: dryRun,
+      force,
     },
-    onExecute: async () => {
+    onExecute: async ({ now }) => {
+      const enforceOperationalWindow =
+        shouldEnforceOperationalWindow(source) && !force;
+
+      if (enforceOperationalWindow && !isBusinessDayAr(targetDateAr)) {
+        const counters: BillingJobCounters = {
+          no_op: true,
+          reason: "non_business_day",
+          skipped_non_business_day: 1,
+          deferred_by_cutoff: 0,
+        };
+        return {
+          status: "NO_OP" as JobTerminalStatus,
+          noOp: true,
+          counters,
+        };
+      }
+
+      if (
+        enforceOperationalWindow &&
+        hasPassedGlobalCutoff({
+          now,
+          targetDateAr,
+          cutoffHourAr: config.batchCutoffHourAr,
+        })
+      ) {
+        const counters: BillingJobCounters = {
+          no_op: true,
+          reason: "deferred_to_next_window",
+          deferred_by_cutoff: 1,
+          skipped_non_business_day: 0,
+        };
+        return {
+          status: "NO_OP" as JobTerminalStatus,
+          noOp: true,
+          counters,
+        };
+      }
+
       const prepared = await preparePresentmentBatch({
         businessDate,
         actorUserId: input?.actorUserId ?? null,
         adapterName: adapter,
         dryRun,
+        globalCutoffHourAr: config.batchCutoffHourAr,
+        force,
       });
 
       const status: JobTerminalStatus = prepared.no_op ? "NO_OP" : "SUCCESS";
@@ -434,6 +580,7 @@ export async function exportPdBatchJob(input?: {
   targetDateAr?: string | null;
   adapter?: string | null;
   batchId?: number | null;
+  force?: boolean;
   now?: Date;
 }): Promise<BillingJobResult> {
   const config = getBillingJobsConfig();
@@ -445,6 +592,7 @@ export async function exportPdBatchJob(input?: {
   });
   const adapter = String(input?.adapter || config.pdAdapter).trim().toLowerCase();
   const batchId = input?.batchId && input.batchId > 0 ? input.batchId : null;
+  const force = Boolean(input?.force);
   const lockKey = batchId
     ? `billing:export_batch:${batchId}`
     : `billing:export_batch:${adapter}:${targetDateAr}`;
@@ -452,11 +600,51 @@ export async function exportPdBatchJob(input?: {
   return executeBillingJob({
     jobName: "export_pd_batch",
     source,
+    now: input?.now,
     lockKey,
     targetDateAr,
     adapter,
     actorUserId: input?.actorUserId ?? null,
-    onExecute: async () => {
+    onExecute: async ({ now }) => {
+      const enforceOperationalWindow =
+        shouldEnforceOperationalWindow(source) && !force;
+
+      if (!batchId && enforceOperationalWindow && !isBusinessDayAr(targetDateAr)) {
+        const counters: BillingJobCounters = {
+          no_op: true,
+          reason: "non_business_day",
+          skipped_non_business_day: 1,
+          deferred_by_cutoff: 0,
+        };
+        return {
+          status: "NO_OP" as JobTerminalStatus,
+          noOp: true,
+          counters,
+        };
+      }
+
+      if (
+        !batchId &&
+        enforceOperationalWindow &&
+        hasPassedGlobalCutoff({
+          now,
+          targetDateAr,
+          cutoffHourAr: config.batchCutoffHourAr,
+        })
+      ) {
+        const counters: BillingJobCounters = {
+          no_op: true,
+          reason: "deferred_to_next_window",
+          deferred_by_cutoff: 1,
+          skipped_non_business_day: 0,
+        };
+        return {
+          status: "NO_OP" as JobTerminalStatus,
+          noOp: true,
+          counters,
+        };
+      }
+
       if (batchId) {
         const exported = await exportPresentmentBatch({
           batchId,
@@ -467,17 +655,18 @@ export async function exportPdBatchJob(input?: {
           : exported.exported
             ? "SUCCESS"
             : "NO_OP";
+        const counters: BillingJobCounters = {
+          batch_id: batchId,
+          exported: exported.exported,
+          already_exported: exported.already_exported,
+          status: exported.status,
+          amount_total: exported.amount_total,
+          record_count: exported.record_count,
+        };
         return {
           status,
           noOp: status === "NO_OP",
-          counters: {
-            batch_id: batchId,
-            exported: exported.exported,
-            already_exported: exported.already_exported,
-            status: exported.status,
-            amount_total: exported.amount_total,
-            record_count: exported.record_count,
-          },
+          counters,
         };
       }
 
@@ -602,6 +791,7 @@ export async function fallbackCreateJob(input?: {
   return executeBillingJob({
     jobName: "fallback_create",
     source,
+    now: input?.now,
     lockKey,
     targetDateAr,
     adapter: provider,
@@ -677,6 +867,7 @@ export async function fallbackStatusSyncJob(input?: {
   return executeBillingJob({
     jobName: "fallback_status_sync",
     source,
+    now: input?.now,
     lockKey,
     targetDateAr,
     adapter: provider,
@@ -699,6 +890,7 @@ export async function fallbackStatusSyncJob(input?: {
         fallbackIntentId,
         limit: input?.limit ?? config.fallbackSyncBatchSize,
         actorUserId: input?.actorUserId ?? null,
+        onlyAutoSyncEnabled: source === "CRON",
       });
 
       const status: JobTerminalStatus = synced.no_op ? "NO_OP" : "SUCCESS";
@@ -827,6 +1019,14 @@ export async function getBillingJobsOverview(input?: {
     fallback_expired_today: number;
     paid_via_pd_last_30d: number;
     paid_via_fallback_last_30d: number;
+    jobs_failed_last_24h: number;
+    stale_prepared_batches: number;
+    stale_exported_batches: number;
+    fallback_expiring_24h: number;
+    review_cases_open: number;
+    charges_escalated_suspended: number;
+    late_duplicates_last_30d: number;
+    recovery_rate_30d: number;
   };
   recent_runs: Awaited<ReturnType<typeof listRecentBillingJobRuns>>;
 }> {
@@ -839,6 +1039,14 @@ export async function getBillingJobsOverview(input?: {
     timezone,
   });
   const last30WindowStart = addDaysLocal(todayWindow.start, -30, timezone);
+  const last24hWindowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const stalePreparedBefore = new Date(
+    now.getTime() - config.healthStaleExportHours * 60 * 60 * 1000,
+  );
+  const staleExportedBefore = new Date(
+    now.getTime() - config.healthStaleReconcileHours * 60 * 60 * 1000,
+  );
+  const next24hWindowEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
   const [
     pendingAttempts,
@@ -855,6 +1063,14 @@ export async function getBillingJobsOverview(input?: {
     fallbackExpiredToday,
     paidViaPdLast30d,
     paidViaFallbackLast30d,
+    fallbackCreatedLast30d,
+    jobsFailedLast24h,
+    stalePreparedBatches,
+    staleExportedBatches,
+    fallbackExpiring24h,
+    reviewCasesOpen,
+    chargesEscalatedSuspended,
+    lateDuplicatesLast30d,
     recentRuns,
   ] = await Promise.all([
     prisma.agencyBillingAttempt.count({
@@ -966,8 +1182,83 @@ export async function getBillingJobsOverview(input?: {
         },
       },
     }),
+    prisma.agencyBillingFallbackIntent.count({
+      where: {
+        created_at: {
+          gte: last30WindowStart,
+          lt: todayWindow.endExclusive,
+        },
+      },
+    }),
+    prisma.billingJobRun.count({
+      where: {
+        status: "FAILED",
+        started_at: {
+          gte: last24hWindowStart,
+          lt: now,
+        },
+      },
+    }),
+    prisma.agencyBillingFileBatch.count({
+      where: {
+        direction: "OUTBOUND",
+        status: { in: ["PREPARED", "CREATED"] },
+        created_at: {
+          lt: stalePreparedBefore,
+        },
+      },
+    }),
+    prisma.agencyBillingFileBatch.count({
+      where: {
+        direction: "OUTBOUND",
+        status: "EXPORTED",
+        exported_at: { lt: staleExportedBefore },
+        childBatches: {
+          none: {
+            direction: "INBOUND",
+            imported_at: { not: null },
+          },
+        },
+      },
+    }),
+    prisma.agencyBillingFallbackIntent.count({
+      where: {
+        status: { in: [...OPEN_FALLBACK_STATUSES] },
+        expires_at: {
+          gte: now,
+          lt: next24hWindowEnd,
+        },
+      },
+    }),
+    prisma.agencyBillingPaymentReviewCase.count({
+      where: {
+        status: { in: ["OPEN", "IN_REVIEW"] },
+      },
+    }),
+    prisma.agencyBillingCharge.count({
+      where: {
+        status: { not: "PAID" },
+        dunning_stage: { gte: 4 },
+      },
+    }),
+    prisma.agencyBillingPaymentReviewCase.count({
+      where: {
+        type: "LATE_DUPLICATE_PAYMENT",
+        detected_at: {
+          gte: last30WindowStart,
+          lt: todayWindow.endExclusive,
+        },
+      },
+    }),
     listRecentBillingJobRuns({ limit: input?.runsLimit ?? 12 }),
   ]);
+
+  const recoveryRate30d =
+    fallbackCreatedLast30d > 0
+      ? Number(
+          ((paidViaFallbackLast30d / fallbackCreatedLast30d) * 100).toFixed(2),
+        )
+      : 0;
 
   return {
     timezone,
@@ -987,6 +1278,14 @@ export async function getBillingJobsOverview(input?: {
       fallback_expired_today: fallbackExpiredToday,
       paid_via_pd_last_30d: paidViaPdLast30d,
       paid_via_fallback_last_30d: paidViaFallbackLast30d,
+      jobs_failed_last_24h: jobsFailedLast24h,
+      stale_prepared_batches: stalePreparedBatches,
+      stale_exported_batches: staleExportedBatches,
+      fallback_expiring_24h: fallbackExpiring24h,
+      review_cases_open: reviewCasesOpen,
+      charges_escalated_suspended: chargesEscalatedSuspended,
+      late_duplicates_last_30d: lateDuplicatesLast30d,
+      recovery_rate_30d: recoveryRate30d,
     },
     recent_runs: recentRuns,
   };
