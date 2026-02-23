@@ -763,10 +763,8 @@ function PassengerClientFields({
   if (!draft) return null;
 
   const hiddenSet = new Set(hiddenFields);
-  const normalizedRequired =
-    requiredFields.length > 0 ? requiredFields : DEFAULT_REQUIRED_FIELDS;
   const requiredSet = new Set(
-    normalizedRequired.filter((field) => !hiddenSet.has(field)),
+    requiredFields.filter((field) => !hiddenSet.has(field)),
   );
 
   const isHidden = (field: string) => hiddenSet.has(field);

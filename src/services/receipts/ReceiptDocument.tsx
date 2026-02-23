@@ -155,7 +155,7 @@ const formatServiceRange = (svc: {
   return "—";
 };
 
-const CREDIT_METHOD_LABEL = "Crédito operador";
+const CREDIT_METHOD_LABEL = "Crédito/corriente operador";
 const VIRTUAL_CREDIT_METHOD_ID = 999000000;
 
 const paymentLabel = (p: ReceiptPdfPaymentLine) => {
@@ -171,11 +171,7 @@ const paymentLabel = (p: ReceiptPdfPaymentLine) => {
         ? `Método N° ${p.payment_method_id}`
         : "Método");
 
-  const acc =
-    (p.accountName && p.accountName.trim()) ||
-    (p.account_id ? `Cuenta N° ${p.account_id}` : "");
-
-  return acc ? `${pm} (${acc})` : pm;
+  return pm;
 };
 
 /* ====== Estilos ====== */

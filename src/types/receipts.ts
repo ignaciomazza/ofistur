@@ -99,6 +99,10 @@ export type ReceiptPayload = {
   account_id?: number;
 
   payments?: ReceiptPaymentLine[];
+
+  // excedente para cuenta crédito/corriente del pax
+  allow_client_credit_excess?: boolean;
+  client_credit_client_id?: number;
 };
 
 /** Opción para “asociar recibo existente” */

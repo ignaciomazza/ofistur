@@ -1,3 +1,5 @@
+import { extractBookingComponentRulesFromAccessRules } from "@/utils/receiptServiceSelection";
+
 export type Role = string;
 
 const ADMIN_ROLES = ["desarrollador", "gerente", "administrativo"] as const;
@@ -216,9 +218,10 @@ export function normalizeFinanceSectionRules(
 export function normalizeBookingComponentRules(
   raw: unknown,
 ): BookingComponentAccessRule[] {
-  if (!Array.isArray(raw)) return [];
+  const source = extractBookingComponentRulesFromAccessRules(raw);
+  if (!Array.isArray(source)) return [];
   const rules: BookingComponentAccessRule[] = [];
-  for (const item of raw) {
+  for (const item of source) {
     if (!item || typeof item !== "object") continue;
     const rec = item as Record<string, unknown>;
     const id = toPositiveInt(rec.id_user);

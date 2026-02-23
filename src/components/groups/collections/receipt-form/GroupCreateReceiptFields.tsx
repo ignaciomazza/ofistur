@@ -716,7 +716,7 @@ export default function GroupCreateReceiptFields(props: {
               id="payment_desc"
               value={paymentDescription}
               onChange={(e) => setPaymentDescription(e.target.value)}
-              placeholder="Ej.: Efectivo: 100 USD + Crédito operador (X · CuentaCrédito Y · Banco Z): 200 USD"
+              placeholder="Ej.: Efectivo: 100 USD + Transferencia: 200 USD (si querés, agregá detalle entre paréntesis)"
               className={inputBase}
             />
             {errors.paymentDescription && (

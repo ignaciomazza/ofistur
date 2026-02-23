@@ -20,6 +20,7 @@ import {
 } from "@/utils/permissions";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
+import { extractReceiptServiceSelectionModeFromBookingAccessRules } from "@/utils/receiptServiceSelection";
 import {
   endOfDayUtcFromDateKeyInBuenosAires,
   startOfDayUtcFromDateKeyInBuenosAires,
@@ -182,6 +183,10 @@ type ReceiptPostBody = {
   base_currency?: string;
   counter_amount?: number | string;
   counter_currency?: string;
+
+  // opcional: permitir excedente a cuenta crédito/corriente del pax
+  allow_client_credit_excess?: boolean;
+  client_credit_client_id?: number;
 };
 
 /* ======================================================
@@ -1212,6 +1217,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     base_currency,
     counter_amount,
     counter_currency,
+    allow_client_credit_excess,
+    client_credit_client_id,
   } = rawBody as ReceiptPostBody;
 
   let amountCurrencyISO = normalizeCurrency(amountCurrency || "");
@@ -1225,7 +1232,9 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   const bookingId = Number(booking?.id_booking);
   const hasBooking = Number.isFinite(bookingId);
   const normalizedServiceIds = normalizeIdList(rawServiceIds);
-  const normalizedClientIds = normalizeIdList(rawClientIds);
+  let normalizedClientIds = normalizeIdList(rawClientIds);
+  const allowClientCreditExcess = Boolean(allow_client_credit_excess);
+  const requestedClientCreditClientId = toOptionalId(client_credit_client_id);
 
   if (!isNonEmptyString(concept)) {
     return res.status(400).json({ error: "concept es requerido" });
@@ -1341,26 +1350,26 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   }
  
   let serviceIdsForReceipt = normalizedServiceIds;
+  let clientCreditExcessByCurrency: Record<string, number> = {};
+  let clientCreditClientId: number | null = null;
 
   try {
     // Si hay booking: validar pertenencia y servicios
     if (hasBooking) {
       const booking = await ensureBookingInAgency(bookingId, authAgencyId);
 
-      if (normalizedServiceIds.length === 0) {
-        return res.status(400).json({
-          error:
-            "serviceIds debe tener al menos un ID para recibos asociados a una reserva",
-        });
-      }
-
       const calcConfig = await prisma.serviceCalcConfig.findUnique({
         where: { id_agency: authAgencyId },
         select: {
           use_booking_sale_total: true,
           billing_breakdown_mode: true,
+          booking_access_rules: true,
         },
       });
+      const receiptServiceSelectionMode =
+        extractReceiptServiceSelectionModeFromBookingAccessRules(
+          calcConfig?.booking_access_rules,
+        );
 
       const inheritedUseBookingSaleTotal = Boolean(calcConfig?.use_booking_sale_total);
       const bookingSaleMode =
@@ -1385,8 +1394,28 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         },
       });
 
+      const allServiceIds = services.map((s) => s.id_service);
+      let resolvedServiceIds = normalizedServiceIds;
+
+      if (receiptServiceSelectionMode === "booking") {
+        resolvedServiceIds = allServiceIds;
+      } else if (
+        receiptServiceSelectionMode === "optional" &&
+        resolvedServiceIds.length === 0
+      ) {
+        resolvedServiceIds = allServiceIds;
+      } else if (
+        receiptServiceSelectionMode === "required" &&
+        resolvedServiceIds.length === 0
+      ) {
+        return res.status(400).json({
+          error:
+            "serviceIds debe tener al menos un ID para recibos asociados a una reserva",
+        });
+      }
+
       const okServiceIds = new Set(services.map((s) => s.id_service));
-      const badServices = normalizedServiceIds.filter((id) => !okServiceIds.has(id));
+      const badServices = resolvedServiceIds.filter((id) => !okServiceIds.has(id));
 
       if (badServices.length > 0) {
         return res
@@ -1395,18 +1424,20 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       }
 
       if (bookingSaleMode) {
-        serviceIdsForReceipt = services.map((s) => s.id_service);
+        serviceIdsForReceipt = allServiceIds;
+      } else {
+        serviceIdsForReceipt = resolvedServiceIds;
       }
 
       const salesByCurrency = buildSelectedServiceSalesByCurrency({
-        selectedServiceIds: normalizedServiceIds,
+        selectedServiceIds: resolvedServiceIds,
         services,
         bookingSaleMode,
         manualMode,
         bookingSaleTotals,
       });
 
-      const selectedServiceIdSet = new Set(normalizedServiceIds);
+      const selectedServiceIdSet = new Set(resolvedServiceIds);
       const existingReceipts = await prisma.receipt.findMany({
         where: {
           bookingId_booking: bookingId,
@@ -1485,6 +1516,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       });
 
       const overpaidCurrencies: string[] = [];
+      const overpaidByCurrency: Record<string, number> = {};
       const allCurrencies = new Set([
         ...Object.keys(remainingBeforeCurrent),
         ...Object.keys(currentPaidByCurrency),
@@ -1495,18 +1527,33 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         );
         if (remainingAfterCurrent < -DEBT_TOLERANCE) {
           overpaidCurrencies.push(code);
+          overpaidByCurrency[code] = round2(Math.abs(remainingAfterCurrent));
         }
       }
 
       if (overpaidCurrencies.length > 0) {
-        return res.status(400).json({
-          error: `El recibo excede el saldo pendiente en ${overpaidCurrencies.join(", ")}.`,
-        });
+        if (!allowClientCreditExcess) {
+          return res.status(400).json({
+            error: `El recibo excede el saldo pendiente en ${overpaidCurrencies.join(", ")}.`,
+          });
+        }
+        clientCreditExcessByCurrency = overpaidByCurrency;
+        clientCreditClientId =
+          requestedClientCreditClientId ?? normalizedClientIds[0] ?? null;
+        if (!clientCreditClientId) {
+          return res.status(400).json({
+            error:
+              "Para dejar excedente en cuenta crédito/corriente, seleccioná un pax.",
+          });
+        }
       }
     }
 
     // Validar clientIds contra la reserva (solo si hay booking)
-    if (hasBooking && normalizedClientIds.length > 0) {
+    if (
+      hasBooking &&
+      (normalizedClientIds.length > 0 || clientCreditClientId != null)
+    ) {
       const bk = await prisma.booking.findUnique({
         where: { id_booking: bookingId },
         select: {
@@ -1529,6 +1576,19 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         return res
           .status(400)
           .json({ error: "Algún pax no pertenece a la reserva" });
+      }
+
+      if (clientCreditClientId != null && !allowed.has(clientCreditClientId)) {
+        return res.status(400).json({
+          error:
+            "El pax elegido para cuenta crédito/corriente no pertenece a la reserva.",
+        });
+      }
+      if (
+        clientCreditClientId != null &&
+        !normalizedClientIds.includes(clientCreditClientId)
+      ) {
+        normalizedClientIds = [...normalizedClientIds, clientCreditClientId];
       }
     }
 
@@ -1661,6 +1721,15 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           })
         : null;
 
+    const clientCreditExcessPayload =
+      clientCreditClientId != null &&
+      Object.keys(clientCreditExcessByCurrency).length > 0
+        ? {
+            client_id: clientCreditClientId,
+            by_currency: clientCreditExcessByCurrency,
+          }
+        : null;
+
     return res.status(201).json({
       receipt: full
         ? {
@@ -1669,6 +1738,9 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
             payments: normalizePaymentsFromReceipt(full),
           }
         : { ...createdReceipt, public_id: createdPublicId },
+      ...(clientCreditExcessPayload
+        ? { client_credit_excess: clientCreditExcessPayload }
+        : {}),
     });
   } catch (error: unknown) {
     // eslint-disable-next-line no-console

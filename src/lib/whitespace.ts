@@ -56,13 +56,19 @@ export function expandTabs(s: string, width = 4): string {
 /**
  * Preserva espacios múltiples y leading spaces usando NBSP.
  * - Convierte espacios iniciales de cada línea a NBSP.
- * - Para runs de 2+ espacios, mantiene 1 espacio normal y el resto NBSP
- *   (para no romper el wrapping).
+ * - Para runs de 2+ espacios internos, alterna NBSP y espacio normal
+ *   para conservar visualmente el espaciado sin volver toda la secuencia
+ *   no quebrable.
  */
 export function preserveSpaces(s: string): string {
   if (!s) return s;
   let out = s.replace(/^ +/gm, (m) => NBSP.repeat(m.length));
-  out = out.replace(/ {2,}/g, (m) => NBSP.repeat(m.length - 1) + " ");
+  out = out.replace(/ {2,}/g, (m) =>
+    m
+      .split("")
+      .map((_, i) => (i % 2 === 0 ? NBSP : " "))
+      .join(""),
+  );
   return out;
 }
 

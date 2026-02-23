@@ -4,6 +4,12 @@ import prisma from "@/lib/prisma";
 import { getNextAgencyCounter } from "@/lib/agencyCounters";
 import { jwtVerify, type JWTPayload } from "jose";
 import type { Prisma, PrismaClient } from "@prisma/client";
+import {
+  type ReceiptServiceSelectionMode,
+  parseReceiptServiceSelectionMode,
+  extractReceiptServiceSelectionModeFromBookingAccessRules,
+  buildBookingAccessRulesValue,
+} from "@/utils/receiptServiceSelection";
 
 /* =============================
  * Types “lite”
@@ -15,6 +21,7 @@ type ServiceCalcConfigRow = {
   billing_adjustments: unknown | null;
   use_booking_sale_total: boolean | null;
   booking_visibility_mode: string | null;
+  booking_access_rules?: unknown | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -30,6 +37,7 @@ type CalcConfigResponse = {
   billing_adjustments: BillingAdjustment[];
   use_booking_sale_total: boolean;
   booking_visibility_mode: BookingVisibilityMode;
+  receipt_service_selection_mode: ReceiptServiceSelectionMode;
 };
 
 type BookingVisibilityMode = "all" | "team" | "own";
@@ -346,6 +354,7 @@ export default async function handler(
               billing_adjustments: true,
               use_booking_sale_total: true,
               booking_visibility_mode: true,
+              booking_access_rules: true,
             },
           }),
           agency.findUnique({
@@ -365,6 +374,10 @@ export default async function handler(
           use_booking_sale_total: Boolean(cfg?.use_booking_sale_total),
           booking_visibility_mode:
             parseBookingVisibilityMode(cfg?.booking_visibility_mode) ?? "own",
+          receipt_service_selection_mode:
+            extractReceiptServiceSelectionModeFromBookingAccessRules(
+              cfg?.booking_access_rules,
+            ),
         };
         return res.status(200).json(payload);
       } catch (e) {
@@ -390,6 +403,7 @@ export default async function handler(
           billing_adjustments?: unknown;
           use_booking_sale_total?: unknown;
           booking_visibility_mode?: unknown;
+          receipt_service_selection_mode?: unknown;
         };
 
         let mode: string | undefined;
@@ -451,12 +465,29 @@ export default async function handler(
           });
         }
 
+        const receiptServiceSelectionMode =
+          body.receipt_service_selection_mode !== undefined
+            ? parseReceiptServiceSelectionMode(
+                body.receipt_service_selection_mode,
+              )
+            : undefined;
+        if (
+          body.receipt_service_selection_mode !== undefined &&
+          receiptServiceSelectionMode == null
+        ) {
+          return res.status(400).json({
+            error:
+              'receipt_service_selection_mode debe ser "required", "optional" o "booking"',
+          });
+        }
+
         if (
           mode === undefined &&
           pct === undefined &&
           adjustments === undefined &&
           useBookingSaleTotal === undefined &&
-          visibilityMode === undefined
+          visibilityMode === undefined &&
+          receiptServiceSelectionMode === undefined
         ) {
           return res
             .status(400)
@@ -468,6 +499,10 @@ export default async function handler(
           useBookingSaleTotal === null ? undefined : useBookingSaleTotal;
         const visibilityModeValue =
           visibilityMode === null ? undefined : visibilityMode;
+        const receiptServiceSelectionModeValue =
+          receiptServiceSelectionMode === null
+            ? undefined
+            : receiptServiceSelectionMode;
 
         await prisma.$transaction(async (tx) => {
           const { serviceCalcConfig: scc, agency: ag } = requireDelegates(tx);
@@ -476,11 +511,12 @@ export default async function handler(
             mode !== undefined ||
             adjustments !== undefined ||
             useBookingSaleTotal !== undefined ||
-            visibilityModeValue !== undefined
+            visibilityModeValue !== undefined ||
+            receiptServiceSelectionModeValue !== undefined
           ) {
             const existing = await scc.findUnique({
               where: { id_agency: auth.id_agency },
-              select: { id_config: true },
+              select: { id_config: true, booking_access_rules: true },
             });
             if (existing) {
               const data: Prisma.ServiceCalcConfigUpdateInput = {};
@@ -493,6 +529,13 @@ export default async function handler(
               }
               if (visibilityModeValue !== undefined) {
                 data.booking_visibility_mode = visibilityModeValue;
+              }
+              if (receiptServiceSelectionModeValue !== undefined) {
+                data.booking_access_rules = buildBookingAccessRulesValue({
+                  existing: existing.booking_access_rules,
+                  receiptServiceSelectionMode:
+                    receiptServiceSelectionModeValue,
+                }) as Prisma.InputJsonValue;
               }
               await scc.update({
                 where: { id_agency: auth.id_agency },
@@ -518,6 +561,14 @@ export default async function handler(
               if (visibilityModeValue !== undefined) {
                 data.booking_visibility_mode = visibilityModeValue;
               }
+              if (receiptServiceSelectionModeValue !== undefined) {
+                data.booking_access_rules = buildBookingAccessRulesValue({
+                  existing: null,
+                  rules: [],
+                  receiptServiceSelectionMode:
+                    receiptServiceSelectionModeValue,
+                }) as Prisma.InputJsonValue;
+              }
               await scc.create({
                 data,
               });
@@ -539,6 +590,7 @@ export default async function handler(
               billing_adjustments: true,
               use_booking_sale_total: true,
               booking_visibility_mode: true,
+              booking_access_rules: true,
             },
           }),
           agency.findUnique({
@@ -558,6 +610,10 @@ export default async function handler(
           use_booking_sale_total: Boolean(cfg?.use_booking_sale_total),
           booking_visibility_mode:
             parseBookingVisibilityMode(cfg?.booking_visibility_mode) ?? "own",
+          receipt_service_selection_mode:
+            extractReceiptServiceSelectionModeFromBookingAccessRules(
+              cfg?.booking_access_rules,
+            ),
         };
         return res.status(200).json(payload);
       } catch (e) {

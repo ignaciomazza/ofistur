@@ -856,35 +856,7 @@ export default function GroupReceiptForm({
         (pm) => pm.id_method === l.payment_method_id,
       );
       const mName = isCredit ? CREDIT_METHOD : m?.name || "Método";
-
-      const accName =
-        l.account_id != null
-          ? accountsTyped.find((a) => a.id_account === l.account_id)
-              ?.display_name ||
-            accountsTyped.find((a) => a.id_account === l.account_id)?.name
-          : "";
-
-      const opName =
-        l.operator_id != null
-          ? operators.find((o) => o.id_operator === l.operator_id)?.name
-          : "";
-
-      const caName =
-        l.operator_id != null && l.credit_account_id != null
-          ? creditAccountsByOperator[l.operator_id]?.find(
-              (x) => x.id_credit_account === l.credit_account_id,
-            )?.name || ""
-          : "";
-
-      let tail = "";
-      if (isCredit) {
-        const bits = [opName, caName, accName].filter(Boolean);
-        tail = bits.length ? ` (${bits.join(" · ")})` : "";
-      } else {
-        tail = accName ? ` (${accName})` : "";
-      }
-
-      lines.push({ label: `${mName}${tail}`, amount: amt });
+      lines.push({ label: mName, amount: amt });
     }
 
     if (!lines.length) return "";
@@ -910,10 +882,7 @@ export default function GroupReceiptForm({
   }, [
     paymentLines,
     paymentMethodsUi,
-    accountsTyped,
-    operators,
     effectiveCurrency,
-    creditAccountsByOperator,
     creditMethodId,
     feeAmount,
   ]);

@@ -564,10 +564,10 @@ export default function CreateReceiptFields(props: {
                           )}
                         </div>
 
-                        {/* Cuenta crédito */}
+                        {/* Cuenta crédito/corriente */}
                         <div>
                           <label className="ml-1 block text-sm font-medium">
-                            Cuenta crédito{" "}
+                            Cuenta crédito/corriente{" "}
                             <span className="text-rose-600">*</span>
                           </label>
 
@@ -581,7 +581,7 @@ export default function CreateReceiptFields(props: {
                             </p>
                           ) : creditAccounts.length === 0 ? (
                             <p className="text-sm text-sky-950/70 dark:text-white/70">
-                              No hay cuentas crédito para este operador en{" "}
+                              No hay cuentas crédito/corriente para este operador en{" "}
                               {lineCurrencyForCredit}.
                             </p>
                           ) : creditAccounts.length === 1 ? (
@@ -590,7 +590,7 @@ export default function CreateReceiptFields(props: {
                                 {fallbackCreditAccount?.name}
                               </div>
                               <div className="text-xs text-sky-950/70 dark:text-white/70">
-                                Se impactará en esta cuenta crédito{" "}
+                                Se impactará en esta cuenta crédito/corriente{" "}
                                 {(
                                   fallbackCreditAccount?.currency ||
                                   lineCurrencyForCredit
@@ -618,8 +618,8 @@ export default function CreateReceiptFields(props: {
                                 {!line.operator_id
                                   ? "Elegí operador primero…"
                                   : creditAccounts.length
-                                    ? "Seleccionar cuenta crédito…"
-                                    : "No hay cuentas crédito"}
+                                    ? "Seleccionar cuenta crédito/corriente…"
+                                    : "No hay cuentas crédito/corriente"}
                               </option>
                               {creditAccounts.map((a) => (
                                 <option
@@ -642,7 +642,7 @@ export default function CreateReceiptFields(props: {
                             !loadingCredit &&
                             creditAccounts.length === 0 && (
                               <p className="mt-1 text-xs text-sky-950/70 dark:text-white/70">
-                                No hay cuentas crédito para este operador en{" "}
+                                No hay cuentas crédito/corriente para este operador en{" "}
                                 {lineCurrencyForCredit}.
                               </p>
                             )}
@@ -650,7 +650,8 @@ export default function CreateReceiptFields(props: {
 
                         {creditAccounts.length > 1 && (
                           <p className="text-xs text-sky-950/70 dark:text-white/70">
-                            Elegí en qué cuenta crédito registrar este cobro.
+                            Elegí en qué cuenta crédito/corriente registrar este
+                            cobro.
                           </p>
                         )}
                       </div>
@@ -1009,7 +1010,7 @@ export default function CreateReceiptFields(props: {
               id="payment_desc"
               value={paymentDescription}
               onChange={(e) => setPaymentDescription(e.target.value)}
-              placeholder="Ej.: Efectivo: 100 USD + Crédito operador (X · CuentaCrédito Y · Banco Z): 200 USD"
+              placeholder="Ej.: Efectivo: 100 USD + Transferencia: 200 USD (si querés, agregá detalle entre paréntesis)"
               className={inputBase}
             />
             {errors.paymentDescription && (

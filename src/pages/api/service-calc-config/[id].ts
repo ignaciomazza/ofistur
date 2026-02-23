@@ -2,6 +2,12 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
 import { jwtVerify, type JWTPayload } from "jose";
+import {
+  type ReceiptServiceSelectionMode,
+  parseReceiptServiceSelectionMode,
+  extractReceiptServiceSelectionModeFromBookingAccessRules,
+  buildBookingAccessRulesValue,
+} from "@/utils/receiptServiceSelection";
 
 /* =============================
  * Delegates “lite” locales
@@ -13,6 +19,7 @@ type ServiceCalcConfigRow = {
   billing_adjustments: unknown | null;
   use_booking_sale_total: boolean | null;
   booking_visibility_mode: string | null;
+  booking_access_rules?: unknown | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -287,6 +294,7 @@ type CalcConfigResponse = {
   billing_adjustments: BillingAdjustment[];
   use_booking_sale_total: boolean;
   booking_visibility_mode: BookingVisibilityMode;
+  receipt_service_selection_mode: ReceiptServiceSelectionMode;
 };
 
 type BillingAdjustment = {
@@ -332,6 +340,7 @@ export default async function handler(
             billing_adjustments: true,
             use_booking_sale_total: true,
             booking_visibility_mode: true,
+            booking_access_rules: true,
           },
         }),
         db.agency.findUnique({
@@ -353,6 +362,10 @@ export default async function handler(
         use_booking_sale_total: Boolean(cfg?.use_booking_sale_total),
         booking_visibility_mode:
           parseBookingVisibilityMode(cfg?.booking_visibility_mode) ?? "own",
+        receipt_service_selection_mode:
+          extractReceiptServiceSelectionModeFromBookingAccessRules(
+            cfg?.booking_access_rules,
+          ),
       };
       return res.status(200).json(payload);
     }
@@ -368,6 +381,7 @@ export default async function handler(
         billing_adjustments?: unknown;
         use_booking_sale_total?: unknown;
         booking_visibility_mode?: unknown;
+        receipt_service_selection_mode?: unknown;
       };
 
       let mode: string | undefined;
@@ -429,12 +443,27 @@ export default async function handler(
         });
       }
 
+      const receiptServiceSelectionMode =
+        body.receipt_service_selection_mode !== undefined
+          ? parseReceiptServiceSelectionMode(body.receipt_service_selection_mode)
+          : undefined;
+      if (
+        body.receipt_service_selection_mode !== undefined &&
+        receiptServiceSelectionMode == null
+      ) {
+        return res.status(400).json({
+          error:
+            'receipt_service_selection_mode debe ser "required", "optional" o "booking"',
+        });
+      }
+
       if (
         mode === undefined &&
         pct === undefined &&
         adjustments === undefined &&
         useBookingSaleTotal === undefined &&
-        visibilityMode === undefined
+        visibilityMode === undefined &&
+        receiptServiceSelectionMode === undefined
       ) {
         return res
           .status(400)
@@ -448,12 +477,13 @@ export default async function handler(
           mode !== undefined ||
           adjustments !== undefined ||
           useBookingSaleTotal !== undefined ||
-          visibilityMode !== undefined
+          visibilityMode !== undefined ||
+          receiptServiceSelectionMode !== undefined
         ) {
           // upsert manual con clave única id_agency:
           const existing = await tx.serviceCalcConfig.findUnique({
             where: { id_agency: id },
-            select: { id_config: true },
+            select: { id_config: true, booking_access_rules: true },
           });
           if (existing) {
             const data: Partial<ServiceCalcConfigRow> = {};
@@ -466,6 +496,12 @@ export default async function handler(
             }
             if (visibilityMode !== undefined) {
               data.booking_visibility_mode = visibilityMode;
+            }
+            if (receiptServiceSelectionMode !== undefined) {
+              data.booking_access_rules = buildBookingAccessRulesValue({
+                existing: existing.booking_access_rules,
+                receiptServiceSelectionMode,
+              });
             }
             await tx.serviceCalcConfig.update({
               where: { id_agency: id },
@@ -482,6 +518,15 @@ export default async function handler(
                   useBookingSaleTotal !== undefined ? useBookingSaleTotal : false,
                 booking_visibility_mode:
                   visibilityMode !== undefined ? visibilityMode : "own",
+                ...(receiptServiceSelectionMode !== undefined
+                  ? {
+                      booking_access_rules: buildBookingAccessRulesValue({
+                        existing: null,
+                        rules: [],
+                        receiptServiceSelectionMode,
+                      }),
+                    }
+                  : {}),
               },
             });
           }
@@ -503,6 +548,7 @@ export default async function handler(
             billing_adjustments: true,
             use_booking_sale_total: true,
             booking_visibility_mode: true,
+            booking_access_rules: true,
           },
         }),
         db.agency.findUnique({
@@ -524,6 +570,10 @@ export default async function handler(
         use_booking_sale_total: Boolean(cfg?.use_booking_sale_total),
         booking_visibility_mode:
           parseBookingVisibilityMode(cfg?.booking_visibility_mode) ?? "own",
+        receipt_service_selection_mode:
+          extractReceiptServiceSelectionModeFromBookingAccessRules(
+            cfg?.booking_access_rules,
+          ),
       };
       return res.status(200).json(payload);
     }

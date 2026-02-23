@@ -238,10 +238,7 @@ export default function ClientForm({
 
   /* ---------- lógica de requeridos ---------- */
   // Campos marcados con el punto rojo
-  const baseRequiredFields =
-    requiredFields && requiredFields.length > 0
-      ? requiredFields
-      : DEFAULT_REQUIRED_FIELDS;
+  const baseRequiredFields = requiredFields ?? DEFAULT_REQUIRED_FIELDS;
 
   const isRequired = (fieldName: string) =>
     baseRequiredFields.includes(fieldName);
@@ -517,7 +514,11 @@ export default function ClientForm({
               >
                 {/* Nombre */}
                 {!isHidden("first_name") && (
-                  <Field id="first_name" label="Nombre" required>
+                  <Field
+                    id="first_name"
+                    label="Nombre"
+                    required={isRequired("first_name")}
+                  >
                     <input
                       id="first_name"
                       type="text"
@@ -533,7 +534,11 @@ export default function ClientForm({
 
                 {/* Apellido */}
                 {!isHidden("last_name") && (
-                  <Field id="last_name" label="Apellido" required>
+                  <Field
+                    id="last_name"
+                    label="Apellido"
+                    required={isRequired("last_name")}
+                  >
                     <input
                       id="last_name"
                       type="text"
@@ -549,7 +554,11 @@ export default function ClientForm({
 
                 {/* Género */}
                 {!isHidden("gender") && (
-                  <Field id="gender" label="Género" required>
+                  <Field
+                    id="gender"
+                    label="Género"
+                    required={isRequired("gender")}
+                  >
                     <select
                       id="gender"
                       name="gender"
@@ -573,7 +582,7 @@ export default function ClientForm({
                 <Field
                   id="birth_date"
                   label="Fecha de Nacimiento"
-                  required
+                  required={isRequired("birth_date")}
                   hint="dd/mm/aaaa"
                 >
                     <input
@@ -615,7 +624,11 @@ export default function ClientForm({
 
                 {/* Nacionalidad */}
                 {!isHidden("nationality") && (
-                  <Field id="nationality" label="Nacionalidad" required>
+                  <Field
+                    id="nationality"
+                    label="Nacionalidad"
+                    required={isRequired("nationality")}
+                  >
                     <DestinationPicker
                       type="country"
                       multiple={false}
@@ -795,7 +808,11 @@ export default function ClientForm({
                 desc="Cómo nos comunicamos con el pax para avisos y entrega de documentación."
               >
                 {!isHidden("phone") && (
-                  <Field id="phone" label="Teléfono / WhatsApp" required>
+                  <Field
+                    id="phone"
+                    label="Teléfono / WhatsApp"
+                    required={isRequired("phone")}
+                  >
                     <input
                       id="phone"
                       type="text"

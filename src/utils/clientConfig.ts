@@ -19,7 +19,7 @@ export const DEFAULT_REQUIRED_FIELDS = [
   DOCUMENT_ANY_KEY,
 ];
 
-export const LOCKED_REQUIRED_FIELDS = ["birth_date"];
+export const LOCKED_REQUIRED_FIELDS: string[] = [];
 
 export const REQUIRED_FIELD_OPTIONS: Array<{
   key: string;
@@ -29,7 +29,7 @@ export const REQUIRED_FIELD_OPTIONS: Array<{
   { key: "first_name", label: "Nombre" },
   { key: "last_name", label: "Apellido" },
   { key: "phone", label: "Teléfono / WhatsApp" },
-  { key: "birth_date", label: "Fecha de Nacimiento", locked: true },
+  { key: "birth_date", label: "Fecha de Nacimiento" },
   { key: "nationality", label: "Nacionalidad" },
   { key: "gender", label: "Género" },
   { key: "email", label: "Correo electrónico" },

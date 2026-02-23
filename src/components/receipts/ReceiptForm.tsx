@@ -34,6 +34,10 @@ import {
   resolveReceiptIdFrom,
 } from "@/utils/receipts/receiptForm";
 import { filterAccountsByCurrency } from "@/utils/receipts/accounts";
+import {
+  type ReceiptServiceSelectionMode,
+  normalizeReceiptServiceSelectionMode,
+} from "@/utils/receiptServiceSelection";
 
 import { useFinancePicks } from "@/hooks/receipts/useFinancePicks";
 import { useBookingSearch } from "@/hooks/receipts/useBookingSearch";
@@ -43,6 +47,7 @@ import { useReceiptSearch } from "@/hooks/receipts/useReceiptSearch";
 import {
   createCreditEntryForReceipt,
   createFinanceEntryForReceipt,
+  createClientCreditEntryForReceipt,
 } from "@/services/receipts/entries";
 import { attachExistingReceipt } from "@/services/receipts/attach";
 
@@ -53,8 +58,23 @@ import CreateReceiptFields from "@/components/receipts/receipt-form/CreateReceip
 
 type Mode = "agency" | "booking";
 
-const CREDIT_METHOD = "Crédito operador";
+const CREDIT_METHOD_LABEL = "Crédito/corriente operador";
 const VIRTUAL_CREDIT_METHOD_ID = 999_000_000;
+
+const normalizeMethodName = (value: string) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase();
+
+const OPERATOR_CREDIT_METHOD_ALIASES = new Set([
+  "credito operador",
+  "credito/corriente operador",
+]);
+
+const isOperatorCreditMethodName = (value: string) =>
+  OPERATOR_CREDIT_METHOD_ALIASES.has(normalizeMethodName(value));
 
 // 👇 Cambiá esto si tu endpoint es otro
 const CREDIT_ACCOUNTS_ENDPOINT = "/api/credit/account";
@@ -323,6 +343,47 @@ async function safeJson<T>(res: Response): Promise<T | null> {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 
+type ClientCreditExcessResult = {
+  clientId: number;
+  byCurrency: Record<string, number>;
+};
+
+function extractClientCreditExcess(
+  value: unknown,
+): ClientCreditExcessResult | null {
+  if (!isRecord(value)) return null;
+
+  const direct = isRecord(value.client_credit_excess)
+    ? value.client_credit_excess
+    : null;
+  const nested =
+    isRecord(value.data) && isRecord(value.data.client_credit_excess)
+      ? value.data.client_credit_excess
+      : null;
+  const source = direct || nested;
+  if (!source) return null;
+
+  const clientId = Number(source.client_id);
+  if (!Number.isFinite(clientId) || clientId <= 0) return null;
+
+  const rawByCurrency = isRecord(source.by_currency) ? source.by_currency : null;
+  if (!rawByCurrency) return null;
+
+  const byCurrency: Record<string, number> = {};
+  for (const [currencyRaw, amountRaw] of Object.entries(rawByCurrency)) {
+    const currency = normalizeCurrencyCodeLoose(currencyRaw);
+    const amount =
+      typeof amountRaw === "number"
+        ? amountRaw
+        : Number(String(amountRaw ?? "").replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    byCurrency[currency] = round2(amount);
+  }
+
+  if (!Object.keys(byCurrency).length) return null;
+  return { clientId, byCurrency };
+}
+
 export default function ReceiptForm({
   token,
   editingReceiptId = null,
@@ -379,21 +440,21 @@ export default function ReceiptForm({
   /* ===== Crédito: método ID real (si existe) o virtual (0) ===== */
   const creditMethodId = useMemo(() => {
     const m = paymentMethodsTyped.find(
-      (pm) => (pm.name || "").toLowerCase() === CREDIT_METHOD.toLowerCase(),
+      (pm) => isOperatorCreditMethodName(pm.name || ""),
     );
     return m?.id_method ?? VIRTUAL_CREDIT_METHOD_ID;
   }, [paymentMethodsTyped]);
 
   const paymentMethodsUi = useMemo(() => {
     const hasCreditInDb = paymentMethodsTyped.some(
-      (pm) => (pm.name || "").toLowerCase() === CREDIT_METHOD.toLowerCase(),
+      (pm) => isOperatorCreditMethodName(pm.name || ""),
     );
 
     if (hasCreditInDb) return paymentMethodsTyped;
 
     const virtualCredit = {
       id_method: VIRTUAL_CREDIT_METHOD_ID,
-      name: CREDIT_METHOD,
+      name: CREDIT_METHOD_LABEL,
       requires_account: false,
       enabled: true,
     } as FinancePaymentMethod;
@@ -439,6 +500,8 @@ export default function ReceiptForm({
 
   const [selectedServiceIds, setSelectedServiceIds] =
     useState<number[]>(initialServiceIds);
+  const [receiptServiceSelectionMode, setReceiptServiceSelectionMode] =
+    useState<ReceiptServiceSelectionMode>("required");
 
   useEffect(() => {
     setSelectedServiceIds((prev) =>
@@ -446,9 +509,37 @@ export default function ReceiptForm({
     );
   }, [services]);
 
-  const selectedServices = useMemo(
+  const allBookingServiceIds = useMemo(
+    () => services.map((s) => s.id_service),
+    [services],
+  );
+
+  const serviceIdsForContext = useMemo(() => {
+    if (mode !== "booking" || !selectedBookingId) return selectedServiceIds;
+    if (receiptServiceSelectionMode === "booking") return allBookingServiceIds;
+    if (selectedServiceIds.length > 0) return selectedServiceIds;
+    if (receiptServiceSelectionMode === "optional") return allBookingServiceIds;
+    return selectedServiceIds;
+  }, [
+    mode,
+    selectedBookingId,
+    receiptServiceSelectionMode,
+    selectedServiceIds,
+    allBookingServiceIds,
+  ]);
+  const hideContextSection =
+    receiptServiceSelectionMode === "booking" &&
+    forcedBookingMode &&
+    mode === "booking";
+
+  const userSelectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id_service)),
     [services, selectedServiceIds],
+  );
+
+  const selectedServices = useMemo(
+    () => services.filter((s) => serviceIdsForContext.includes(s.id_service)),
+    [services, serviceIdsForContext],
   );
 
   const selectedBookingDisplayId = useMemo(() => {
@@ -458,21 +549,21 @@ export default function ReceiptForm({
   }, [bookingOptions, selectedBookingId]);
 
   const lockedCurrency = useMemo(() => {
-    if (!selectedServices.length) return null;
-    return selectedServices[0].currency;
-  }, [selectedServices]);
+    if (!userSelectedServices.length) return null;
+    return userSelectedServices[0].currency;
+  }, [userSelectedServices]);
 
   useEffect(() => {
-    if (selectedServices.length <= 1) return;
-    const first = selectedServices[0].currency;
-    if (!selectedServices.every((s) => s.currency === first)) {
+    if (userSelectedServices.length <= 1) return;
+    const first = userSelectedServices[0].currency;
+    if (!userSelectedServices.every((s) => s.currency === first)) {
       setSelectedServiceIds(
-        selectedServices
+        userSelectedServices
           .filter((s) => s.currency === first)
           .map((s) => s.id_service),
       );
     }
-  }, [selectedServices]);
+  }, [userSelectedServices]);
 
   const toggleService = (svc: ServiceLite) => {
     if (lockedCurrency && svc.currency !== lockedCurrency) return;
@@ -522,6 +613,11 @@ export default function ReceiptForm({
 
   const suggestions = useMemo(() => {
     if (!selectedServices.length) return null;
+    const currenciesInSelection = new Set(
+      selectedServices.map((s) => normalizeCurrencyCodeLoose(s.currency || "ARS")),
+    );
+    if (currenciesInSelection.size > 1) return null;
+
     const base = selectedServices.reduce(
       (acc, s) => acc + (s.sale_price ?? 0),
       0,
@@ -815,7 +911,7 @@ export default function ReceiptForm({
               ? String(data["error"])
               : isRecord(data) && typeof data["message"] === "string"
                 ? String(data["message"])
-                : "No se pudieron cargar las cuentas crédito.";
+                : "No se pudieron cargar las cuentas crédito/corriente.";
           throw new Error(msg);
         }
 
@@ -977,7 +1073,7 @@ export default function ReceiptForm({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Error cargando cuentas crédito.",
+            : "Error cargando cuentas crédito/corriente.",
         );
       });
   };
@@ -1153,34 +1249,7 @@ export default function ReceiptForm({
       const m = paymentMethodsUi.find(
         (pm) => pm.id_method === l.payment_method_id,
       );
-      const mName = isCredit ? CREDIT_METHOD : m?.name || "Método";
-
-      const accName =
-        l.account_id != null
-          ? accountsTyped.find((a) => a.id_account === l.account_id)
-              ?.display_name ||
-            accountsTyped.find((a) => a.id_account === l.account_id)?.name
-          : "";
-
-      const opName =
-        l.operator_id != null
-          ? operators.find((o) => o.id_operator === l.operator_id)?.name
-          : "";
-
-      const caName =
-        l.operator_id != null && l.credit_account_id != null
-          ? creditAccountsByOperator[l.operator_id]?.find(
-              (x) => x.id_credit_account === l.credit_account_id,
-            )?.name || ""
-          : "";
-
-      let tail = "";
-      if (isCredit) {
-        const bits = [opName, caName, accName].filter(Boolean);
-        tail = bits.length ? ` (${bits.join(" · ")})` : "";
-      } else {
-        tail = accName ? ` (${accName})` : "";
-      }
+      const mName = isCredit ? CREDIT_METHOD_LABEL : m?.name || "Método";
 
       const lineCurrency = normalizeCurrencyCodeLoose(
         l.payment_currency || effectiveCurrency,
@@ -1188,7 +1257,7 @@ export default function ReceiptForm({
       const lineFee = paymentLineFeeByKey[l.key] ?? calcPaymentLineFee(l);
 
       lines.push({
-        label: `${mName}${tail}`,
+        label: mName,
         amount: amt,
         fee: lineFee,
         currency: lineCurrency,
@@ -1213,11 +1282,8 @@ export default function ReceiptForm({
   }, [
     paymentLines,
     paymentMethodsUi,
-    accountsTyped,
-    operators,
     effectiveCurrency,
     paymentLineFeeByKey,
-    creditAccountsByOperator,
     creditMethodId,
   ]);
 
@@ -1337,6 +1403,7 @@ export default function ReceiptForm({
         const json = await safeJson<{
           use_booking_sale_total?: unknown;
           billing_breakdown_mode?: unknown;
+          receipt_service_selection_mode?: unknown;
         }>(res);
         if (alive) {
           setInheritedUseBookingSaleTotal(Boolean(json?.use_booking_sale_total));
@@ -1346,11 +1413,17 @@ export default function ReceiptForm({
               ? "manual"
               : "auto",
           );
+          setReceiptServiceSelectionMode(
+            normalizeReceiptServiceSelectionMode(
+              json?.receipt_service_selection_mode,
+            ),
+          );
         }
       } catch {
         if (alive) {
           setInheritedUseBookingSaleTotal(false);
           setBillingBreakdownMode("auto");
+          setReceiptServiceSelectionMode("required");
         }
       } finally {
         if (alive) setCalcConfigLoaded(true);
@@ -1423,14 +1496,14 @@ export default function ReceiptForm({
   const relevantReceipts = useMemo(() => {
     if (!bookingReceipts.length) return [];
     if (bookingSaleMode) return bookingReceipts;
-    if (!selectedServiceIds.length) return [];
-    const svcSet = new Set(selectedServiceIds);
+    if (!serviceIdsForContext.length) return [];
+    const svcSet = new Set(serviceIdsForContext);
     return bookingReceipts.filter((r) => {
       const ids = Array.isArray(r.serviceIds) ? r.serviceIds : [];
       if (!ids.length) return true;
       return ids.some((id) => svcSet.has(id));
     });
-  }, [bookingReceipts, bookingSaleMode, selectedServiceIds]);
+  }, [bookingReceipts, bookingSaleMode, serviceIdsForContext]);
 
   const salesByCurrency = useMemo(() => {
     if (bookingSaleMode) {
@@ -1486,7 +1559,7 @@ export default function ReceiptForm({
   const bookingDebtContextReady =
     mode !== "booking" ||
     !selectedBookingId ||
-    selectedServiceIds.length === 0 ||
+    serviceIdsForContext.length === 0 ||
     (bookingReceiptsLoaded && bookingContextLoaded && calcConfigLoaded);
 
   const currentPaidByCurrency = useMemo(() => {
@@ -1542,8 +1615,18 @@ export default function ReceiptForm({
     return acc;
   }, [salesByCurrency, paidByCurrency, currentPaidByCurrency]);
 
+  const overpaidByCurrency = useMemo(() => {
+    const acc: Record<string, number> = {};
+    for (const [currency, debt] of Object.entries(debtByCurrency)) {
+      if (debt < -DEBT_TOLERANCE) {
+        acc[currency] = round2(Math.abs(debt));
+      }
+    }
+    return acc;
+  }, [debtByCurrency]);
+
   const debtSuffix = useMemo(() => {
-    if (!selectedServiceIds.length || !bookingDebtContextReady) return "";
+    if (!serviceIdsForContext.length || !bookingDebtContextReady) return "";
     const parts = Object.entries(debtByCurrency)
       .filter(([, v]) => v > DEBT_TOLERANCE)
       .map(([cur, v]) => formatDebtLabel(v, cur));
@@ -1551,7 +1634,7 @@ export default function ReceiptForm({
     if (!parts.length) return "-NO ADEUDA SALDO-";
     return `-ADEUDA ${parts.join(" y ")}`;
   }, [
-    selectedServiceIds,
+    serviceIdsForContext,
     bookingDebtContextReady,
     debtByCurrency,
     formatDebtLabel,
@@ -1559,14 +1642,15 @@ export default function ReceiptForm({
 
   const paymentDescriptionAuto = useMemo(() => {
     if (!paymentSummary.trim()) return "";
-    const hasBookingContext = !!selectedBookingId && selectedServiceIds.length > 0;
+    const hasBookingContext =
+      !!selectedBookingId && serviceIdsForContext.length > 0;
     if (hasBookingContext && !bookingDebtContextReady) return paymentSummary;
     const suffix = hasBookingContext ? debtSuffix.trim() : "";
     return suffix ? `${paymentSummary} ${suffix}` : paymentSummary;
   }, [
     paymentSummary,
     selectedBookingId,
-    selectedServiceIds,
+    serviceIdsForContext,
     bookingDebtContextReady,
     debtSuffix,
   ]);
@@ -1650,7 +1734,10 @@ export default function ReceiptForm({
 
     if (mode === "booking") {
       if (!selectedBookingId) e.booking = "Elegí una reserva.";
-      if (selectedServiceIds.length === 0)
+      if (
+        receiptServiceSelectionMode === "required" &&
+        serviceIdsForContext.length === 0
+      )
         e.services = "Seleccioná al menos un servicio.";
     }
 
@@ -1699,10 +1786,10 @@ export default function ReceiptForm({
           if (!l.credit_account_id) {
             e[`payment_credit_account_${idx}`] =
               accountsForOperator.length === 0
-                ? `El operador no tiene cuentas crédito en ${
+                ? `El operador no tiene cuentas crédito/corriente en ${
                     lineCurrencyForError || "esta moneda"
                   }.`
-                : "Elegí la cuenta crédito.";
+                : "Elegí la cuenta crédito/corriente.";
           }
         }
 
@@ -1765,7 +1852,10 @@ export default function ReceiptForm({
     const e: Record<string, string> = {};
     if (!selectedReceiptId) e.receipt = "Elegí un recibo.";
     if (!selectedBookingId) e.booking = "Elegí una reserva.";
-    if (selectedServiceIds.length === 0)
+    if (
+      receiptServiceSelectionMode === "required" &&
+      serviceIdsForContext.length === 0
+    )
       e.services = "Seleccioná al menos un servicio.";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -1780,7 +1870,7 @@ export default function ReceiptForm({
       await onAttachExisting({
         id_receipt: selectedReceiptId,
         bookingId: selectedBookingId,
-        serviceIds: selectedServiceIds,
+        serviceIds: serviceIdsForContext,
       });
       return;
     }
@@ -1788,7 +1878,7 @@ export default function ReceiptForm({
       token,
       receiptId: selectedReceiptId,
       bookingId: selectedBookingId,
-      serviceIds: selectedServiceIds,
+      serviceIds: serviceIdsForContext,
     });
   };
 
@@ -1879,7 +1969,7 @@ export default function ReceiptForm({
 
     const singleMethodName = single
       ? single.payment_method_id === Number(creditMethodId)
-        ? CREDIT_METHOD
+        ? CREDIT_METHOD_LABEL
         : paymentMethodsUi.find((m) => m.id_method === single.payment_method_id)
             ?.name
       : undefined;
@@ -1924,11 +2014,49 @@ export default function ReceiptForm({
         ? effectiveCurrency
         : undefined;
 
+    let allowClientCreditExcess = false;
+    let clientCreditClientId: number | undefined;
+    if (
+      mode === "booking" &&
+      selectedBookingId &&
+      Object.keys(overpaidByCurrency).length > 0
+    ) {
+      const selectedClientIds = clientIds.filter(
+        (id): id is number => typeof id === "number" && Number.isFinite(id),
+      );
+      if (!selectedClientIds.length) {
+        toast.error(
+          "Para registrar excedente en cuenta crédito/corriente, seleccioná al menos un pax.",
+        );
+        return;
+      }
+
+      const overpaidLabel = Object.entries(overpaidByCurrency)
+        .map(([currency, amount]) => formatDebtLabel(amount, currency))
+        .join(" y ");
+      const targetClient = selectedClientIds[0];
+      const confirmed = window.confirm(
+        `El cobro excede el saldo pendiente en ${overpaidLabel}. ¿Querés dejar ese excedente en la cuenta crédito/corriente del pax seleccionado (ID ${targetClient})?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      allowClientCreditExcess = true;
+      clientCreditClientId = targetClient;
+    }
+
     const apiBody: ReceiptPayload = {
       ...(mode === "booking" && selectedBookingId
         ? {
             booking: { id_booking: selectedBookingId },
-            serviceIds: selectedServiceIds,
+            serviceIds: serviceIdsForContext,
+            ...(allowClientCreditExcess
+              ? {
+                  allow_client_credit_excess: true,
+                  client_credit_client_id: clientCreditClientId,
+                }
+              : {}),
           }
         : {}),
 
@@ -1981,6 +2109,7 @@ export default function ReceiptForm({
 
       const creditEntryErrors: string[] = [];
       const financeEntryErrors: string[] = [];
+      const clientCreditEntryErrors: string[] = [];
 
       for (const [idx, p] of normalizedPayments.entries()) {
         const lineLabel = `línea ${idx + 1}`;
@@ -1992,11 +2121,11 @@ export default function ReceiptForm({
 
           if (!opId) {
             creditEntryErrors.push(
-              `Crédito operador (${lineLabel}): falta operador.`,
+              `Crédito/corriente operador (${lineLabel}): falta operador.`,
             );
           } else if (!caId) {
             creditEntryErrors.push(
-              `Crédito operador (${lineLabel}): falta cuenta crédito.`,
+              `Crédito/corriente operador (${lineLabel}): falta cuenta crédito/corriente.`,
             );
           } else {
             try {
@@ -2014,10 +2143,10 @@ export default function ReceiptForm({
               });
             } catch (err) {
               creditEntryErrors.push(
-                `Crédito operador (${lineLabel}): ${
+                `Crédito/corriente operador (${lineLabel}): ${
                   err instanceof Error
                     ? err.message
-                    : "error creando movimiento de crédito."
+                    : "error creando movimiento de crédito/corriente."
                 }`,
               );
             }
@@ -2049,23 +2178,56 @@ export default function ReceiptForm({
         }
       }
 
-      if (creditEntryErrors.length || financeEntryErrors.length) {
-        const creditDetails = creditEntryErrors.join(" | ");
-        const financeDetails = financeEntryErrors.join(" | ");
+      const clientCreditExcess = extractClientCreditExcess(submitRes);
+      if (clientCreditExcess) {
+        for (const [currency, amount] of Object.entries(
+          clientCreditExcess.byCurrency,
+        )) {
+          try {
+            await createClientCreditEntryForReceipt({
+              token: token!,
+              receiptId: rid,
+              amount,
+              currency,
+              concept: `${apiBody.concept} (excedente a cuenta corriente pax)`,
+              bookingId: selectedBookingId ?? bookingId ?? undefined,
+              clientId: clientCreditExcess.clientId,
+              agencyId,
+            });
+          } catch (err) {
+            clientCreditEntryErrors.push(
+              `Pax (ID ${clientCreditExcess.clientId}, ${currency}): ${
+                err instanceof Error
+                  ? err.message
+                  : "error creando movimiento de crédito/corriente."
+              }`,
+            );
+          }
+        }
+      }
 
-        if (creditEntryErrors.length && financeEntryErrors.length) {
-          toast.warn(
-            `Recibo creado, pero hubo problemas al impactar movimientos de crédito y de cuenta financiera: ${creditDetails} | ${financeDetails}`,
-          );
-        } else if (creditEntryErrors.length) {
-          toast.warn(
-            `Recibo creado, pero no se pudieron impactar movimientos de crédito operador: ${creditDetails}`,
-          );
-        } else {
-          toast.warn(
-            `Recibo creado, pero no se pudieron impactar movimientos de cuenta financiera: ${financeDetails}`,
+      if (
+        creditEntryErrors.length ||
+        financeEntryErrors.length ||
+        clientCreditEntryErrors.length
+      ) {
+        const details: string[] = [];
+        if (creditEntryErrors.length) {
+          details.push(
+            `crédito/corriente operador: ${creditEntryErrors.join(" | ")}`,
           );
         }
+        if (financeEntryErrors.length) {
+          details.push(`cuentas financieras: ${financeEntryErrors.join(" | ")}`);
+        }
+        if (clientCreditEntryErrors.length) {
+          details.push(
+            `crédito/corriente de pax: ${clientCreditEntryErrors.join(" | ")}`,
+          );
+        }
+        toast.warn(
+          `Recibo creado, pero hubo problemas al impactar movimientos: ${details.join(" | ")}`,
+        );
       } else {
         toast.success("Recibo creado correctamente.");
       }
@@ -2108,7 +2270,7 @@ export default function ReceiptForm({
         action={action}
         mode={mode}
         selectedBookingDisplayId={selectedBookingDisplayId}
-        selectedServiceCount={selectedServiceIds.length}
+        selectedServiceCount={serviceIdsForContext.length}
         effectiveCurrency={effectiveCurrency}
         lockedCurrency={lockedCurrency}
       />
@@ -2129,6 +2291,7 @@ export default function ReceiptForm({
                 attachEnabled={attachEnabled}
                 action={action}
                 setAction={setAction}
+                hideContext={hideContextSection}
                 canToggleAgency={canToggleAgency}
                 mode={mode}
                 setMode={setMode}
@@ -2143,7 +2306,9 @@ export default function ReceiptForm({
                 setSelectedBookingId={setSelectedBookingId}
                 services={services}
                 loadingServices={loadingServices}
+                serviceSelectionMode={receiptServiceSelectionMode}
                 selectedServiceIds={selectedServiceIds}
+                effectiveServiceIds={serviceIdsForContext}
                 toggleService={toggleService}
                 lockedCurrency={lockedCurrency}
                 effectiveCurrency={effectiveCurrency}

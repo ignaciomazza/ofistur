@@ -92,7 +92,7 @@ const fmtDate = (
   return formatted === "-" ? "—" : formatted;
 };
 
-const CREDIT_METHOD_LABEL = "Credito operador";
+const CREDIT_METHOD_LABEL = "Crédito/corriente operador";
 const VIRTUAL_CREDIT_METHOD_ID = 999000000;
 
 const paymentLabel = (p: ReceiptPdfPaymentLine) => {
@@ -108,11 +108,7 @@ const paymentLabel = (p: ReceiptPdfPaymentLine) => {
         ? `Metodo N° ${p.payment_method_id}`
         : "Metodo");
 
-  const acc =
-    (p.accountName && p.accountName.trim()) ||
-    (p.account_id ? `Cuenta N° ${p.account_id}` : "");
-
-  return acc ? `${pm} (${acc})` : pm;
+  return pm;
 };
 
 const styles = StyleSheet.create({

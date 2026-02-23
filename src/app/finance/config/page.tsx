@@ -25,6 +25,10 @@ import {
   type FinancePaymentMethod,
   type FinanceExpenseCategory,
 } from "@/utils/loadFinancePicks";
+import {
+  type ReceiptServiceSelectionMode,
+  normalizeReceiptServiceSelectionMode,
+} from "@/utils/receiptServiceSelection";
 
 /* ================= Estilos compartidos ================= */
 const GLASS =
@@ -65,6 +69,28 @@ type AccountOpeningBalance = {
   effective_date: string;
   note?: string | null;
 };
+
+const RECEIPT_SERVICE_SELECTION_OPTIONS: Array<{
+  key: ReceiptServiceSelectionMode;
+  label: string;
+  desc: string;
+}> = [
+  {
+    key: "required",
+    label: "Obligatorio",
+    desc: "Siempre exige elegir uno o más servicios para emitir o asociar recibos.",
+  },
+  {
+    key: "optional",
+    label: "Opcional",
+    desc: "Permite elegir servicios; si no elegís, aplica el recibo a todos por defecto.",
+  },
+  {
+    key: "booking",
+    label: "Por reserva",
+    desc: "Oculta selector de servicios y aplica siempre a todos los servicios de la reserva.",
+  },
+];
 
 /* ===== Respuestas de error y type guards ===== */
 type ApiError = { error: string };
@@ -283,6 +309,12 @@ function FinanceConfigPageInner() {
 
   const [active, setActive] = useState<TabKey>("general");
   const [savingGeneral, setSavingGeneral] = useState(false);
+  const [savingReceiptServiceMode, setSavingReceiptServiceMode] =
+    useState(false);
+  const [receiptServiceSelectionMode, setReceiptServiceSelectionMode] =
+    useState<ReceiptServiceSelectionMode>("required");
+  const [serverReceiptServiceSelectionMode, setServerReceiptServiceSelectionMode] =
+    useState<ReceiptServiceSelectionMode>("required");
 
   useEffect(() => {
     if (!searchParams) return;
@@ -342,12 +374,24 @@ function FinanceConfigPageInner() {
 
         setLoading(true);
 
-        // ⚠️ AHORA: pedimos config + picks en paralelo
-        // ⚠️ AHORA: pedimos config + picks en paralelo
-        const [cfgRes, picks] = await Promise.all([
+        // ⚠️ AHORA: pedimos config + picks + calc config en paralelo
+        const [cfgRes, picks, calcRes] = await Promise.all([
           authFetch("/api/finance/config", { cache: "no-store" }, token),
           loadFinancePicks(token),
+          authFetch("/api/service-calc-config", { cache: "no-store" }, token),
         ]);
+
+        let nextReceiptMode: ReceiptServiceSelectionMode = "required";
+        if (calcRes.ok) {
+          const calcRaw: unknown = await calcRes.json().catch(() => null);
+          if (isRecord(calcRaw)) {
+            nextReceiptMode = normalizeReceiptServiceSelectionMode(
+              calcRaw.receipt_service_selection_mode,
+            );
+          }
+        }
+        setReceiptServiceSelectionMode(nextReceiptMode);
+        setServerReceiptServiceSelectionMode(nextReceiptMode);
 
         if (!cfgRes.ok) {
           setBundle({
@@ -371,6 +415,8 @@ function FinanceConfigPageInner() {
         }
       } catch {
         toast.error("Error cargando datos de finanzas");
+        setReceiptServiceSelectionMode("required");
+        setServerReceiptServiceSelectionMode("required");
         setBundle({
           config: null,
           currencies: [],
@@ -387,14 +433,26 @@ function FinanceConfigPageInner() {
   const reload = useCallback(async () => {
     if (!token) return;
     try {
-      const [cfgRes, picks] = await Promise.all([
+      const [cfgRes, picks, calcRes] = await Promise.all([
         authFetch("/api/finance/config", { cache: "no-store" }, token),
         loadFinancePicks(token),
+        authFetch("/api/service-calc-config", { cache: "no-store" }, token),
       ]);
 
       const config: FinanceConfig | null = cfgRes.ok
         ? normalizeFinanceConfig((await cfgRes.json()) as unknown)
         : null;
+
+      if (calcRes.ok) {
+        const calcRaw: unknown = await calcRes.json().catch(() => null);
+        const nextMode = isRecord(calcRaw)
+          ? normalizeReceiptServiceSelectionMode(
+              calcRaw.receipt_service_selection_mode,
+            )
+          : "required";
+        setReceiptServiceSelectionMode(nextMode);
+        setServerReceiptServiceSelectionMode(nextMode);
+      }
 
       setBundle({
         config,
@@ -441,6 +499,42 @@ function FinanceConfigPageInner() {
       toast.error(e instanceof Error ? e.message : "Error al guardar");
     } finally {
       setSavingGeneral(false);
+    }
+  };
+
+  const saveReceiptServiceMode = async () => {
+    if (!token) return;
+    setSavingReceiptServiceMode(true);
+    try {
+      const res = await authFetch(
+        "/api/service-calc-config",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            receipt_service_selection_mode: receiptServiceSelectionMode,
+          }),
+        },
+        token,
+      );
+      if (!res.ok) {
+        const j: unknown = await res.json().catch(() => null);
+        throw new Error(
+          apiErrorMessage(j) ?? "No se pudo guardar la configuración de recibos",
+        );
+      }
+      const json: unknown = await res.json().catch(() => null);
+      const nextMode = isRecord(json)
+        ? normalizeReceiptServiceSelectionMode(
+            json.receipt_service_selection_mode,
+          )
+        : receiptServiceSelectionMode;
+      setReceiptServiceSelectionMode(nextMode);
+      setServerReceiptServiceSelectionMode(nextMode);
+      toast.success("Configuración de recibos guardada");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Error al guardar");
+    } finally {
+      setSavingReceiptServiceMode(false);
     }
   };
 
@@ -1361,6 +1455,75 @@ function FinanceConfigPageInner() {
                   >
                     {savingGeneral ? <Spinner /> : "Guardar"}
                   </button>
+                </div>
+
+                <div className="mt-6 border-t border-white/15 pt-6">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-sky-950/70 dark:text-white/70">
+                      Recibos en reservas
+                    </h3>
+                    <span className={BADGE_SKY}>Alcance por agencia</span>
+                  </div>
+
+                  <p className="mb-3 text-sm text-sky-950/80 dark:text-white/80">
+                    Define cómo se vinculan los servicios cuando emitís o
+                    asociás recibos de una reserva.
+                  </p>
+
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                    {RECEIPT_SERVICE_SELECTION_OPTIONS.map((opt) => (
+                      <label
+                        key={opt.key}
+                        className="flex cursor-pointer items-center gap-2 rounded-2xl border border-white/10 bg-white/30 p-3 dark:bg-white/10"
+                      >
+                        <input
+                          type="radio"
+                          name="receipt_service_selection_mode"
+                          value={opt.key}
+                          checked={receiptServiceSelectionMode === opt.key}
+                          onChange={() => setReceiptServiceSelectionMode(opt.key)}
+                        />
+                        <div className="text-sm">
+                          <div className="font-medium">{opt.label}</div>
+                          <div className="text-xs opacity-70">{opt.desc}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setReceiptServiceSelectionMode(
+                          serverReceiptServiceSelectionMode,
+                        )
+                      }
+                      disabled={
+                        receiptServiceSelectionMode ===
+                        serverReceiptServiceSelectionMode
+                      }
+                      className={BTN_AMBER}
+                    >
+                      Restablecer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveReceiptServiceMode}
+                      disabled={
+                        savingReceiptServiceMode ||
+                        receiptServiceSelectionMode ===
+                          serverReceiptServiceSelectionMode
+                      }
+                      className={BTN_EMERALD}
+                    >
+                      {savingReceiptServiceMode ? (
+                        <Spinner />
+                      ) : (
+                        "Guardar modo de recibos"
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

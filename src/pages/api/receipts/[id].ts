@@ -14,6 +14,7 @@ import {
   canAccessFinanceSection,
 } from "@/utils/permissions";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
+import { extractReceiptServiceSelectionModeFromBookingAccessRules } from "@/utils/receiptServiceSelection";
 
 type TokenPayload = JWTPayload & {
   id_user?: number;
@@ -223,6 +224,17 @@ const toOptionalId = (v: unknown): number | undefined => {
   if (!Number.isFinite(n)) return undefined;
   const i = Math.trunc(n);
   return i > 0 ? i : undefined;
+};
+
+const normalizeIdList = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return [];
+  const out = new Set<number>();
+  for (const item of value) {
+    const n = Number(item);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    out.add(Math.trunc(n));
+  }
+  return Array.from(out);
 };
 
 const isNonEmptyString = (s: unknown): s is string =>
@@ -619,7 +631,7 @@ export default async function handler(
     try {
       const body = (req.body || {}) as PatchBody;
       const bookingId = Number(body.booking?.id_booking);
-      const serviceIds = Array.isArray(body.serviceIds) ? body.serviceIds : [];
+      const serviceIds = normalizeIdList(body.serviceIds);
       const isAttach = Number.isFinite(bookingId) || serviceIds.length > 0;
 
       if (!canReceipts && !canReceiptsForm) {
@@ -658,19 +670,43 @@ export default async function handler(
       if (isAttach) {
         if (!Number.isFinite(bookingId) || bookingId <= 0)
           return res.status(400).json({ error: "id_booking inválido" });
-        if (serviceIds.length === 0)
-          return res
-            .status(400)
-            .json({ error: "serviceIds debe contener al menos un ID" });
 
         await ensureBookingInAgency(bookingId, authAgencyId);
 
-        const svcs = await prisma.service.findMany({
-          where: { id_service: { in: serviceIds }, booking_id: bookingId },
+        const calcConfig = await prisma.serviceCalcConfig.findUnique({
+          where: { id_agency: authAgencyId },
+          select: { booking_access_rules: true },
+        });
+        const receiptServiceSelectionMode =
+          extractReceiptServiceSelectionModeFromBookingAccessRules(
+            calcConfig?.booking_access_rules,
+          );
+
+        const bookingServices = await prisma.service.findMany({
+          where: { booking_id: bookingId },
           select: { id_service: true },
         });
-        const ok = new Set(svcs.map((s) => s.id_service));
-        const bad = serviceIds.filter((sid) => !ok.has(sid));
+        const allBookingServiceIds = bookingServices.map((s) => s.id_service);
+
+        let resolvedServiceIds = serviceIds;
+        if (receiptServiceSelectionMode === "booking") {
+          resolvedServiceIds = allBookingServiceIds;
+        } else if (
+          receiptServiceSelectionMode === "optional" &&
+          resolvedServiceIds.length === 0
+        ) {
+          resolvedServiceIds = allBookingServiceIds;
+        } else if (
+          receiptServiceSelectionMode === "required" &&
+          resolvedServiceIds.length === 0
+        ) {
+          return res
+            .status(400)
+            .json({ error: "serviceIds debe contener al menos un ID" });
+        }
+
+        const ok = new Set(allBookingServiceIds);
+        const bad = resolvedServiceIds.filter((sid) => !ok.has(sid));
         if (bad.length)
           return res
             .status(400)
@@ -706,7 +742,7 @@ export default async function handler(
           data: {
             booking: { connect: { id_booking: bookingId } },
             agency: { disconnect: true },
-            serviceIds,
+            serviceIds: resolvedServiceIds,
             ...(nextClientIds !== undefined ? { clientIds: nextClientIds } : {}),
           },
           ...(schemaFlags.hasPaymentLines

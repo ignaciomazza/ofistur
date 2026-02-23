@@ -2,6 +2,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { jwtVerify, type JWTPayload } from "jose";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { getNextAgencyCounter } from "@/lib/agencyCounters";
 import { isMissingColumnError } from "@/lib/prismaErrors";
 import {
@@ -9,6 +10,7 @@ import {
   pickBookingComponentRule,
   normalizeRole,
 } from "@/utils/permissions";
+import { buildBookingAccessRulesValue } from "@/utils/receiptServiceSelection";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
@@ -169,13 +171,18 @@ export default async function handler(
       await prisma.$transaction(async (tx) => {
         const existing = await tx.serviceCalcConfig.findUnique({
           where: { id_agency: auth.id_agency },
-          select: { id_config: true },
+          select: { id_config: true, booking_access_rules: true },
         });
+
+        const nextBookingAccessRules = buildBookingAccessRulesValue({
+          existing: existing?.booking_access_rules,
+          rules: sanitized,
+        }) as Prisma.InputJsonValue;
 
         if (existing) {
           await tx.serviceCalcConfig.update({
             where: { id_agency: auth.id_agency },
-            data: { booking_access_rules: sanitized },
+            data: { booking_access_rules: nextBookingAccessRules },
           });
           return;
         }
@@ -192,7 +199,7 @@ export default async function handler(
             billing_breakdown_mode: "auto",
             billing_adjustments: [],
             use_booking_sale_total: false,
-            booking_access_rules: sanitized,
+            booking_access_rules: nextBookingAccessRules,
           },
         });
       });

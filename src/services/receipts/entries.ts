@@ -56,6 +56,45 @@ export async function createCreditEntryForReceipt(args: {
   }
 }
 
+export async function createClientCreditEntryForReceipt(args: {
+  token: string;
+  receiptId: number;
+  amount: number;
+  currency: string;
+  concept: string;
+  bookingId?: number | null;
+  clientId: number;
+  agencyId?: number | null;
+}) {
+  const payload: Record<string, unknown> = {
+    subject_type: "CLIENT",
+    client_id: Number(args.clientId),
+    currency: (args.currency || "ARS").toUpperCase(),
+    amount: Math.abs(Number(args.amount || 0)),
+    concept: args.concept || `Recibo N° ${args.receiptId}`,
+    doc_type: "receipt",
+    receipt_id: args.receiptId,
+    booking_id: args.bookingId ?? undefined,
+    reference: `REC-${args.receiptId}`,
+  };
+
+  if (args.agencyId != null) payload.agency_id = Number(args.agencyId);
+
+  const res = await authFetch(
+    "/api/credit/entry",
+    { method: "POST", body: JSON.stringify(payload) },
+    args.token,
+  );
+
+  if (!res.ok) {
+    const body =
+      (await safeJson<{ error?: string; message?: string }>(res)) ?? {};
+    throw new Error(
+      body.error || body.message || "No se pudo crear el movimiento del pax",
+    );
+  }
+}
+
 export async function createFinanceEntryForReceipt(args: {
   token: string;
   accountId: number;

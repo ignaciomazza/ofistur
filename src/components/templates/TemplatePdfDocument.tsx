@@ -389,6 +389,7 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     index,
   }) => {
     const topDivider = showDividers && index > 0;
+    const hasCustomTextStyle = Boolean(b.textStyle?.size || b.textStyle?.weight);
     const headingLevel =
       b.type === "heading" ? Math.max(1, Math.min(3, b.level ?? 1)) : undefined;
     const textStyle = resolveBlockTextStyle({
@@ -402,14 +403,16 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     if (b.type === "heading") {
       const textValue = b.text ?? "";
       if (b.mode === "form" && isBlank(textValue)) return null;
+      const lvl = Math.max(1, Math.min(3, b.level ?? 1));
+      const legacySize = lvl === 1 ? 20 : lvl === 2 ? 16 : 14;
+      const headingStyle = hasCustomTextStyle
+        ? { fontSize: textFontSize, fontWeight: textFontWeight }
+        : { fontSize: legacySize, fontWeight: 700 };
 
       return (
         <View style={[styles.section, styles.contentWrap]}>
           {topDivider && <View style={styles.divider} />}
-          <PdfSafeText
-            style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-            text={textValue}
-          />
+          <PdfSafeText style={headingStyle} text={textValue} />
         </View>
       );
     }
@@ -417,17 +420,17 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     if (b.type === "subtitle") {
       const t = b.text ?? "";
       if (b.mode === "form" && isBlank(t)) return null;
+      const subtitleStyle = hasCustomTextStyle
+        ? {
+            fontSize: textFontSize,
+            fontWeight: textFontWeight,
+            opacity: 0.95,
+          }
+        : { fontSize: 14, fontWeight: 600, opacity: 0.95 };
       return (
         <View style={[styles.section, styles.contentWrap]} wrap={false}>
           {topDivider && <View style={styles.divider} />}
-          <PdfSafeText
-            style={{
-              fontSize: textFontSize,
-              fontWeight: textFontWeight,
-              opacity: 0.95,
-            }}
-            text={t}
-          />
+          <PdfSafeText style={subtitleStyle} text={t} />
         </View>
       );
     }
@@ -435,17 +438,17 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     if (b.type === "paragraph") {
       const t = b.text ?? "";
       if (b.mode === "form" && isBlank(t)) return null;
+      const paragraphStyle = hasCustomTextStyle
+        ? {
+            lineHeight: 1.4,
+            fontSize: textFontSize,
+            fontWeight: textFontWeight,
+          }
+        : { lineHeight: 1.4 };
       return (
         <View style={[styles.section, styles.contentWrap]}>
           {topDivider && <View style={styles.divider} />}
-          <ParagraphSafe
-            style={{
-              lineHeight: 1.4,
-              fontSize: textFontSize,
-              fontWeight: textFontWeight,
-            }}
-            text={t}
-          />
+          <ParagraphSafe style={paragraphStyle} text={t} />
         </View>
       );
     }
@@ -453,11 +456,13 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     if (b.type === "list") {
       const items = Array.isArray(b.items) ? b.items : [];
       if (b.mode === "form" && items.length === 0) return null;
-      const listItemStyle = {
-        fontSize: textFontSize,
-        fontWeight: textFontWeight,
-        marginBottom: 4,
-      };
+      const listItemStyle = hasCustomTextStyle
+        ? {
+            fontSize: textFontSize,
+            fontWeight: textFontWeight,
+            marginBottom: 4,
+          }
+        : base.listItem;
       return (
         <View style={[styles.section, styles.contentWrap]}>
           {topDivider && <View style={styles.divider} />}
@@ -483,6 +488,9 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     if (b.type === "keyValue") {
       const pairs = Array.isArray(b.pairs) ? b.pairs : [];
       if (b.mode === "form" && pairs.length === 0) return null;
+      const keyValueTextStyle = hasCustomTextStyle
+        ? { fontSize: textFontSize, fontWeight: textFontWeight }
+        : undefined;
       return (
         <View style={[styles.section, styles.contentWrap]} wrap={false}>
           {topDivider && <View style={styles.divider} />}
@@ -499,14 +507,8 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
                   },
                 ]}
               >
-                <PdfSafeText
-                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-                  text={p.key}
-                />
-                <PdfSafeText
-                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-                  text={p.value}
-                />
+                <PdfSafeText style={keyValueTextStyle} text={p.key} />
+                <PdfSafeText style={keyValueTextStyle} text={p.value} />
               </View>
             ))}
           </View>
@@ -519,6 +521,9 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
       const r = b.right ?? "";
       const bothEmpty = isBlank(l) && isBlank(r);
       if (b.mode === "form" && bothEmpty) return null;
+      const colsStyle = hasCustomTextStyle
+        ? { fontSize: textFontSize, fontWeight: textFontWeight }
+        : undefined;
 
       return (
         <View style={[styles.section, styles.contentWrap]} wrap={false}>
@@ -526,18 +531,12 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
           <View style={{ flexDirection: "row" }}>
             <View style={{ flex: 1, marginRight: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe
-                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-                  text={l}
-                />
+                <ParagraphSafe style={colsStyle} text={l} />
               </View>
             </View>
             <View style={{ flex: 1, marginLeft: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe
-                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-                  text={r}
-                />
+                <ParagraphSafe style={colsStyle} text={r} />
               </View>
             </View>
           </View>
@@ -551,6 +550,9 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
       const r = b.right ?? "";
       const empty = isBlank(l) && isBlank(c) && isBlank(r);
       if (b.mode === "form" && empty) return null;
+      const colsStyle = hasCustomTextStyle
+        ? { fontSize: textFontSize, fontWeight: textFontWeight }
+        : undefined;
 
       return (
         <View style={[styles.section, styles.contentWrap]} wrap={false}>
@@ -558,26 +560,17 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
           <View style={{ flexDirection: "row" }}>
             <View style={{ flex: 1, marginRight: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe
-                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-                  text={l}
-                />
+                <ParagraphSafe style={colsStyle} text={l} />
               </View>
             </View>
             <View style={{ flex: 1, marginHorizontal: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe
-                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-                  text={c}
-                />
+                <ParagraphSafe style={colsStyle} text={c} />
               </View>
             </View>
             <View style={{ flex: 1, marginLeft: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe
-                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
-                  text={r}
-                />
+                <ParagraphSafe style={colsStyle} text={r} />
               </View>
             </View>
           </View>

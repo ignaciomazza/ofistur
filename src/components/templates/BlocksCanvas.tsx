@@ -34,11 +34,11 @@ import type { BlocksCanvasProps, CanvasOptions } from "./TemplateEditor";
 const cx = (...c: Array<string | false | null | undefined>) =>
   c.filter(Boolean).join(" ");
 
-const CONTROL_SURFACE_CLASS =
-  "rounded-2xl border border-slate-900/15 bg-white/85 text-slate-700 shadow-sm backdrop-blur dark:border-white/15 dark:bg-slate-900/75 dark:text-slate-100";
+const CONTROL_BAR_CLASS =
+  "text-slate-600 dark:text-slate-200";
 
 const CONTROL_CHIP_CLASS =
-  "inline-flex items-center gap-1 rounded-full border border-slate-900/15 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-white/15 dark:bg-slate-950/70 dark:text-slate-100 dark:hover:bg-slate-900";
+  "inline-flex items-center gap-1 rounded-full border border-slate-900/15 bg-white/65 px-2 py-1 text-[11px] text-slate-700 shadow-sm backdrop-blur transition hover:bg-white/80 dark:border-white/20 dark:bg-slate-900/55 dark:text-slate-100 dark:hover:bg-slate-900/70";
 
 const WS_PRESERVE: React.CSSProperties = {
   whiteSpace: "break-spaces",
@@ -528,8 +528,8 @@ const BlockItem: React.FC<BlockItemProps> = ({
         {!showMeta && (
           <div
             className={cx(
-              "absolute -right-2 -top-2 z-10 hidden items-center gap-1 p-1 group-focus-within:flex group-hover:flex",
-              CONTROL_SURFACE_CLASS,
+              "absolute -right-2 -top-2 z-10 hidden items-center gap-1 group-focus-within:flex group-hover:flex",
+              CONTROL_BAR_CLASS,
             )}
           >
             <button
@@ -561,7 +561,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
               <button
                 type="button"
                 onClick={onRemove}
-                className="inline-flex items-center gap-1 rounded-full bg-red-600/80 px-2 py-1 text-xs text-white hover:bg-red-600"
+                className="bg-rose-500/12 hover:bg-rose-500/18 dark:bg-rose-500/16 dark:hover:bg-rose-500/22 inline-flex items-center gap-1 rounded-full border border-rose-500/35 px-2 py-1 text-xs text-rose-700 shadow-sm backdrop-blur transition dark:border-rose-400/35 dark:text-rose-200"
                 title="Quitar bloque"
               >
                 <svg
@@ -582,14 +582,17 @@ const BlockItem: React.FC<BlockItemProps> = ({
               </button>
             ) : (
               <span
-                className="rounded-full bg-white/20 px-2 py-1 text-[10px] uppercase tracking-wide opacity-80"
+                className={cx(
+                  CONTROL_CHIP_CLASS,
+                  "px-2 py-1 text-[10px] uppercase tracking-wide opacity-80",
+                )}
                 title={
                   canEdit
                     ? "Bloque fijo: no se puede eliminar"
                     : "Bloque fijo: no editable"
                 }
               >
-                fijo
+                Fijo
               </span>
             )}
           </div>
@@ -600,7 +603,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
           style={{ border: `1px solid ${options.dividerColor}` }}
         >
           {showMeta && (
-            <div className={cx("mb-2 flex flex-wrap items-center gap-2 p-2", CONTROL_SURFACE_CLASS)}>
+            <div className={cx("mb-2 flex flex-wrap items-center gap-2", CONTROL_BAR_CLASS)}>
               <button
                 type="button"
                 onPointerDown={(e) => {
@@ -641,8 +644,8 @@ const BlockItem: React.FC<BlockItemProps> = ({
                 {showToggle && onToggleMode && (
                   <div
                     className={cx(
-                      "inline-flex items-center rounded-full border p-0.5 text-[11px] shadow-sm",
-                      "border-slate-900/20 bg-white dark:border-white/20 dark:bg-slate-950/75",
+                      "inline-flex items-center rounded-full border p-0.5 text-[11px] shadow-sm backdrop-blur",
+                      "border-slate-900/20 bg-white/65 dark:border-white/20 dark:bg-slate-900/55",
                     )}
                   >
                     <button
@@ -651,8 +654,8 @@ const BlockItem: React.FC<BlockItemProps> = ({
                       className={cx(
                         "rounded-full px-2 py-0.5 transition",
                         mode === "fixed"
-                          ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300"
-                          : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
+                          ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                          : "text-slate-600 hover:bg-slate-900/6 dark:text-slate-200 dark:hover:bg-white/10",
                       )}
                       aria-pressed={mode === "fixed"}
                     >
@@ -664,8 +667,8 @@ const BlockItem: React.FC<BlockItemProps> = ({
                       className={cx(
                         "rounded-full px-2 py-0.5 transition",
                         mode === "form"
-                          ? "bg-amber-500/15 text-amber-800 dark:text-amber-300"
-                          : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
+                          ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                          : "text-slate-600 hover:bg-slate-900/6 dark:text-slate-200 dark:hover:bg-white/10",
                       )}
                       aria-pressed={mode === "form"}
                     >
@@ -678,7 +681,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   <button
                     type="button"
                     onClick={onRemove}
-                    className="inline-flex items-center gap-1 rounded-full bg-red-600/90 px-2 py-1 text-[11px] text-white hover:bg-red-600"
+                    className="bg-rose-500/12 hover:bg-rose-500/18 dark:bg-rose-500/16 dark:hover:bg-rose-500/22 inline-flex items-center gap-1 rounded-full border border-rose-500/35 px-2 py-1 text-[11px] text-rose-700 shadow-sm backdrop-blur transition dark:border-rose-400/35 dark:text-rose-200"
                     title="Quitar bloque"
                   >
                     <svg
@@ -698,13 +701,18 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   </button>
                 ) : (
                   <span
-                    className="rounded-full border border-slate-900/15 bg-white px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:border-white/20 dark:bg-slate-950/70 dark:text-slate-300"
+                    className={cx(
+                      CONTROL_CHIP_CLASS,
+                      "px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-200",
+                    )}
                     title={
                       canEdit
                         ? "Bloque fijo: no se puede eliminar"
                         : "Bloque fijo: no editable"
                     }
-                  ></span>
+                  >
+                    Fijo
+                  </span>
                 )}
               </div>
             </div>
@@ -712,15 +720,20 @@ const BlockItem: React.FC<BlockItemProps> = ({
 
           <div
             className={cx(
-              "mb-2 flex flex-wrap items-center gap-2 p-2 text-[11px]",
-              CONTROL_SURFACE_CLASS,
+              "mb-2 flex flex-wrap items-center gap-2 text-[11px]",
+              CONTROL_BAR_CLASS,
             )}
           >
-            <span className="rounded-full border border-slate-900/15 bg-white px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:border-white/20 dark:bg-slate-950/70 dark:text-slate-300">
-              Tipografia
+            <span
+              className={cx(
+                CONTROL_CHIP_CLASS,
+                "px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-200",
+              )}
+            >
+              Tipografía
             </span>
-            <label className="inline-flex items-center gap-1">
-              <span className="text-slate-600 dark:text-slate-300">Tamano</span>
+            <label className={cx(CONTROL_CHIP_CLASS, "gap-2 pr-1")}>
+              <span className="text-slate-600 dark:text-slate-200">Tamaño</span>
               <select
                 value={textSize}
                 onChange={(e) =>
@@ -730,7 +743,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   })
                 }
                 disabled={!canStyle}
-                className="rounded-full border border-slate-900/20 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-950/75 dark:text-slate-100"
+                className="rounded-full border border-slate-900/20 bg-white/75 px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-900/60 dark:text-slate-100"
               >
                 {BLOCK_TEXT_SIZE_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -739,8 +752,8 @@ const BlockItem: React.FC<BlockItemProps> = ({
                 ))}
               </select>
             </label>
-            <label className="inline-flex items-center gap-1">
-              <span className="text-slate-600 dark:text-slate-300">Peso</span>
+            <label className={cx(CONTROL_CHIP_CLASS, "gap-2 pr-1")}>
+              <span className="text-slate-600 dark:text-slate-200">Peso</span>
               <select
                 value={textWeight}
                 onChange={(e) =>
@@ -750,7 +763,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   })
                 }
                 disabled={!canStyle}
-                className="rounded-full border border-slate-900/20 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-950/75 dark:text-slate-100"
+                className="rounded-full border border-slate-900/20 bg-white/75 px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-900/60 dark:text-slate-100"
               >
                 {BLOCK_TEXT_WEIGHT_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
