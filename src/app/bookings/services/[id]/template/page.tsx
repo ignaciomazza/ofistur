@@ -18,6 +18,7 @@ import type {
 import BlocksCanvas from "@/components/templates/BlocksCanvas";
 import { nanoid } from "nanoid/non-secure";
 import { normalizeConfig, getAt } from "@/lib/templateConfig";
+import { sanitizeBlockTextStyle } from "@/lib/blockTextStyle";
 import type { Booking, Client, Service, Operator } from "@/types";
 import type { Agency as TemplateAgency, ContentBlock } from "@/types/templates";
 import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
@@ -189,6 +190,7 @@ function contentBlockToOrdered(
     origin: forceEditable ? "form" : b.mode === "form" ? "form" : "fixed",
     type: b.type,
     label: b.label,
+    textStyle: sanitizeBlockTextStyle(b.textStyle),
   } as const;
 
   switch (b.type) {
@@ -458,11 +460,18 @@ function presetBlocksToOrdered(input: unknown): OrderedBlock[] {
       const origin =
         raw.origin === "fixed" || raw.origin === "form" ? raw.origin : "extra";
       const value = presetValueFor(type, raw);
+      const nestedValue = isObj(raw.value)
+        ? (raw.value as Record<string, unknown>)
+        : undefined;
+      const textStyle = sanitizeBlockTextStyle(
+        raw.textStyle ?? nestedValue?.textStyle,
+      );
       return {
         id: nanoid(),
         origin,
         type,
         value,
+        textStyle,
       } satisfies OrderedBlock;
     })
     .filter(Boolean) as OrderedBlock[];

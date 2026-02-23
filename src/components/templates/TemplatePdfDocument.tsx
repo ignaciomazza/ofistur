@@ -17,6 +17,11 @@ import type {
   Density,
   Agency,
 } from "@/types/templates";
+import {
+  resolveBlockTextStyle,
+  blockTextSizeToPdfPt,
+  blockTextWeightToCss,
+} from "@/lib/blockTextStyle";
 import PdfSafeText from "./pdf/PdfSafeText";
 import ParagraphSafe from "./pdf/ParagraphSafe";
 
@@ -384,10 +389,17 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     index,
   }) => {
     const topDivider = showDividers && index > 0;
+    const headingLevel =
+      b.type === "heading" ? Math.max(1, Math.min(3, b.level ?? 1)) : undefined;
+    const textStyle = resolveBlockTextStyle({
+      type: b.type,
+      headingLevel,
+      textStyle: b.textStyle,
+    });
+    const textFontSize = blockTextSizeToPdfPt(textStyle.size);
+    const textFontWeight = blockTextWeightToCss(textStyle.weight);
 
     if (b.type === "heading") {
-      const lvl = Math.max(1, Math.min(3, b.level ?? 1));
-      const size = lvl === 1 ? 20 : lvl === 2 ? 16 : 14;
       const textValue = b.text ?? "";
       if (b.mode === "form" && isBlank(textValue)) return null;
 
@@ -395,7 +407,7 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
         <View style={[styles.section, styles.contentWrap]}>
           {topDivider && <View style={styles.divider} />}
           <PdfSafeText
-            style={{ fontSize: size, fontWeight: 700 }}
+            style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
             text={textValue}
           />
         </View>
@@ -409,7 +421,11 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
         <View style={[styles.section, styles.contentWrap]} wrap={false}>
           {topDivider && <View style={styles.divider} />}
           <PdfSafeText
-            style={{ fontSize: 14, fontWeight: 600, opacity: 0.95 }}
+            style={{
+              fontSize: textFontSize,
+              fontWeight: textFontWeight,
+              opacity: 0.95,
+            }}
             text={t}
           />
         </View>
@@ -422,7 +438,14 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
       return (
         <View style={[styles.section, styles.contentWrap]}>
           {topDivider && <View style={styles.divider} />}
-          <ParagraphSafe style={{ lineHeight: 1.4 }} text={t} />
+          <ParagraphSafe
+            style={{
+              lineHeight: 1.4,
+              fontSize: textFontSize,
+              fontWeight: textFontWeight,
+            }}
+            text={t}
+          />
         </View>
       );
     }
@@ -430,6 +453,11 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
     if (b.type === "list") {
       const items = Array.isArray(b.items) ? b.items : [];
       if (b.mode === "form" && items.length === 0) return null;
+      const listItemStyle = {
+        fontSize: textFontSize,
+        fontWeight: textFontWeight,
+        marginBottom: 4,
+      };
       return (
         <View style={[styles.section, styles.contentWrap]}>
           {topDivider && <View style={styles.divider} />}
@@ -443,8 +471,8 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
                   marginBottom: 4,
                 }}
               >
-                <Text style={[base.listItem, { marginRight: 6 }]}>•</Text>
-                <ParagraphSafe style={base.listItem} text={it} />
+                <Text style={[listItemStyle, { marginRight: 6 }]}>•</Text>
+                <ParagraphSafe style={listItemStyle} text={it} />
               </View>
             ))}
           </View>
@@ -471,8 +499,14 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
                   },
                 ]}
               >
-                <PdfSafeText text={p.key} />
-                <PdfSafeText text={p.value} />
+                <PdfSafeText
+                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
+                  text={p.key}
+                />
+                <PdfSafeText
+                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
+                  text={p.value}
+                />
               </View>
             ))}
           </View>
@@ -492,12 +526,18 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
           <View style={{ flexDirection: "row" }}>
             <View style={{ flex: 1, marginRight: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe text={l} />
+                <ParagraphSafe
+                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
+                  text={l}
+                />
               </View>
             </View>
             <View style={{ flex: 1, marginLeft: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe text={r} />
+                <ParagraphSafe
+                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
+                  text={r}
+                />
               </View>
             </View>
           </View>
@@ -518,17 +558,26 @@ const TemplatePdfDocument: React.FC<TemplatePdfDocumentProps> = ({
           <View style={{ flexDirection: "row" }}>
             <View style={{ flex: 1, marginRight: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe text={l} />
+                <ParagraphSafe
+                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
+                  text={l}
+                />
               </View>
             </View>
             <View style={{ flex: 1, marginHorizontal: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe text={c} />
+                <ParagraphSafe
+                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
+                  text={c}
+                />
               </View>
             </View>
             <View style={{ flex: 1, marginLeft: 6 }}>
               <View style={styles.card}>
-                <ParagraphSafe text={r} />
+                <ParagraphSafe
+                  style={{ fontSize: textFontSize, fontWeight: textFontWeight }}
+                  text={r}
+                />
               </View>
             </View>
           </View>

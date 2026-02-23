@@ -10,7 +10,21 @@ import React, {
   forwardRef,
 } from "react";
 import { Reorder, useDragControls } from "framer-motion";
-import type { OrderedBlock, BlockFormValue } from "@/types/templates";
+import type {
+  OrderedBlock,
+  BlockFormValue,
+  BlockTextSize,
+  BlockTextStyle,
+  BlockTextWeight,
+} from "@/types/templates";
+import {
+  BLOCK_TEXT_SIZE_CLASS,
+  BLOCK_TEXT_SIZE_OPTIONS,
+  BLOCK_TEXT_WEIGHT_CLASS,
+  BLOCK_TEXT_WEIGHT_OPTIONS,
+  blockTextWeightToCss,
+  resolveBlockTextStyle,
+} from "@/lib/blockTextStyle";
 import type { BlocksCanvasProps, CanvasOptions } from "./TemplateEditor";
 
 /* ============================================================================
@@ -19,6 +33,12 @@ import type { BlocksCanvasProps, CanvasOptions } from "./TemplateEditor";
 
 const cx = (...c: Array<string | false | null | undefined>) =>
   c.filter(Boolean).join(" ");
+
+const CONTROL_SURFACE_CLASS =
+  "rounded-2xl border border-slate-900/15 bg-white/85 text-slate-700 shadow-sm backdrop-blur dark:border-white/15 dark:bg-slate-900/75 dark:text-slate-100";
+
+const CONTROL_CHIP_CLASS =
+  "inline-flex items-center gap-1 rounded-full border border-slate-900/15 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-white/15 dark:bg-slate-950/70 dark:text-slate-100 dark:hover:bg-slate-900";
 
 const WS_PRESERVE: React.CSSProperties = {
   whiteSpace: "break-spaces",
@@ -402,6 +422,10 @@ type BlockItemProps = {
   canEdit: boolean;
   onRemove?: () => void;
   onToggleMode?: (id: string, next: "fixed" | "form") => void;
+  textSize: BlockTextSize;
+  textWeight: BlockTextWeight;
+  onTextStyleChange?: (next: BlockTextStyle) => void;
+  canStyle: boolean;
   options: CanvasOptions;
   showMeta: boolean;
   children: React.ReactNode;
@@ -421,6 +445,10 @@ const BlockItem: React.FC<BlockItemProps> = ({
   canEdit,
   onRemove,
   onToggleMode,
+  textSize,
+  textWeight,
+  onTextStyleChange,
+  canStyle,
   options,
   showMeta,
   children,
@@ -498,14 +526,19 @@ const BlockItem: React.FC<BlockItemProps> = ({
         }}
       >
         {!showMeta && (
-          <div className="absolute -right-2 -top-2 z-10 hidden items-center gap-1 rounded-full bg-black/30 p-1 text-white backdrop-blur-sm group-focus-within:flex group-hover:flex">
+          <div
+            className={cx(
+              "absolute -right-2 -top-2 z-10 hidden items-center gap-1 p-1 group-focus-within:flex group-hover:flex",
+              CONTROL_SURFACE_CLASS,
+            )}
+          >
             <button
               type="button"
               onPointerDown={(e) => {
                 e.preventDefault();
                 controls.start(e);
               }}
-              className="rounded-full px-2 py-1 text-xs opacity-90"
+              className={cx(CONTROL_CHIP_CLASS, "px-2 py-1 text-xs")}
               title="Arrastrar para mover"
               aria-label="Arrastrar para mover"
             >
@@ -567,14 +600,17 @@ const BlockItem: React.FC<BlockItemProps> = ({
           style={{ border: `1px solid ${options.dividerColor}` }}
         >
           {showMeta && (
-            <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className={cx("mb-2 flex flex-wrap items-center gap-2 p-2", CONTROL_SURFACE_CLASS)}>
               <button
                 type="button"
                 onPointerDown={(e) => {
                   e.preventDefault();
                   controls.start(e);
                 }}
-                className="inline-flex cursor-grab items-center gap-1 rounded-full bg-slate-900/5 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-900/10 active:cursor-grabbing dark:bg-white/10 dark:text-slate-200"
+                className={cx(
+                  CONTROL_CHIP_CLASS,
+                  "cursor-grab px-2 py-1 active:cursor-grabbing",
+                )}
                 title="Arrastrar para mover"
                 aria-label="Arrastrar para mover"
               >
@@ -596,22 +632,27 @@ const BlockItem: React.FC<BlockItemProps> = ({
               </button>
 
               {showLabel && (
-                <span className="rounded-full bg-slate-900/5 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-white/10 dark:text-slate-200">
+                <span className={cx(CONTROL_CHIP_CLASS, "px-2 py-0.5")}>
                   {label}
                 </span>
               )}
 
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 {showToggle && onToggleMode && (
-                  <div className="inline-flex items-center rounded-full border border-white/10 bg-white/10 p-0.5 text-[11px] text-slate-600 shadow-sm shadow-sky-950/10 dark:text-slate-200">
+                  <div
+                    className={cx(
+                      "inline-flex items-center rounded-full border p-0.5 text-[11px] shadow-sm",
+                      "border-slate-900/20 bg-white dark:border-white/20 dark:bg-slate-950/75",
+                    )}
+                  >
                     <button
                       type="button"
                       onClick={() => onToggleMode(block.id, "fixed")}
                       className={cx(
                         "rounded-full px-2 py-0.5 transition",
                         mode === "fixed"
-                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                          : "opacity-70 hover:opacity-100",
+                          ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300"
+                          : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
                       )}
                       aria-pressed={mode === "fixed"}
                     >
@@ -623,8 +664,8 @@ const BlockItem: React.FC<BlockItemProps> = ({
                       className={cx(
                         "rounded-full px-2 py-0.5 transition",
                         mode === "form"
-                          ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                          : "opacity-70 hover:opacity-100",
+                          ? "bg-amber-500/15 text-amber-800 dark:text-amber-300"
+                          : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
                       )}
                       aria-pressed={mode === "form"}
                     >
@@ -657,7 +698,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   </button>
                 ) : (
                   <span
-                    className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide opacity-80"
+                    className="rounded-full border border-slate-900/15 bg-white px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:border-white/20 dark:bg-slate-950/70 dark:text-slate-300"
                     title={
                       canEdit
                         ? "Bloque fijo: no se puede eliminar"
@@ -668,6 +709,57 @@ const BlockItem: React.FC<BlockItemProps> = ({
               </div>
             </div>
           )}
+
+          <div
+            className={cx(
+              "mb-2 flex flex-wrap items-center gap-2 p-2 text-[11px]",
+              CONTROL_SURFACE_CLASS,
+            )}
+          >
+            <span className="rounded-full border border-slate-900/15 bg-white px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:border-white/20 dark:bg-slate-950/70 dark:text-slate-300">
+              Tipografia
+            </span>
+            <label className="inline-flex items-center gap-1">
+              <span className="text-slate-600 dark:text-slate-300">Tamano</span>
+              <select
+                value={textSize}
+                onChange={(e) =>
+                  onTextStyleChange?.({
+                    size: e.target.value as BlockTextSize,
+                    weight: textWeight,
+                  })
+                }
+                disabled={!canStyle}
+                className="rounded-full border border-slate-900/20 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-950/75 dark:text-slate-100"
+              >
+                {BLOCK_TEXT_SIZE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="inline-flex items-center gap-1">
+              <span className="text-slate-600 dark:text-slate-300">Peso</span>
+              <select
+                value={textWeight}
+                onChange={(e) =>
+                  onTextStyleChange?.({
+                    size: textSize,
+                    weight: e.target.value as BlockTextWeight,
+                  })
+                }
+                disabled={!canStyle}
+                className="rounded-full border border-slate-900/20 bg-white px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-950/75 dark:text-slate-100"
+              >
+                {BLOCK_TEXT_WEIGHT_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           {children}
         </div>
@@ -685,27 +777,30 @@ function HeadingEditor({
   onPatch,
   options,
   readOnly,
+  textSizeClass,
+  textWeight,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   options: CanvasOptions;
   readOnly: boolean;
+  textSizeClass: string;
+  textWeight: BlockTextWeight;
 }) {
   const hv = (b.value as HeadingV) ?? { type: "heading", text: "", level: 1 };
-  const size = "text-2xl";
 
   return (
     <div className="flex items-start gap-2">
       <EditableText
         value={hv.text ?? ""}
         onChange={(text) => onPatch({ text, level: 1 })}
-        className={cx(size, "py-1 leading-snug")}
+        className={cx(textSizeClass, "py-1 leading-snug")}
         placeholder="Escribí el título…"
         readOnly={readOnly}
         multiline={false}
         style={{
           fontFamily: options.headingFont,
-          fontWeight: options.headingWeight,
+          fontWeight: blockTextWeightToCss(textWeight),
         }}
       />
     </div>
@@ -716,17 +811,19 @@ function SubtitleEditor({
   b,
   onPatch,
   readOnly,
+  textClass,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   readOnly: boolean;
+  textClass: string;
 }) {
   const sv = (b.value as SubtitleV) ?? { type: "subtitle", text: "" };
   return (
     <EditableText
       value={sv.text ?? ""}
       onChange={(text) => onPatch({ text })}
-      className="text-lg font-medium opacity-95"
+      className={cx(textClass, "opacity-95")}
       placeholder="Escribí el subtítulo…"
       readOnly={readOnly}
       multiline={false}
@@ -738,17 +835,19 @@ function ParagraphEditor({
   b,
   onPatch,
   readOnly,
+  textClass,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   readOnly: boolean;
+  textClass: string;
 }) {
   const pv = (b.value as ParagraphV) ?? { type: "paragraph", text: "" };
   return (
     <EditableText
       value={pv.text ?? ""}
       onChange={(text) => onPatch({ text })}
-      className="leading-relaxed"
+      className={cx(textClass, "leading-relaxed")}
       placeholder="Párrafo… (Enter para salto de línea, Tab para tabular)"
       readOnly={readOnly}
       multiline
@@ -764,11 +863,13 @@ function ListEditor({
   onPatch,
   options,
   readOnly,
+  textClass,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   options: CanvasOptions;
   readOnly: boolean;
+  textClass: string;
 }) {
   const lv = (b.value as ListV) ?? { type: "list", items: [] };
   const items: string[] = Array.isArray(lv.items) ? lv.items : [];
@@ -827,7 +928,7 @@ function ListEditor({
               ref={setItemRef(i)}
               value={it}
               onChange={(t) => update(i, t)}
-              className="flex-1"
+              className={cx("flex-1", textClass)}
               placeholder={`Ítem ${i + 1}`}
               readOnly={readOnly}
               multiline={false}
@@ -908,12 +1009,14 @@ function KeyValueEditor({
   readOnly,
   panelBg,
   innerRadiusClass,
+  textClass,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   readOnly: boolean;
   panelBg: string;
   innerRadiusClass: string;
+  textClass: string;
 }) {
   const kv = (b.value as KeyValueV) ?? { type: "keyValue", pairs: [] };
   const pairs: Array<{ key: string; value: string }> = Array.isArray(kv.pairs)
@@ -980,6 +1083,7 @@ function KeyValueEditor({
             ref={setKeyRef(i)}
             value={p.key}
             onChange={(t) => update(i, "key", t)}
+            className={textClass}
             placeholder="Clave"
             readOnly={readOnly}
             multiline={false}
@@ -993,6 +1097,7 @@ function KeyValueEditor({
             ref={setValRef(i)}
             value={p.value}
             onChange={(t) => update(i, "value", t)}
+            className={textClass}
             placeholder="Valor"
             readOnly={readOnly}
             multiline={false}
@@ -1067,6 +1172,7 @@ function TwoColsEditor({
   panelBg,
   innerRadiusClass,
   options,
+  textClass,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
@@ -1074,6 +1180,7 @@ function TwoColsEditor({
   panelBg: string;
   innerRadiusClass: string;
   options: CanvasOptions;
+  textClass: string;
 }) {
   const tv = (b.value as TwoColsV) ?? {
     type: "twoColumns",
@@ -1089,6 +1196,7 @@ function TwoColsEditor({
         <EditableText
           value={tv.left ?? ""}
           onChange={(left) => onPatch({ left })}
+          className={textClass}
           placeholder="Columna izquierda…"
           readOnly={readOnly}
         />
@@ -1100,6 +1208,7 @@ function TwoColsEditor({
         <EditableText
           value={tv.right ?? ""}
           onChange={(right) => onPatch({ right })}
+          className={textClass}
           placeholder="Columna derecha…"
           readOnly={readOnly}
         />
@@ -1115,6 +1224,7 @@ function ThreeColsEditor({
   panelBg,
   innerRadiusClass,
   options,
+  textClass,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
@@ -1122,6 +1232,7 @@ function ThreeColsEditor({
   panelBg: string;
   innerRadiusClass: string;
   options: CanvasOptions;
+  textClass: string;
 }) {
   const tv = (b.value as ThreeColsV) ?? {
     type: "threeColumns",
@@ -1138,6 +1249,7 @@ function ThreeColsEditor({
         <EditableText
           value={tv.left ?? ""}
           onChange={(left) => onPatch({ left })}
+          className={textClass}
           placeholder="Izquierda…"
           readOnly={readOnly}
         />
@@ -1149,6 +1261,7 @@ function ThreeColsEditor({
         <EditableText
           value={tv.center ?? ""}
           onChange={(center) => onPatch({ center })}
+          className={textClass}
           placeholder="Centro…"
           readOnly={readOnly}
         />
@@ -1160,6 +1273,7 @@ function ThreeColsEditor({
         <EditableText
           value={tv.right ?? ""}
           onChange={(right) => onPatch({ right })}
+          className={textClass}
           placeholder="Derecha…"
           readOnly={readOnly}
         />
@@ -1379,6 +1493,17 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
     [blocks, onChange],
   );
 
+  const patchBlockTextStyle = useCallback(
+    (id: string, nextStyle: BlockTextStyle) => {
+      const next = blocks.map((b) => {
+        if (b.id !== id) return b;
+        return { ...b, textStyle: nextStyle };
+      });
+      onChange(next);
+    },
+    [blocks, onChange],
+  );
+
   const resolveMode = (b: OrderedBlock): "fixed" | "form" =>
     getMode ? getMode(b) : b.origin === "form" ? "form" : "fixed";
 
@@ -1409,6 +1534,19 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
           const canRemove = !readOnly || allowRemoveLocked;
           const label = getLabel ? getLabel(b, idx) : b.label;
           const mode = resolveMode(b);
+          const headingLevel =
+            b.type === "heading"
+              ? ((b.value as HeadingV | undefined)?.level ?? 1)
+              : undefined;
+          const resolvedTextStyle = resolveBlockTextStyle({
+            type: b.type,
+            headingLevel,
+            textStyle: b.textStyle,
+          });
+          const textSizeClass = BLOCK_TEXT_SIZE_CLASS[resolvedTextStyle.size];
+          const textWeightClass =
+            BLOCK_TEXT_WEIGHT_CLASS[resolvedTextStyle.weight];
+          const textClass = cx(textSizeClass, textWeightClass);
 
           return (
             <BlockItem
@@ -1420,6 +1558,12 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
               canEdit={!readOnly}
               canRemove={canRemove}
               onToggleMode={onToggleMode}
+              textSize={resolvedTextStyle.size}
+              textWeight={resolvedTextStyle.weight}
+              onTextStyleChange={(nextStyle) =>
+                patchBlockTextStyle(b.id, nextStyle)
+              }
+              canStyle={!readOnly}
               options={options}
               showMeta={showMeta}
               onDragStart={() => {
@@ -1445,6 +1589,8 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   onPatch={(p) => patchBlock(b.id, p)}
                   readOnly={readOnly}
                   options={options}
+                  textSizeClass={textSizeClass}
+                  textWeight={resolvedTextStyle.weight}
                 />
               )}
               {b.type === "subtitle" && (
@@ -1452,6 +1598,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   b={b}
                   onPatch={(p) => patchBlock(b.id, p)}
                   readOnly={readOnly}
+                  textClass={textClass}
                 />
               )}
               {b.type === "paragraph" && (
@@ -1459,6 +1606,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   b={b}
                   onPatch={(p) => patchBlock(b.id, p)}
                   readOnly={readOnly}
+                  textClass={textClass}
                 />
               )}
               {b.type === "list" && (
@@ -1467,6 +1615,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   onPatch={(p) => patchBlock(b.id, p)}
                   options={options}
                   readOnly={readOnly}
+                  textClass={textClass}
                 />
               )}
               {b.type === "keyValue" && (
@@ -1476,6 +1625,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   readOnly={readOnly}
                   panelBg={options.panelBgStrong}
                   innerRadiusClass={options.innerRadiusClass}
+                  textClass={textClass}
                 />
               )}
               {b.type === "twoColumns" && (
@@ -1486,6 +1636,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   panelBg={options.panelBgStrong}
                   innerRadiusClass={options.innerRadiusClass}
                   options={options}
+                  textClass={textClass}
                 />
               )}
               {b.type === "threeColumns" && (
@@ -1496,6 +1647,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   panelBg={options.panelBgStrong}
                   innerRadiusClass={options.innerRadiusClass}
                   options={options}
+                  textClass={textClass}
                 />
               )}
             </BlockItem>

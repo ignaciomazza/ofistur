@@ -41,6 +41,18 @@ export type CurrentUser = {
 // ========= UI tokens =========
 export type Density = "compact" | "comfortable" | "relaxed";
 
+export type BlockTextSize = "xs" | "sm" | "base" | "lg" | "xl" | "2xl";
+export type BlockTextWeight =
+  | "light"
+  | "normal"
+  | "medium"
+  | "semibold"
+  | "bold";
+export type BlockTextStyle = {
+  size?: BlockTextSize;
+  weight?: BlockTextWeight;
+};
+
 // ========= Bloques de contenido =========
 export type BlockType =
   | "heading"
@@ -65,6 +77,7 @@ export type BaseBlock = {
   label?: string;
   fieldKey?: string; // cuando el contenido se completa via formulario
   mupuStyle?: MupuStyle; // overrides Mupu (opcional)
+  textStyle?: BlockTextStyle;
 };
 
 export type HeadingBlock = BaseBlock & {
@@ -173,6 +186,7 @@ export type OrderedBlock = {
   value?: BlockFormValue;
   /** Opcionalmente un alias/etiqueta visible de bloque */
   label?: string;
+  textStyle?: BlockTextStyle;
 };
 
 export type TemplateFormValues = {

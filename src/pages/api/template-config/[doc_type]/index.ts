@@ -276,6 +276,15 @@ const zMupuStyle = z
   })
   .partial();
 
+const zTextStyle = z
+  .object({
+    size: z.enum(["xs", "sm", "base", "lg", "xl", "2xl"]).optional(),
+    weight: z
+      .enum(["light", "normal", "medium", "semibold", "bold"])
+      .optional(),
+  })
+  .partial();
+
 const zBlockBase = z.object({
   id: z.string(),
   type: z.enum([
@@ -291,6 +300,7 @@ const zBlockBase = z.object({
   label: z.string().optional(),
   fieldKey: z.string().optional(),
   mupuStyle: zMupuStyle.optional(),
+  textStyle: zTextStyle.optional(),
 });
 
 const zBlockHeading = zBlockBase.extend({

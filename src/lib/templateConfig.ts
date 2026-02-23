@@ -18,6 +18,7 @@ import type {
   TwoColumnsBlock,
   ThreeColumnsBlock,
 } from "@/types/templates";
+import { sanitizeBlockTextStyle } from "@/lib/blockTextStyle";
 
 // ==========================================================
 // Helpers básicos
@@ -156,7 +157,9 @@ export function normalizeConfig(
     contactItems: asStringArray(cfg.contactItems ?? def.contactItems),
     content: {
       blocks: Array.isArray(cfg.content?.blocks)
-        ? (cfg.content?.blocks as ContentBlock[]).filter(isContentBlock)
+        ? (cfg.content?.blocks as ContentBlock[])
+            .filter(isContentBlock)
+            .map(normalizeContentBlock)
         : [],
     },
     paymentOptions: asStringArray(cfg.paymentOptions ?? def.paymentOptions),
@@ -176,6 +179,12 @@ function isContentBlock(b: unknown): b is ContentBlock {
     t === "twoColumns" ||
     t === "threeColumns"
   );
+}
+
+function normalizeContentBlock(b: ContentBlock): ContentBlock {
+  const textStyle = sanitizeBlockTextStyle((b as { textStyle?: unknown }).textStyle);
+  if (!textStyle) return { ...b, textStyle: undefined };
+  return { ...b, textStyle };
 }
 
 export function validateOrderedBlocks(blocks: OrderedBlock[]): string[] {
@@ -295,17 +304,24 @@ function prioritizeSelected(list: string[] | undefined, selected?: string) {
 
 function makeEmptyFallback(ob: OrderedBlock): ContentBlock {
   // Fallback defensivo si no encontramos el fixed original
+  const textStyle = sanitizeBlockTextStyle(ob.textStyle);
   switch (ob.type) {
     case "heading":
-      return { id: ob.id, type: "heading", mode: "fixed", text: "" };
+      return { id: ob.id, type: "heading", mode: "fixed", text: "", textStyle };
     case "subtitle":
-      return { id: ob.id, type: "subtitle", mode: "fixed", text: "" };
+      return { id: ob.id, type: "subtitle", mode: "fixed", text: "", textStyle };
     case "paragraph":
-      return { id: ob.id, type: "paragraph", mode: "fixed", text: "" };
+      return {
+        id: ob.id,
+        type: "paragraph",
+        mode: "fixed",
+        text: "",
+        textStyle,
+      };
     case "list":
-      return { id: ob.id, type: "list", mode: "fixed", items: [] };
+      return { id: ob.id, type: "list", mode: "fixed", items: [], textStyle };
     case "keyValue":
-      return { id: ob.id, type: "keyValue", mode: "fixed", pairs: [] };
+      return { id: ob.id, type: "keyValue", mode: "fixed", pairs: [], textStyle };
     case "twoColumns":
       return {
         id: ob.id,
@@ -313,6 +329,7 @@ function makeEmptyFallback(ob: OrderedBlock): ContentBlock {
         mode: "fixed",
         left: "",
         right: "",
+        textStyle,
       };
     case "threeColumns":
       return {
@@ -322,9 +339,16 @@ function makeEmptyFallback(ob: OrderedBlock): ContentBlock {
         left: "",
         center: "",
         right: "",
+        textStyle,
       };
     default:
-      return { id: ob.id, type: "paragraph", mode: "fixed", text: "" };
+      return {
+        id: ob.id,
+        type: "paragraph",
+        mode: "fixed",
+        text: "",
+        textStyle,
+      };
   }
 }
 
@@ -333,6 +357,9 @@ function buildBlockFromValue(
   ob: OrderedBlock,
 ): ContentBlock {
   const val = ob.value ?? {};
+  const textStyle =
+    sanitizeBlockTextStyle(ob.textStyle) ??
+    sanitizeBlockTextStyle(origin?.textStyle);
 
   switch (ob.type) {
     case "heading": {
@@ -344,6 +371,7 @@ function buildBlockFromValue(
         ...base,
         text: v.text ?? base.text ?? "",
         level: v.level ?? base.level ?? 1,
+        textStyle,
       };
     }
     case "subtitle": {
@@ -351,28 +379,28 @@ function buildBlockFromValue(
         (isSubtitleBlock(origin) ? origin : undefined) ??
         ({ id: ob.id, type: "subtitle", mode: "form" } as SubtitleBlock);
       const v = val as { text?: string };
-      return { ...base, text: v.text ?? base.text ?? "" };
+      return { ...base, text: v.text ?? base.text ?? "", textStyle };
     }
     case "paragraph": {
       const base: ParagraphBlock =
         (isParagraphBlock(origin) ? origin : undefined) ??
         ({ id: ob.id, type: "paragraph", mode: "form" } as ParagraphBlock);
       const v = val as { text?: string };
-      return { ...base, text: v.text ?? base.text ?? "" };
+      return { ...base, text: v.text ?? base.text ?? "", textStyle };
     }
     case "list": {
       const base: ListBlock =
         (isListBlock(origin) ? origin : undefined) ??
         ({ id: ob.id, type: "list", mode: "form" } as ListBlock);
       const v = val as { items?: string[] };
-      return { ...base, items: v.items ?? base.items ?? [] };
+      return { ...base, items: v.items ?? base.items ?? [], textStyle };
     }
     case "keyValue": {
       const base: KeyValueBlock =
         (isKeyValueBlock(origin) ? origin : undefined) ??
         ({ id: ob.id, type: "keyValue", mode: "form" } as KeyValueBlock);
       const v = val as { pairs?: { key: string; value: string }[] };
-      return { ...base, pairs: v.pairs ?? base.pairs ?? [] };
+      return { ...base, pairs: v.pairs ?? base.pairs ?? [], textStyle };
     }
     case "twoColumns": {
       const base: TwoColumnsBlock =
@@ -383,6 +411,7 @@ function buildBlockFromValue(
         ...base,
         left: v.left ?? base.left ?? "",
         right: v.right ?? base.right ?? "",
+        textStyle,
       };
     }
     case "threeColumns": {
@@ -399,6 +428,7 @@ function buildBlockFromValue(
         left: v.left ?? base.left ?? "",
         center: v.center ?? base.center ?? "",
         right: v.right ?? base.right ?? "",
+        textStyle,
       };
     }
     default: {
@@ -407,7 +437,7 @@ function buildBlockFromValue(
         (isParagraphBlock(origin) ? origin : undefined) ??
         ({ id: ob.id, type: "paragraph", mode: "form" } as ParagraphBlock);
       const v = val as { text?: string };
-      return { ...base, text: v.text ?? base.text ?? "" };
+      return { ...base, text: v.text ?? base.text ?? "", textStyle };
     }
   }
 }
@@ -473,6 +503,7 @@ export function buildInitialOrderedBlocks(cfg: TemplateConfig): OrderedBlock[] {
       origin,
       type: b.type,
       label: b.label,
+      textStyle: sanitizeBlockTextStyle(b.textStyle),
       value, // <- ahora sí viaja el valor inicial si era "form"
     };
   });

@@ -12,6 +12,7 @@ import {
   normalizeMultilineSoft,
   countWeirdChars,
 } from "@/lib/whitespace";
+import { sanitizeBlockTextStyle } from "@/lib/blockTextStyle";
 import TemplatePdfDocument from "./TemplatePdfDocument";
 import type { TemplateConfig, ContentBlock, Agency } from "@/types/templates";
 
@@ -77,6 +78,7 @@ type PresetValue = {
   left?: string;
   right?: string;
   center?: string;
+  textStyle?: unknown;
   items?: unknown[];
   pairs?: PresetKeyValuePair[];
 };
@@ -89,6 +91,7 @@ type PresetBlock = {
   left?: string;
   right?: string;
   center?: string;
+  textStyle?: unknown;
   items?: unknown[];
   pairs?: PresetKeyValuePair[];
 };
@@ -126,28 +129,43 @@ function presetToContentBlock(rb: unknown): ContentBlock | null {
   const type = String(b?.type ?? "") as ContentBlock["type"];
   const mode = mapOriginToMode(b?.origin);
   const isForm = mode === "form";
+  const textStyle = sanitizeBlockTextStyle(b?.textStyle ?? b?.value?.textStyle);
 
   switch (type) {
     case "heading": {
       const text = b?.value?.text ?? b?.label ?? "";
       if (isBlank(text)) return null;
-      return { id: ensureId(b.id), type: "heading", text, level: 1, mode };
+      return {
+        id: ensureId(b.id),
+        type: "heading",
+        text,
+        level: 1,
+        mode,
+        textStyle,
+      };
     }
     case "subtitle": {
       const text = b?.value?.text ?? b?.label ?? "";
       if (isBlank(text)) return null;
-      return { id: ensureId(b.id), type: "subtitle", text, mode };
+      return { id: ensureId(b.id), type: "subtitle", text, mode, textStyle };
     }
     case "paragraph": {
       const text = b?.value?.text ?? "";
       if (isBlank(text) && isForm) return null;
-      return { id: ensureId(b.id), type: "paragraph", text, mode };
+      return { id: ensureId(b.id), type: "paragraph", text, mode, textStyle };
     }
     case "twoColumns": {
       const left = b?.value?.left ?? b?.left ?? "";
       const right = b?.value?.right ?? b?.right ?? "";
       if (isBlank(left) && isBlank(right) && isForm) return null;
-      return { id: ensureId(b.id), type: "twoColumns", left, right, mode };
+      return {
+        id: ensureId(b.id),
+        type: "twoColumns",
+        left,
+        right,
+        mode,
+        textStyle,
+      };
     }
     case "threeColumns": {
       const left = b?.value?.left ?? b?.left ?? "";
@@ -162,6 +180,7 @@ function presetToContentBlock(rb: unknown): ContentBlock | null {
         center,
         right,
         mode,
+        textStyle,
       };
     }
     case "keyValue": {
@@ -174,14 +193,14 @@ function presetToContentBlock(rb: unknown): ContentBlock | null {
         }))
         .filter((p) => !isBlank(p.key) || !isBlank(p.value));
       if (pairs.length === 0 && isForm) return null;
-      return { id: ensureId(b.id), type: "keyValue", pairs, mode };
+      return { id: ensureId(b.id), type: "keyValue", pairs, mode, textStyle };
     }
     case "list": {
       const itemsSrc =
         (Array.isArray(b?.value?.items) ? b?.value?.items : b?.items) ?? [];
       const items = itemsSrc.map((x) => (x == null ? "" : String(x)));
       if (items.length === 0 && isForm) return null;
-      return { id: ensureId(b.id), type: "list", items, mode };
+      return { id: ensureId(b.id), type: "list", items, mode, textStyle };
     }
     default:
       return null;

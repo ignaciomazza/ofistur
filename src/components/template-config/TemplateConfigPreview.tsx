@@ -6,7 +6,17 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
 import BlocksCanvas from "@/components/templates/BlocksCanvas";
-import type { OrderedBlock, BlockFormValue } from "@/types/templates";
+import type {
+  OrderedBlock,
+  BlockFormValue,
+  BlockTextStyle,
+} from "@/types/templates";
+import {
+  BLOCK_TEXT_SIZE_CLASS,
+  BLOCK_TEXT_WEIGHT_CLASS,
+  resolveBlockTextStyle,
+  sanitizeBlockTextStyle,
+} from "@/lib/blockTextStyle";
 
 /* =============================================================================
  * Tipos base + helpers
@@ -124,6 +134,7 @@ type BaseBlock = {
   label?: string;
   fieldKey?: string;
   mupuStyle?: MupuStyle;
+  textStyle?: BlockTextStyle;
 };
 
 type HeadingBlock = BaseBlock & {
@@ -460,9 +471,14 @@ const KeyValueRow: React.FC<{
   v?: React.ReactNode;
   bg: string;
   innerRadiusClass: string;
-}> = ({ k, v, bg, innerRadiusClass }) => (
+  className?: string;
+}> = ({ k, v, bg, innerRadiusClass, className }) => (
   <div
-    className={cx("flex items-center justify-between p-2", innerRadiusClass)}
+    className={cx(
+      "flex items-center justify-between p-2",
+      innerRadiusClass,
+      className,
+    )}
     style={{ backgroundColor: bg }}
   >
     <span className="opacity-90">{k}</span>
@@ -603,6 +619,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
         label,
         fieldKey,
         mupuStyle: b.mupuStyle,
+        textStyle: sanitizeBlockTextStyle(b.textStyle),
       } as const;
 
       switch (b.type) {
@@ -702,6 +719,9 @@ const TemplateConfigPreview: React.FC<Props> = ({
       const fieldKey =
         base?.fieldKey ?? (ob as BuilderBlock).fieldKey ?? fallbackKey;
       const mupuStyle = base?.mupuStyle ?? (ob as BuilderBlock).mupuStyle;
+      const textStyle =
+        sanitizeBlockTextStyle((ob as BuilderBlock).textStyle) ??
+        sanitizeBlockTextStyle(base?.textStyle);
       const val = (ob.value ?? {}) as Partial<BlockFormValue>;
 
       const common = {
@@ -711,6 +731,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
         label,
         fieldKey,
         mupuStyle,
+        textStyle,
       };
 
       switch (ob.type) {
@@ -1033,6 +1054,16 @@ const TemplateConfigPreview: React.FC<Props> = ({
                 applyMs ? resolveMupuTextStyle(ms, role) : undefined;
               const label = autoLabels.get(b.id) ?? BLOCK_LABELS[b.type];
               const fieldKey = resolveFieldKey(b, label);
+              const headingLevel = b.type === "heading" ? b.level ?? 1 : undefined;
+              const resolvedText = resolveBlockTextStyle({
+                type: b.type,
+                headingLevel,
+                textStyle: sanitizeBlockTextStyle(b.textStyle),
+              });
+              const textClass = cx(
+                BLOCK_TEXT_SIZE_CLASS[resolvedText.size],
+                BLOCK_TEXT_WEIGHT_CLASS[resolvedText.weight],
+              );
 
               const placeholder =
                 b.mode === "form" ? (
@@ -1048,12 +1079,6 @@ const TemplateConfigPreview: React.FC<Props> = ({
 
               if (b.type === "heading") {
                 const { level = 1, text: textValue = "" } = b as HeadingBlock;
-                const size =
-                  level === 1
-                    ? "text-2xl"
-                    : level === 2
-                      ? "text-xl"
-                      : "text-lg";
                 const Tag = (["h1", "h2", "h3"] as const)[
                   Math.min(Math.max(level, 1), 3) - 1
                 ];
@@ -1065,11 +1090,10 @@ const TemplateConfigPreview: React.FC<Props> = ({
                   <div key={b.id}>
                     {topDivider}
                     <Tag
-                      className={cx(size)}
+                      className={cx(textClass)}
                       style={{
                         ...(styleHeading || {}),
                         fontFamily: styleHeading?.fontFamily ?? headingFont,
-                        fontWeight: styleHeading?.fontWeight ?? headingWeight,
                         color:
                           (applyMs && ms?.color) ||
                           undefined /* si no, hereda */,
@@ -1088,7 +1112,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                   <div key={b.id}>
                     {topDivider}
                     <h4
-                      className="text-lg font-medium opacity-95"
+                      className={cx(textClass, "opacity-95")}
                       style={styleSubtitle}
                     >
                       {b.mode === "form" ? placeholder : t}
@@ -1103,7 +1127,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                 return (
                   <div key={b.id}>
                     {topDivider}
-                    <p className="leading-relaxed" style={styleParagraph}>
+                    <p className={cx(textClass, "leading-relaxed")} style={styleParagraph}>
                       {b.mode === "form" ? placeholder : t}
                     </p>
                   </div>
@@ -1118,10 +1142,12 @@ const TemplateConfigPreview: React.FC<Props> = ({
                     {topDivider}
                     <ul className={cx("list-inside list-disc", listSpace)}>
                       {b.mode === "form" ? (
-                        <li style={styleList}>{placeholder}</li>
+                        <li className={textClass} style={styleList}>
+                          {placeholder}
+                        </li>
                       ) : (
                         items.map((it, i) => (
-                          <li key={i} style={styleList}>
+                          <li key={i} className={textClass} style={styleList}>
                             {it}
                           </li>
                         ))
@@ -1161,6 +1187,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                           }
                           bg={panelBgStrong}
                           innerRadiusClass={innerRadiusClass}
+                          className={textClass}
                         />
                       ) : (
                         pairs.map((p, i) => (
@@ -1170,6 +1197,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                             v={<span style={styleVal}>{p.value}</span>}
                             bg={panelBgStrong}
                             innerRadiusClass={innerRadiusClass}
+                            className={textClass}
                           />
                         ))
                       )}
@@ -1191,7 +1219,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                           className={cx("p-3", innerRadiusClass)}
                           style={{ backgroundColor: panelBgStrong }}
                         >
-                          <div style={styleTwo}>
+                          <div className={textClass} style={styleTwo}>
                             {b.mode === "form" ? placeholder : content}
                           </div>
                         </div>
@@ -1214,7 +1242,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                     className={cx("p-3", innerRadiusClass)}
                     style={{ backgroundColor: panelBgStrong }}
                   >
-                    <div style={styleThree}>
+                    <div className={textClass} style={styleThree}>
                       {b.mode === "form" ? placeholder : content}
                     </div>
                   </div>

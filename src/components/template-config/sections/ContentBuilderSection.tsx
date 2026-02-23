@@ -4,6 +4,17 @@
 import React, { useMemo } from "react";
 import { getAt, normalizeKey, section, setAt, isObject } from "./_helpers";
 import { Config } from "../types";
+import {
+  BLOCK_TEXT_SIZE_OPTIONS,
+  BLOCK_TEXT_WEIGHT_OPTIONS,
+  resolveBlockTextStyle,
+  sanitizeBlockTextStyle,
+} from "@/lib/blockTextStyle";
+import type {
+  BlockTextSize,
+  BlockTextStyle,
+  BlockTextWeight,
+} from "@/types/templates";
 
 /** ===== Tipos de bloque ===== */
 type BlockType =
@@ -32,6 +43,7 @@ type BaseBlock = {
   fieldKey?: string;
   /** Solo visible/usable por la agencia Mupu (id=1) cuando el bloque es fijo */
   mupuStyle?: MupuStyle;
+  textStyle?: BlockTextStyle;
 };
 
 type HeadingBlock = BaseBlock & { type: "heading"; text?: string; level?: 1 | 2 | 3 };
@@ -120,6 +132,16 @@ const ContentBuilderSection: React.FC<Props> = ({ cfg, disabled, onChange }) => 
 
   const setBlocks = (next: ContentBlock[]) =>
     onChange(setAt(cfg, ["content", "blocks"], next));
+
+  const patchBlockTextStyle = (
+    id: string,
+    next: { size: BlockTextSize; weight: BlockTextWeight },
+  ) => {
+    const nextBlocks = blocks.map((b) =>
+      b.id === id ? { ...b, textStyle: next } : b,
+    );
+    setBlocks(nextBlocks);
+  };
 
   /** ===== CRUD de bloques ===== */
   const addBlock = (type: BlockType) => {
@@ -229,9 +251,75 @@ const ContentBuilderSection: React.FC<Props> = ({ cfg, disabled, onChange }) => 
           No hay secciones aún. Agregá un bloque para empezar.
         </p>
       ) : (
-        <p className="text-xs text-slate-500 dark:text-slate-300">
-          Bloques activos en la vista previa: {blocks.length}
-        </p>
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500 dark:text-slate-300">
+            Bloques activos en la vista previa: {blocks.length}
+          </p>
+
+          <div className="grid gap-2">
+            {blocks.map((b, idx) => {
+              const headingLevel = b.type === "heading" ? b.level ?? 1 : undefined;
+              const textStyle = resolveBlockTextStyle({
+                type: b.type,
+                headingLevel,
+                textStyle: sanitizeBlockTextStyle(b.textStyle),
+              });
+              const blockLabel = b.label || `${BLOCK_LABELS[b.type]} ${idx + 1}`;
+
+              return (
+                <div
+                  key={b.id}
+                  className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-3 py-2 text-xs"
+                >
+                  <span className="min-w-[170px] font-medium">{blockLabel}</span>
+                  <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide opacity-80">
+                    {b.type}
+                  </span>
+                  <label className="ml-auto inline-flex items-center gap-1">
+                    <span className="opacity-70">Tamano</span>
+                    <select
+                      value={textStyle.size}
+                      disabled={disabled}
+                      onChange={(e) =>
+                        patchBlockTextStyle(b.id, {
+                          size: e.target.value as BlockTextSize,
+                          weight: textStyle.weight,
+                        })
+                      }
+                      className="rounded-full border border-white/10 bg-white/10 px-2 py-1 text-xs"
+                    >
+                      {BLOCK_TEXT_SIZE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="inline-flex items-center gap-1">
+                    <span className="opacity-70">Peso</span>
+                    <select
+                      value={textStyle.weight}
+                      disabled={disabled}
+                      onChange={(e) =>
+                        patchBlockTextStyle(b.id, {
+                          size: textStyle.size,
+                          weight: e.target.value as BlockTextWeight,
+                        })
+                      }
+                      className="rounded-full border border-white/10 bg-white/10 px-2 py-1 text-xs"
+                    >
+                      {BLOCK_TEXT_WEIGHT_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </section>
   );
