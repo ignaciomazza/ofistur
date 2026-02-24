@@ -191,6 +191,71 @@ function isRecord(v: unknown): v is AnyRecord {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function extractOperatorDuesPayload(data: unknown): OperatorDue[] {
+  const pickArray = (value: unknown): unknown[] => {
+    if (Array.isArray(value)) return value;
+    if (!isRecord(value)) return [];
+    if (Array.isArray(value.dues)) return value.dues;
+    if (Array.isArray(value.operatorDues)) return value.operatorDues;
+    if (Array.isArray(value.items)) return value.items;
+    if (isRecord(value.data)) {
+      if (Array.isArray(value.data.dues)) return value.data.dues;
+      if (Array.isArray(value.data.operatorDues)) return value.data.operatorDues;
+      if (Array.isArray(value.data.items)) return value.data.items;
+    }
+    return [];
+  };
+
+  const toOptionalInt = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+  };
+  const toDateString = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    if (value instanceof Date) return value.toISOString();
+    return "";
+  };
+
+  const rows = pickArray(data);
+  return rows
+    .map((row) => {
+      if (!isRecord(row)) return null;
+      const id = Number(row.id_due ?? row.id);
+      if (!Number.isFinite(id) || id <= 0) return null;
+
+      const bookingId = toOptionalInt(row.booking_id);
+      const serviceId = toOptionalInt(row.service_id);
+      const agencyDueId = toOptionalInt(row.agency_operator_due_id);
+      const amountValue = row.amount;
+      const currencyValue = row.currency;
+      const conceptValue = row.concept;
+      const statusValue = row.status;
+
+      const due: OperatorDue = {
+        id_due: id,
+        agency_operator_due_id: agencyDueId,
+        created_at: toDateString(row.created_at),
+        booking_id: bookingId ?? 0,
+        service_id: serviceId ?? 0,
+        due_date: toDateString(row.due_date),
+        concept: typeof conceptValue === "string" ? conceptValue : "",
+        status: typeof statusValue === "string" ? statusValue : "PENDIENTE",
+        amount:
+          typeof amountValue === "number" || typeof amountValue === "string"
+            ? amountValue
+            : 0,
+        currency:
+          typeof currencyValue === "string" && currencyValue.trim()
+            ? currencyValue
+            : "ARS",
+      };
+
+      return due;
+    })
+    .filter((row): row is OperatorDue => row !== null);
+}
+
 function pickApiMessage(u: unknown): string | null {
   if (!isRecord(u)) return null;
   const err = u.error;
@@ -921,6 +986,41 @@ export default function ServicesContainer(props: ServicesContainerProps) {
   const [operatorDuesLoading, setOperatorDuesLoading] = useState(false);
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
   const [receiptFormVisible, setReceiptFormVisible] = useState(false);
+  const bookingServiceIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const service of services) {
+      if (
+        typeof service.id_service === "number" &&
+        Number.isFinite(service.id_service) &&
+        service.id_service > 0
+      ) {
+        ids.add(service.id_service);
+      }
+    }
+    return ids;
+  }, [services]);
+  const bookingGroupId = useMemo(() => {
+    const raw = (
+      booking as
+        | (Booking & {
+            travel_group_id?: number | string | null;
+          })
+        | null
+    )?.travel_group_id;
+    const parsed = Number(raw ?? 0);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null;
+  }, [booking]);
+  const bookingGroupDepartureId = useMemo(() => {
+    const raw = (
+      booking as
+        | (Booking & {
+            travel_group_departure_id?: number | string | null;
+          })
+        | null
+    )?.travel_group_departure_id;
+    const parsed = Number(raw ?? 0);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null;
+  }, [booking]);
 
   const fetchOperatorDues = useCallback(
     async (signal?: AbortSignal) => {
@@ -943,19 +1043,55 @@ export default function ServicesContainer(props: ServicesContainerProps) {
           throw new Error("Error al obtener cuotas al operador");
         }
         const data: unknown = await res.json();
-        const arr: OperatorDue[] = Array.isArray(
-          (data as { dues?: unknown })?.dues,
-        )
-          ? ((data as { dues: OperatorDue[] }).dues as OperatorDue[])
-          : [];
-        setOperatorDues(arr);
+        const arr = extractOperatorDuesPayload(data);
+        if (arr.length > 0 || !bookingGroupId) {
+          setOperatorDues(arr);
+          return;
+        }
+
+        const scope = bookingGroupDepartureId
+          ? `departure:${bookingGroupDepartureId}`
+          : "group";
+        const groupedRes = await authFetch(
+          `/api/groups/${bookingGroupId}/finance/operator-dues?scope=${encodeURIComponent(scope)}`,
+          { cache: "no-store", signal },
+          token,
+        );
+        if (!groupedRes.ok) {
+          setOperatorDues(arr);
+          return;
+        }
+
+        const groupedData: unknown = await groupedRes.json();
+        const groupedRows = extractOperatorDuesPayload(groupedData);
+        const filtered = groupedRows.filter((due) => {
+          const rec = due as OperatorDue & { booking_id?: number | string | null };
+          const dueBookingId = Number(rec.booking_id ?? 0);
+          if (Number.isFinite(dueBookingId) && dueBookingId > 0) {
+            return dueBookingId === booking.id_booking;
+          }
+          const dueServiceId = Number(due.service_id ?? 0);
+          return (
+            Number.isFinite(dueServiceId) &&
+            dueServiceId > 0 &&
+            bookingServiceIds.has(dueServiceId)
+          );
+        });
+
+        setOperatorDues(filtered);
       } catch {
         setOperatorDues([]);
       } finally {
         setOperatorDuesLoading(false);
       }
     },
-    [booking?.id_booking, token],
+    [
+      booking?.id_booking,
+      bookingGroupDepartureId,
+      bookingGroupId,
+      bookingServiceIds,
+      token,
+    ],
   );
 
   const handleOperatorDueDeleted = (id_due: number) => {
@@ -1506,6 +1642,17 @@ export default function ServicesContainer(props: ServicesContainerProps) {
 
   const canAdminLike =
     role === "administrativo" || role === "gerente" || role === "desarrollador";
+  const canViewOperatorDues =
+    role === "administrativo" ||
+    role === "desarrollador" ||
+    role === "gerente" ||
+    role === "vendedor" ||
+    role === "lider";
+  const canCreateOperatorDues =
+    role === "administrativo" ||
+    role === "desarrollador" ||
+    role === "gerente" ||
+    role === "vendedor";
   const canShowBookingSaleTotalsForm =
     canEditSaleMode || (canEditSaleTotals && useBookingSaleTotal);
   const canUseReceiptsForm = canAccessBookingComponent(
@@ -2749,10 +2896,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 )}
 
               {/* OPERADOR */}
-              {(role === "administrativo" ||
-                role === "desarrollador" ||
-                role === "gerente" ||
-                role === "vendedor") &&
+              {canViewOperatorDues &&
                 booking &&
                 (services.length > 0 || operatorDues.length > 0) && (
                   <div className="mb-16">
@@ -2765,15 +2909,17 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                       </p>
                     </div>
 
-                    <OperatorDueForm
-                      token={token}
-                      booking={booking}
-                      availableServices={services}
-                      onCreated={() => {
-                        const ac = new AbortController();
-                        void fetchOperatorDues(ac.signal);
-                      }}
-                    />
+                    {canCreateOperatorDues && (
+                      <OperatorDueForm
+                        token={token}
+                        booking={booking}
+                        availableServices={services}
+                        onCreated={() => {
+                          const ac = new AbortController();
+                          void fetchOperatorDues(ac.signal);
+                        }}
+                      />
+                    )}
 
                     <OperatorDueList
                       dues={operatorDues}
