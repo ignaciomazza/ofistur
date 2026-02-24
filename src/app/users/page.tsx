@@ -59,6 +59,36 @@ function isStrongPassword(pw: string) {
   return hasLower && hasUpper && hasNumber && hasSymbol;
 }
 
+async function getResponseMessage(response: Response, fallback: string) {
+  try {
+    const body = (await response.clone().json()) as
+      | { error?: string; message?: string }
+      | undefined;
+    if (typeof body?.error === "string" && body.error.trim()) {
+      return body.error.trim();
+    }
+    if (typeof body?.message === "string" && body.message.trim()) {
+      return body.message.trim();
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const text = (await response.text()).trim();
+    if (text) return text;
+  } catch {
+    // ignore
+  }
+
+  return fallback;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+}
+
 /* ============ componente ============ */
 
 export default function UsersPage() {
@@ -107,7 +137,13 @@ export default function UsersPage() {
           { signal: controller.signal, cache: "no-store" },
           token,
         );
-        if (!r.ok) throw new Error("No se pudo obtener el perfil");
+        if (!r.ok) {
+          const msg = await getResponseMessage(
+            r,
+            "No se pudo obtener el perfil.",
+          );
+          throw new Error(msg);
+        }
         const p: ProfileResponse = await r.json();
         setProfile(p);
       } catch (e) {
@@ -135,14 +171,18 @@ export default function UsersPage() {
           token,
         );
         if (!res.ok) {
-          throw new Error("Error al obtener usuarios");
+          const msg = await getResponseMessage(
+            res,
+            "No se pudieron cargar los usuarios.",
+          );
+          throw new Error(msg);
         }
         const data: User[] = await res.json();
         setUsers(data);
       } catch (error: unknown) {
         if ((error as DOMException)?.name === "AbortError") return;
         console.error("Error fetching users:", error);
-        toast.error("Error al obtener usuarios");
+        toast.error(getErrorMessage(error, "No se pudieron cargar los usuarios."));
       } finally {
         if (!controller.signal.aborted) setLoadingUsers(false);
       }
@@ -173,11 +213,12 @@ export default function UsersPage() {
       return;
     }
 
-    if (
-      !editingUserId &&
-      formData.password &&
-      !isStrongPassword(formData.password)
-    ) {
+    if (!editingUserId && !formData.password?.trim()) {
+      toast.error("Ingresá una contraseña para crear el usuario.");
+      return;
+    }
+
+    if (!editingUserId && !isStrongPassword(formData.password || "")) {
       toast.error(
         "La contraseña debe tener al menos 8 caracteres e incluir mayúscula, minúscula, número y símbolo.",
       );
@@ -188,10 +229,11 @@ export default function UsersPage() {
     const method = editingUserId ? "PUT" : "POST";
 
     try {
-      const dataToSend: UserFormData = { ...formData };
-      // Si estamos editando y no cambiaron contraseña, no la enviamos
-      if (editingUserId && !dataToSend.password) {
-        delete (dataToSend as Partial<UserFormData>).password;
+      const dataToSend: Partial<UserFormData> = { ...formData };
+
+      // En edición la contraseña siempre viaja por PATCH (bloque "Contraseña")
+      if (editingUserId) {
+        delete dataToSend.password;
       }
 
       const response = await authFetch(
@@ -204,14 +246,11 @@ export default function UsersPage() {
       );
 
       if (!response.ok) {
-        let message = "Error en la solicitud";
-        try {
-          const errorResponse = await response.json();
-          message = errorResponse.error || errorResponse.message || message;
-        } catch {
-          // ignore
-        }
-        throw new Error(message);
+        const msg = await getResponseMessage(
+          response,
+          "No se pudo guardar el usuario.",
+        );
+        throw new Error(msg);
       }
 
       const user: User = await response.json();
@@ -221,15 +260,12 @@ export default function UsersPage() {
           : [...prevUsers, user],
       );
       toast.success(
-        editingUserId
-          ? "Usuario actualizado con éxito!"
-          : "Usuario creado con éxito!",
+        editingUserId ? "Usuario actualizado." : "Usuario creado.",
       );
       resetForm();
     } catch (error: unknown) {
-      const err = error as Error;
-      console.error("Error en el submit:", err.message || err);
-      toast.error(err.message || "Error al guardar el usuario.");
+      console.error("Error en el submit:", error);
+      toast.error(getErrorMessage(error, "No se pudo guardar el usuario."));
     }
   };
 
@@ -270,20 +306,19 @@ export default function UsersPage() {
         token,
       );
       if (!response.ok) {
-        let message = "Error al eliminar el usuario";
-        try {
-          const er = await response.json();
-          message = er.error || message;
-        } catch {}
-        throw new Error(message);
+        const msg = await getResponseMessage(
+          response,
+          "No se pudo eliminar el usuario.",
+        );
+        throw new Error(msg);
       }
       setUsers((prevUsers) =>
         prevUsers.filter((user) => user.id_user !== id_user),
       );
-      toast.success("Usuario eliminado con éxito!");
+      toast.success("Usuario eliminado.");
     } catch (error: unknown) {
       console.error("Error al eliminar el usuario:", error);
-      toast.error((error as Error)?.message || "Error al eliminar el usuario.");
+      toast.error(getErrorMessage(error, "No se pudo eliminar el usuario."));
     }
   };
 
@@ -341,18 +376,17 @@ export default function UsersPage() {
       );
 
       if (!r.ok) {
-        let msg = "No se pudo cambiar la contraseña";
-        try {
-          const er = await r.json();
-          msg = er.error || er.message || msg;
-        } catch {}
+        const msg = await getResponseMessage(
+          r,
+          "No se pudo cambiar la contraseña.",
+        );
         throw new Error(msg);
       }
 
       toast.success("Contraseña actualizada correctamente.");
       setPwdModalOpen(false);
     } catch (e) {
-      toast.error((e as Error)?.message || "Error al cambiar la contraseña.");
+      toast.error(getErrorMessage(e, "No se pudo cambiar la contraseña."));
     } finally {
       setPwdSubmitting(false);
     }
@@ -587,7 +621,13 @@ export default function UsersPage() {
           )}
         </AnimatePresence>
 
-        <ToastContainer />
+        <ToastContainer
+          position="top-right"
+          autoClose={3500}
+          newestOnTop
+          closeOnClick
+          pauseOnHover
+        />
       </section>
     </ProtectedRoute>
   );

@@ -15,6 +15,36 @@ interface UserCardProps {
   isManager?: boolean; // gerente/desarrollador
 }
 
+async function getResponseMessage(response: Response, fallback: string) {
+  try {
+    const body = (await response.clone().json()) as
+      | { error?: string; message?: string }
+      | undefined;
+    if (typeof body?.error === "string" && body.error.trim()) {
+      return body.error.trim();
+    }
+    if (typeof body?.message === "string" && body.message.trim()) {
+      return body.message.trim();
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const text = (await response.text()).trim();
+    if (text) return text;
+  } catch {
+    // ignore
+  }
+
+  return fallback;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+}
+
 export default function UserCard({
   user,
   startEditingUser,
@@ -93,22 +123,17 @@ export default function UserCard({
       );
 
       if (!res.ok) {
-        let msg = "Error al cambiar la contraseña";
-        try {
-          const data = await res.json();
-          msg = data.error || data.message || msg;
-        } catch {
-          // ignore
-        }
+        const msg = await getResponseMessage(
+          res,
+          "No se pudo cambiar la contraseña.",
+        );
         throw new Error(msg);
       }
 
       toast.success("Contraseña actualizada correctamente.");
       setPwdOpen(false);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Error al cambiar la contraseña.";
-      toast.error(msg);
+      toast.error(getErrorMessage(err, "No se pudo cambiar la contraseña."));
     }
   };
 
@@ -136,22 +161,17 @@ export default function UserCard({
       );
 
       if (!res.ok) {
-        let msg = "Error al resetear la contraseña";
-        try {
-          const data = await res.json();
-          msg = data.error || data.message || msg;
-        } catch {
-          // ignore
-        }
+        const msg = await getResponseMessage(
+          res,
+          "No se pudo resetear la contraseña.",
+        );
         throw new Error(msg);
       }
 
       setResetPwd(generated);
       toast.success("Contraseña reseteada. Copiala para compartirla.");
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Error al resetear la contraseña.";
-      toast.error(msg);
+      toast.error(getErrorMessage(err, "No se pudo resetear la contraseña."));
     } finally {
       setResetting(false);
     }

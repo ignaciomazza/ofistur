@@ -1,7 +1,7 @@
 // src/components/users/UserForm.tsx
 
 "use client";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
 
 interface UserFormProps {
@@ -34,7 +34,7 @@ export default function UserForm({
   setIsFormVisible,
   showRole = true,
 }: UserFormProps) {
-  const passwordRequired = useMemo(() => !editingUserId, [editingUserId]);
+  const isCreatingUser = !editingUserId;
 
   const [showPwd, setShowPwd] = useState(false);
 
@@ -123,47 +123,48 @@ export default function UserForm({
             />
           </div>
 
-          {/* Password (requerida en alta, opcional en edición) */}
-          <div>
-            <label className="ml-2 block dark:text-white">
-              Contraseña{" "}
-              {passwordRequired ? (
-                <span className="text-red-600">*</span>
-              ) : (
-                <span className="opacity-70">(opcional)</span>
-              )}
-            </label>
-            <div className="relative">
-              <input
-                type={showPwd ? "text" : "password"}
-                name="password"
-                placeholder="••••••••"
-                value={String(formData.password || "")}
-                onChange={handleChange}
-                required={passwordRequired}
-                aria-required={passwordRequired ? "true" : "false"}
-                pattern={strongPasswordPattern}
-                title="Mínimo 8 caracteres, con mayúscula, minúscula, número y símbolo."
-                autoComplete={passwordRequired ? "new-password" : "off"}
-                className="w-full appearance-none rounded-2xl border border-sky-950/10 bg-white/50 p-2 px-3 pr-10 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPwd((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-sky-950/75 transition-opacity hover:opacity-100"
-                aria-label={
-                  showPwd ? "Ocultar contraseña" : "Mostrar contraseña"
-                }
-              >
-                {showPwd ? <EyeOpenIcon /> : <EyeClosedIcon />}
-              </button>
+          {/* Password: solo en alta. En edición se maneja desde el bloque "Contraseña". */}
+          {isCreatingUser ? (
+            <div>
+              <label className="ml-2 block dark:text-white">
+                Contraseña <span className="text-red-600">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showPwd ? "text" : "password"}
+                  name="password"
+                  placeholder="••••••••"
+                  value={String(formData.password || "")}
+                  onChange={handleChange}
+                  required
+                  aria-required="true"
+                  pattern={strongPasswordPattern}
+                  title="Mínimo 8 caracteres, con mayúscula, minúscula, número y símbolo."
+                  autoComplete="new-password"
+                  className="w-full appearance-none rounded-2xl border border-sky-950/10 bg-white/50 p-2 px-3 pr-10 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPwd((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-sky-950/75 transition-opacity hover:opacity-100"
+                  aria-label={
+                    showPwd ? "Ocultar contraseña" : "Mostrar contraseña"
+                  }
+                >
+                  {showPwd ? <EyeOpenIcon /> : <EyeClosedIcon />}
+                </button>
+              </div>
+              <p className="mt-1 text-xs opacity-70">
+                Debe tener mínimo 8 caracteres e incluir mayúscula, minúscula,
+                número y símbolo.
+              </p>
             </div>
-            <p className="mt-1 text-xs opacity-70">
-              Debe tener mínimo 8 caracteres e incluir mayúscula, minúscula,
-              número y símbolo.
-              {!passwordRequired && " Dejar vacío para no cambiarla."}
-            </p>
-          </div>
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-white/40 p-3 text-xs opacity-80 dark:bg-white/5">
+              La contraseña se cambia desde el bloque <b>Contraseña</b> de cada
+              tarjeta de usuario.
+            </div>
+          )}
 
           {/* Nombre */}
           <div>
