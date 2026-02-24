@@ -1267,6 +1267,74 @@ export default function ServicesPage() {
     }
   };
 
+  const duplicateService = async (service: Service) => {
+    if (!booking?.id_booking) {
+      toast.error("No se pudo identificar la reserva.");
+      return;
+    }
+
+    const payload = {
+      type: service.type,
+      description: service.description ?? "",
+      note: service.note ?? "",
+      sale_price: service.sale_price ?? 0,
+      cost_price: service.cost_price ?? 0,
+      destination: service.destination ?? "",
+      reference: service.reference ?? "",
+      tax_21: service.tax_21 ?? null,
+      tax_105: service.tax_105 ?? null,
+      exempt: service.exempt ?? null,
+      other_taxes: service.other_taxes ?? null,
+      currency: service.currency || "ARS",
+      departure_date: service.departure_date,
+      return_date: service.return_date,
+      id_operator: service.id_operator,
+      booking_id: booking.id_booking,
+      nonComputable: service.nonComputable ?? null,
+      taxableBase21: service.taxableBase21 ?? null,
+      taxableBase10_5: service.taxableBase10_5 ?? null,
+      commissionExempt: service.commissionExempt ?? null,
+      commission21: service.commission21 ?? null,
+      commission10_5: service.commission10_5 ?? null,
+      vatOnCommission21: service.vatOnCommission21 ?? null,
+      vatOnCommission10_5: service.vatOnCommission10_5 ?? null,
+      totalCommissionWithoutVAT: service.totalCommissionWithoutVAT ?? null,
+      impIVA: service.impIVA ?? null,
+      card_interest: service.card_interest ?? null,
+      card_interest_21: service.card_interest_21 ?? null,
+      taxableCardInterest: service.taxableCardInterest ?? null,
+      vatOnCardInterest: service.vatOnCardInterest ?? null,
+      transfer_fee_pct: service.transfer_fee_pct ?? null,
+      transfer_fee_amount: service.transfer_fee_amount ?? null,
+      billing_override: service.billing_override ?? null,
+      extra_costs_amount: service.extra_costs_amount ?? null,
+      extra_taxes_amount: service.extra_taxes_amount ?? null,
+      extra_adjustments: service.extra_adjustments ?? null,
+    };
+
+    try {
+      const res = await authFetch(
+        "/api/services",
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+        token || undefined,
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          (err as { error?: string }).error || "No se pudo duplicar el servicio.",
+        );
+      }
+
+      await fetchServices(booking.id_booking);
+      toast.success("Servicio duplicado.");
+    } catch (err: unknown) {
+      toast.error((err as Error).message || "No se pudo duplicar el servicio.");
+    }
+  };
+
   const formatDate = (dateString?: string) =>
     dateString ? formatDateInBuenosAires(dateString) : "N/A";
 
@@ -1322,6 +1390,7 @@ export default function ServicesPage() {
           handleInvoiceSubmit={handleInvoiceSubmit}
           handleSubmit={handleSubmitService}
           deleteService={deleteService}
+          duplicateService={duplicateService}
           formatDate={formatDate}
           setEditingServiceId={setEditingServiceId}
           setIsFormVisible={setIsFormVisible}

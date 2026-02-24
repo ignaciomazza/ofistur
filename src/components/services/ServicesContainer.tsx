@@ -145,6 +145,7 @@ interface ServicesContainerProps {
   handleInvoiceSubmit: (e: React.FormEvent) => Promise<void>;
   handleSubmit: (e: React.FormEvent) => Promise<void>;
   deleteService: (serviceId: number) => Promise<void>;
+  duplicateService: (service: Service) => Promise<void>;
   formatDate: (dateString: string | undefined) => string;
   setEditingServiceId: React.Dispatch<React.SetStateAction<number | null>>;
   setIsFormVisible: React.Dispatch<React.SetStateAction<boolean>>;
@@ -352,6 +353,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     handleInvoiceSubmit,
     handleSubmit,
     deleteService,
+    duplicateService,
     formatDate,
     setEditingServiceId,
     setIsFormVisible,
@@ -2164,6 +2166,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                       setIsFormVisible(true);
                     }}
                     deleteService={deleteService}
+                    duplicateService={duplicateService}
                     role={role}
                     status={booking.status}
                     agencyTransferFeePct={agencyTransferFeePct}

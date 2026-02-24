@@ -67,6 +67,15 @@ const CurrencyChip: React.FC<{ currency?: string | null }> = ({ currency }) => (
   </span>
 );
 
+const cardActionTrackClass =
+  "grid grid-cols-[20px_0fr] items-center gap-0 overflow-hidden transition-[grid-template-columns,gap] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:grid-cols-[20px_1fr] group-hover/btn:gap-2 group-focus-visible/btn:grid-cols-[20px_1fr] group-focus-visible/btn:gap-2";
+
+const cardActionTextClass =
+  "min-w-0 translate-x-2 whitespace-nowrap text-sm opacity-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:translate-x-0 group-hover/btn:opacity-100 group-focus-visible/btn:translate-x-0 group-focus-visible/btn:opacity-100";
+
+const cardActionBtnSky =
+  "group/btn rounded-full border border-sky-500/35 bg-sky-500/5 px-3 py-2 text-sky-900 shadow-sm shadow-sky-950/15 backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 hover:bg-sky-500/10 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60 dark:text-sky-100";
+
 /* ======================== Tipos ======================== */
 type VoucherMinimal = {
   CbteFch: number | string | Date;
@@ -166,17 +175,15 @@ export default function CreditNoteCard({ creditNote }: CreditNoteCardProps) {
 
         <div className="flex justify-end pt-1">
           <button
+            type="button"
             onClick={onDownload}
             disabled={loading}
-            className={`rounded-full bg-sky-100 px-4 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur ${
-              loading ? "cursor-not-allowed opacity-50" : ""
-            }`}
+            className={cardActionBtnSky}
           >
             {loading ? (
               <Spinner />
             ) : (
-              <span className="flex items-center gap-2">
-                Descargar
+              <span className={cardActionTrackClass}>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   className="size-5"
@@ -192,6 +199,7 @@ export default function CreditNoteCard({ creditNote }: CreditNoteCardProps) {
                     d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
                   />
                 </svg>
+                <span className={cardActionTextClass}>Descargar</span>
               </span>
             )}
           </button>
@@ -276,18 +284,16 @@ export default function CreditNoteCard({ creditNote }: CreditNoteCardProps) {
       {/* CTA */}
       <div className="mt-4 flex items-center justify-end">
         <button
+          type="button"
           onClick={onDownload}
           disabled={loading}
           aria-label="Descargar PDF de la nota de crédito"
-          className={`rounded-full bg-sky-100 px-5 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur ${
-            loading ? "cursor-not-allowed opacity-50" : ""
-          }`}
+          className={cardActionBtnSky}
         >
           {loading ? (
             <Spinner />
           ) : (
-            <span className="flex items-center gap-2">
-              Descargar PDF
+            <span className={cardActionTrackClass}>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 className="size-5"
@@ -303,6 +309,7 @@ export default function CreditNoteCard({ creditNote }: CreditNoteCardProps) {
                   d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
                 />
               </svg>
+              <span className={cardActionTextClass}>Descargar PDF</span>
             </span>
           )}
         </button>

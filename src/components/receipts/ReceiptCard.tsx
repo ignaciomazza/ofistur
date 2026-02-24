@@ -110,14 +110,47 @@ const Chip: React.FC<{
   );
 };
 
-const IconButton: React.FC<
-  React.ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }
-> = ({ loading, children, className = "", ...props }) => (
+const cardActionTrackClass =
+  "grid grid-cols-[20px_0fr] items-center gap-0 overflow-hidden transition-[grid-template-columns,gap] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:grid-cols-[20px_1fr] group-hover/btn:gap-2 group-focus-visible/btn:grid-cols-[20px_1fr] group-focus-visible/btn:gap-2";
+
+const cardActionTextClass =
+  "min-w-0 translate-x-2 whitespace-nowrap text-sm opacity-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:translate-x-0 group-hover/btn:opacity-100 group-focus-visible/btn:translate-x-0 group-focus-visible/btn:opacity-100";
+
+const cardActionBtnBase =
+  "group/btn rounded-full px-3 py-2 shadow-sm backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60";
+
+const cardActionToneClass: Record<"sky" | "emerald" | "rose", string> = {
+  sky: `${cardActionBtnBase} border border-sky-500/35 bg-sky-500/5 text-sky-900 shadow-sky-950/15 hover:bg-sky-500/10 dark:text-sky-100`,
+  emerald: `${cardActionBtnBase} border border-emerald-500/40 bg-emerald-500/5 text-emerald-900 shadow-emerald-950/15 hover:bg-emerald-500/15 dark:text-emerald-100`,
+  rose: `${cardActionBtnBase} border border-rose-500/40 bg-rose-500/5 text-rose-900 shadow-rose-950/15 hover:bg-rose-500/15 dark:text-rose-100`,
+};
+
+type IconButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  loading?: boolean;
+  label: string;
+  tone?: "sky" | "emerald" | "rose";
+};
+
+const IconButton: React.FC<IconButtonProps> = ({
+  loading,
+  label,
+  tone = "sky",
+  children,
+  className = "",
+  ...props
+}) => (
   <button
     {...props}
-    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm shadow-sm transition-transform hover:scale-95 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 active:scale-90 disabled:opacity-50 ${className}`}
+    className={`${cardActionToneClass[tone]} ${className}`}
   >
-    {loading ? <Spinner /> : children}
+    {loading ? (
+      <Spinner />
+    ) : (
+      <span className={cardActionTrackClass}>
+        {children}
+        <span className={cardActionTextClass}>{label}</span>
+      </span>
+    )}
   </button>
 );
 
@@ -428,7 +461,7 @@ export default function ReceiptCard({
 
   /* ====== UI ====== */
   return (
-    <div className="group h-fit rounded-3xl border border-white/10 bg-white/10 p-6 text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur transition-[transform,box-shadow] hover:scale-[0.999] dark:text-white">
+    <div className="h-fit rounded-3xl border border-white/10 bg-white/10 p-6 text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur transition-[transform,box-shadow] hover:scale-[0.999] dark:text-white">
       {/* Header */}
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
@@ -485,8 +518,9 @@ export default function ReceiptCard({
           onClick={downloadPDF}
           disabled={loadingPDF}
           loading={loadingPDF}
+          label="Descargar PDF"
+          tone="sky"
           aria-label="Descargar PDF del recibo"
-          className="bg-sky-100 text-sky-950 dark:bg-white/10 dark:text-white"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -503,15 +537,15 @@ export default function ReceiptCard({
               d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
             />
           </svg>
-          Descargar PDF
         </IconButton>
 
         {onReceiptEdit && (
           <IconButton
             onClick={() => onReceiptEdit(receipt)}
             disabled={loadingDelete || loadingPDF}
+            label="Editar"
+            tone="sky"
             aria-label="Editar recibo"
-            className="bg-amber-100 text-amber-950 hover:bg-amber-100/90 dark:bg-amber-500/15 dark:text-amber-100"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -539,8 +573,9 @@ export default function ReceiptCard({
             onClick={deleteReceipt}
             disabled={loadingDelete || loadingPDF}
             loading={loadingDelete}
+            label="Eliminar"
+            tone="rose"
             aria-label="Eliminar recibo"
-            className="bg-red-600 text-red-100 hover:bg-red-600/90 dark:bg-red-800"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"

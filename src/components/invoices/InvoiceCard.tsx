@@ -76,6 +76,24 @@ const CurrencyChip: React.FC<{ currency?: string }> = ({ currency }) => (
   </span>
 );
 
+const cardActionTrackClass =
+  "grid grid-cols-[20px_0fr] items-center gap-0 overflow-hidden transition-[grid-template-columns,gap] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:grid-cols-[20px_1fr] group-hover/btn:gap-2 group-focus-visible/btn:grid-cols-[20px_1fr] group-focus-visible/btn:gap-2";
+
+const cardActionTextClass =
+  "min-w-0 translate-x-2 whitespace-nowrap text-sm opacity-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:translate-x-0 group-hover/btn:opacity-100 group-focus-visible/btn:translate-x-0 group-focus-visible/btn:opacity-100";
+
+const cardActionBtnBase =
+  "group/btn rounded-full px-3 py-2 shadow-sm backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60";
+
+const cardActionBtnSky =
+  `${cardActionBtnBase} border border-sky-500/35 bg-sky-500/5 text-sky-900 shadow-sky-950/15 hover:bg-sky-500/10 dark:text-sky-100`;
+
+const cardActionBtnRose =
+  `${cardActionBtnBase} border border-rose-500/40 bg-rose-500/5 text-rose-900 shadow-rose-950/15 hover:bg-rose-500/15 dark:text-rose-100`;
+
+const cardActionBtnEmerald =
+  `${cardActionBtnBase} border border-emerald-500/40 bg-emerald-500/5 text-emerald-900 shadow-emerald-950/15 hover:bg-emerald-500/15 dark:text-emerald-100`;
+
 /* ======================== Card ======================== */
 interface InvoiceCardProps {
   invoice: Invoice;
@@ -283,15 +301,15 @@ export default function InvoiceCard({
 
         <div className="flex justify-end pt-1">
           <button
+            type="button"
             onClick={onDownload}
             disabled={loading}
-            className={`rounded-full bg-sky-100 px-4 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur ${loading ? "cursor-not-allowed opacity-50" : ""}`}
+            className={cardActionBtnSky}
           >
             {loading ? (
               <Spinner />
             ) : (
-              <span className="flex items-center gap-2">
-                Descargar
+              <span className={cardActionTrackClass}>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   className="size-5"
@@ -307,6 +325,7 @@ export default function InvoiceCard({
                     d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
                   />
                 </svg>
+                <span className={cardActionTextClass}>Descargar</span>
               </span>
             )}
           </button>
@@ -397,9 +416,46 @@ export default function InvoiceCard({
               onClick={
                 isEditingDesc ? cancelEditDescriptions : startEditDescriptions
               }
-              className="rounded-full border border-white/20 px-3 py-1 text-xs font-medium text-sky-950/80 transition hover:border-sky-200 hover:text-sky-950 dark:border-white/10 dark:text-white/70"
+              className={cardActionBtnSky}
             >
-              {isEditingDesc ? "Cerrar" : "Editar"}
+              <span className={cardActionTrackClass}>
+                {isEditingDesc ? (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="size-5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    strokeWidth={1.6}
+                    stroke="currentColor"
+                    aria-hidden
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M6 18 18 6M6 6l12 12"
+                    />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="size-5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    aria-hidden
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                    />
+                  </svg>
+                )}
+                <span className={cardActionTextClass}>
+                  {isEditingDesc ? "Cerrar" : "Editar"}
+                </span>
+              </span>
             </button>
           </div>
 
@@ -445,21 +501,55 @@ export default function InvoiceCard({
                 <button
                   type="button"
                   onClick={cancelEditDescriptions}
-                  className="rounded-full border border-white/20 px-4 py-2 text-xs font-medium text-sky-950/80 transition hover:border-sky-200 hover:text-sky-950 dark:border-white/10 dark:text-white/70"
+                  className={cardActionBtnRose}
                 >
-                  Cancelar
+                  <span className={cardActionTrackClass}>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="size-5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      strokeWidth={1.6}
+                      stroke="currentColor"
+                      aria-hidden
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M6 18 18 6M6 6l12 12"
+                      />
+                    </svg>
+                    <span className={cardActionTextClass}>Cancelar</span>
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveDescriptions}
                   disabled={isSavingDesc}
-                  className={`rounded-full px-4 py-2 text-xs font-medium shadow-sm shadow-sky-950/20 transition ${
-                    isSavingDesc
-                      ? "cursor-not-allowed bg-sky-950/20 text-white/60 dark:bg-white/5 dark:text-white/40"
-                      : "bg-sky-100 text-sky-950 dark:bg-white/10 dark:text-white"
-                  }`}
+                  className={cardActionBtnEmerald}
                 >
-                  {isSavingDesc ? <Spinner /> : "Guardar"}
+                  {isSavingDesc ? (
+                    <Spinner />
+                  ) : (
+                    <span className={cardActionTrackClass}>
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="size-5"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        strokeWidth={1.6}
+                        stroke="currentColor"
+                        aria-hidden
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"
+                        />
+                      </svg>
+                      <span className={cardActionTextClass}>Guardar</span>
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
@@ -482,16 +572,16 @@ export default function InvoiceCard({
 
       <div className="mt-4 flex items-center justify-end">
         <button
+          type="button"
           onClick={onDownload}
           disabled={loading}
           aria-label="Descargar PDF de la factura"
-          className={`rounded-full bg-sky-100 px-5 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur ${loading ? "cursor-not-allowed opacity-50" : ""}`}
+          className={cardActionBtnSky}
         >
           {loading ? (
             <Spinner />
           ) : (
-            <span className="flex items-center gap-2">
-              Descargar PDF
+            <span className={cardActionTrackClass}>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 className="size-5"
@@ -507,6 +597,7 @@ export default function InvoiceCard({
                   d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
                 />
               </svg>
+              <span className={cardActionTextClass}>Descargar PDF</span>
             </span>
           )}
         </button>

@@ -5,6 +5,7 @@ import { memo, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { authFetch } from "@/utils/authFetch";
 import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
+import Spinner from "@/components/Spinner";
 
 export type OperatorLite = { id_operator: number; name: string | null };
 export type UserLite = {
@@ -173,28 +174,33 @@ function OperatorPaymentCard({ item, token }: Props) {
             type="button"
             onClick={downloadPDF}
             disabled={loadingPDF}
-            className="rounded-full bg-sky-100 px-3 py-1 text-xs text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-white/10 dark:text-white"
+            className="group/btn rounded-full border border-sky-500/35 bg-sky-500/5 px-3 py-2 text-sky-900 shadow-sm shadow-sky-950/15 backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 hover:bg-sky-500/10 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60 dark:text-sky-100"
             title="Descargar comprobante"
             aria-label="Descargar comprobante"
           >
             {loadingPDF ? (
-              "..."
+              <Spinner />
             ) : (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-                className="size-4"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
-                />
-              </svg>
+              <span className="grid grid-cols-[16px_0fr] items-center gap-0 overflow-hidden transition-[grid-template-columns,gap] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:grid-cols-[16px_1fr] group-hover/btn:gap-2 group-focus-visible/btn:grid-cols-[16px_1fr] group-focus-visible/btn:gap-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                  className="size-4"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                  />
+                </svg>
+                <span className="min-w-0 translate-x-2 whitespace-nowrap text-xs opacity-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:translate-x-0 group-hover/btn:opacity-100 group-focus-visible/btn:translate-x-0 group-focus-visible/btn:opacity-100">
+                  Descargar
+                </span>
+              </span>
             )}
           </button>
         </div>

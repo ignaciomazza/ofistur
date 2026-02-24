@@ -90,6 +90,7 @@ interface ServiceListProps {
   setExpandedServiceId: React.Dispatch<React.SetStateAction<number | null>>;
   startEditingService: (service: Service) => void;
   deleteService: (id: number) => void;
+  duplicateService: (service: Service) => Promise<void>;
   role: string;
   status: string;
   agencyTransferFeePct: number;
@@ -107,6 +108,7 @@ export default function ServiceList({
   setExpandedServiceId,
   startEditingService,
   deleteService,
+  duplicateService,
   role,
   status,
   agencyTransferFeePct,
@@ -205,6 +207,7 @@ export default function ServiceList({
             setExpandedServiceId={setExpandedServiceId}
             startEditingService={startEditingService}
             deleteService={deleteService}
+            duplicateService={duplicateService}
             formatDate={formatDate}
             role={role}
             status={status}
