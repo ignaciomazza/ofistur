@@ -14,6 +14,7 @@ import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
+import { responseErrorMessage } from "@/utils/httpError";
 import { useAgencyOperators } from "@/hooks/receipts/useAgencyOperators";
 
 type PeriodType = "day" | "week" | "month" | "quarter" | "semester" | "year";
@@ -552,7 +553,11 @@ export default function OperatorInsightsPage() {
           { headers: { Accept: "application/pdf" } },
           token,
         );
-        if (!res.ok) throw new Error();
+        if (!res.ok) {
+          throw new Error(
+            await responseErrorMessage(res, "No se pudo descargar el recibo."),
+          );
+        }
         const blob = await res.blob();
         const displayId = getReceiptDisplayNumber(item);
         downloadBlob(
@@ -560,8 +565,12 @@ export default function OperatorInsightsPage() {
           `Recibo_${slugify(displayId)}_${item.issue_date || "sin_fecha"}.pdf`,
         );
         toast.success("Comprobante de recibo descargado.");
-      } catch {
-        toast.error("No se pudo descargar el recibo.");
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "No se pudo descargar el recibo.",
+        );
       } finally {
         setDownloadingReceiptId((prev) =>
           prev === item.id_receipt ? null : prev,

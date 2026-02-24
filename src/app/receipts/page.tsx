@@ -15,6 +15,7 @@ import "react-toastify/dist/ReactToastify.css";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
+import { responseErrorMessage } from "@/utils/httpError";
 import { loadFinancePicks } from "@/utils/loadFinancePicks";
 import ReceiptForm from "@/components/receipts/ReceiptForm";
 import { useRouter } from "next/navigation";
@@ -1293,7 +1294,11 @@ export default function ReceiptsPage() {
         { headers: { Accept: "application/pdf" } },
         token,
       );
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        throw new Error(
+          await responseErrorMessage(res, "No se pudo descargar el PDF."),
+        );
+      }
 
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
@@ -1306,8 +1311,10 @@ export default function ReceiptsPage() {
       a.remove();
       window.URL.revokeObjectURL(url);
       toast.success("PDF descargado exitosamente.");
-    } catch {
-      toast.error("No se pudo descargar el PDF.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "No se pudo descargar el PDF.",
+      );
     } finally {
       setLoadingPdfId(null);
     }

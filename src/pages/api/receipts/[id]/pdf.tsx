@@ -13,15 +13,6 @@ import ReceiptStandaloneDocument, {
 } from "@/services/receipts/ReceiptStandaloneDocument";
 import { decodePublicId } from "@/lib/publicIds";
 import { jwtVerify, type JWTPayload } from "jose";
-import {
-  canAccessBookingByRole,
-  getBookingComponentGrants,
-  getFinanceSectionGrants,
-} from "@/lib/accessControl";
-import {
-  canAccessBookingComponent,
-  canAccessFinanceSection,
-} from "@/utils/permissions";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
 
 type PdfPaymentRaw = {
@@ -340,13 +331,10 @@ export default async function handler(
   }
 
   const authUser = await getUserFromAuth(req);
-  const authUserId = authUser?.id_user;
   const authAgencyId = authUser?.id_agency;
-  const authRole = authUser?.role ?? "";
-  if (!authUserId || !authAgencyId) {
+  if (!authUser?.id_user || !authAgencyId) {
     return res.status(401).end("No autenticado");
   }
-  const auth = authUser as DecodedUser;
 
   const rawId = Array.isArray(req.query.id) ? req.query.id[0] : req.query.id;
   if (!rawId) return res.status(400).end("ID inválido");
@@ -364,27 +352,9 @@ export default async function handler(
   }
 
   if (decoded && decoded.a !== authAgencyId) {
-    return res.status(403).end("Sin permisos");
+    return res.status(403).end("No tenés permisos para descargar este recibo.");
   }
 
-  const financeGrants = await getFinanceSectionGrants(
-    authAgencyId,
-    authUserId,
-  );
-  const bookingGrants = await getBookingComponentGrants(
-    authAgencyId,
-    authUserId,
-  );
-  const canReceipts = canAccessFinanceSection(
-    authRole,
-    financeGrants,
-    "receipts",
-  );
-  const canReceiptsForm = canAccessBookingComponent(
-    authRole,
-    bookingGrants,
-    "receipts_form",
-  );
   const schemaFlags = await getReceiptSchemaFlags();
 
   // 1) Recibo + relaciones
@@ -411,16 +381,6 @@ export default async function handler(
   if (!receipt) return res.status(404).end("Recibo no encontrado");
 
   const receiptTyped = receipt as ReceiptWithRelations;
-  const canReadByRole = receiptTyped.booking
-    ? await canAccessBookingByRole(auth, {
-        id_user: receiptTyped.booking.id_user,
-        id_agency: receiptTyped.booking.id_agency,
-      })
-    : false;
-  if (!canReceipts && !canReceiptsForm && !canReadByRole) {
-    return res.status(403).end("Sin permisos");
-  }
-
   const agency = (receipt.booking?.agency ?? receipt.agency) as
     | (typeof receipt.agency & AgencyExtras)
     | null;

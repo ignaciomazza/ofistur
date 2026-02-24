@@ -7,6 +7,7 @@ import { Receipt, Booking, Service } from "@/types";
 import { toast } from "react-toastify";
 import Spinner from "@/components/Spinner";
 import { authFetch } from "@/utils/authFetch";
+import { responseErrorMessage } from "@/utils/httpError";
 import { formatDateOnlyInBuenosAires } from "@/lib/buenosAiresDate";
 
 /* ======================== Utils ======================== */
@@ -296,7 +297,11 @@ export default function GroupReceiptCard({
         { headers: { Accept: "application/pdf" } },
         token,
       );
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        throw new Error(
+          await responseErrorMessage(res, "No se pudo descargar el recibo."),
+        );
+      }
 
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
@@ -312,8 +317,12 @@ export default function GroupReceiptCard({
       a.remove();
       window.URL.revokeObjectURL(url);
       toast.success("Recibo descargado exitosamente.");
-    } catch {
-      toast.error("No se pudo descargar el recibo.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo descargar el recibo.",
+      );
     } finally {
       setLoadingPDF(false);
     }
