@@ -600,9 +600,14 @@ export default function ServicesPage() {
       "card_interest",
       "card_interest_21",
     ];
+    const integerFields = ["id_operator"];
     setFormData((prev) => ({
       ...prev,
-      [name]: numericFields.includes(name) ? parseAmountInput(value) ?? 0 : value,
+      [name]: integerFields.includes(name)
+        ? Number(value || 0)
+        : numericFields.includes(name)
+          ? parseAmountInput(value) ?? 0
+          : value,
     }));
   };
 
@@ -1163,6 +1168,10 @@ export default function ServicesPage() {
     e.preventDefault();
     if (!formData.type || !booking?.id_booking) {
       toast.error("Completa los campos obligatorios.");
+      return;
+    }
+    if (!Number.isFinite(Number(formData.id_operator)) || Number(formData.id_operator) <= 0) {
+      toast.error("Seleccioná un operador.");
       return;
     }
     try {

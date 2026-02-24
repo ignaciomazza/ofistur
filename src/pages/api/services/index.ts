@@ -470,16 +470,28 @@ export default async function handler(
       extra_adjustments,
     } = req.body;
 
-    if (
-      !type ||
-      sale_price === undefined ||
-      cost_price === undefined ||
-      !id_operator ||
-      !booking_id
-    ) {
+    const parsedOperatorId = Number(id_operator);
+    const parsedBookingId = Number(booking_id);
+    const missingFields: string[] = [];
+
+    if (!type || !String(type).trim()) missingFields.push("tipo");
+    if (sale_price === undefined || sale_price === null || sale_price === "") {
+      missingFields.push("precio de venta");
+    }
+    if (cost_price === undefined || cost_price === null || cost_price === "") {
+      missingFields.push("precio de costo");
+    }
+    if (!currency || !String(currency).trim()) missingFields.push("moneda");
+    if (!Number.isFinite(parsedOperatorId) || parsedOperatorId <= 0) {
+      missingFields.push("operador");
+    }
+    if (!Number.isFinite(parsedBookingId) || parsedBookingId <= 0) {
+      missingFields.push("N° de reserva");
+    }
+
+    if (missingFields.length > 0) {
       return res.status(400).json({
-        error:
-          "Faltan campos obligatorios: tipo, precios, moneda o N° de reserva.",
+        error: `Faltan campos obligatorios: ${missingFields.join(", ")}.`,
       });
     }
 
@@ -500,7 +512,7 @@ export default async function handler(
     }
 
     const bookingExists = await prisma.booking.findUnique({
-      where: { id_booking: Number(booking_id) },
+      where: { id_booking: parsedBookingId },
       select: { id_booking: true, id_agency: true, id_user: true, status: true },
     });
     if (!bookingExists || bookingExists.id_agency !== auth.id_agency) {
@@ -517,7 +529,7 @@ export default async function handler(
     }
 
     const operatorExists = await prisma.operator.findUnique({
-      where: { id_operator: Number(id_operator) },
+      where: { id_operator: parsedOperatorId },
       select: { id_operator: true, id_agency: true },
     });
     if (!operatorExists || operatorExists.id_agency !== auth.id_agency) {
@@ -549,9 +561,9 @@ export default async function handler(
             currency,
             departure_date: parsedDepartureDate,
             return_date: parsedReturnDate,
-            booking: { connect: { id_booking: Number(booking_id) } },
+            booking: { connect: { id_booking: parsedBookingId } },
             agency: { connect: { id_agency: bookingExists.id_agency } },
-            operator: { connect: { id_operator: Number(id_operator) } },
+            operator: { connect: { id_operator: parsedOperatorId } },
             nonComputable: toNullableNumber(nonComputable),
             taxableBase21: toNullableNumber(taxableBase21),
             taxableBase10_5: toNullableNumber(taxableBase10_5),

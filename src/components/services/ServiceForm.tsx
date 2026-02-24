@@ -1905,12 +1905,13 @@ export default function ServiceForm({
                   />
                 </Field>
 
-                <Field id="id_operator" label="Operador">
+                <Field id="id_operator" label="Operador" required>
                   <select
                     id="id_operator"
                     name="id_operator"
                     value={formData.id_operator || 0}
                     onChange={handleChange}
+                    required
                     className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                   >
                     <option value={0} disabled>
