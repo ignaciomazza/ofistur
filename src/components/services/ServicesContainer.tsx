@@ -200,7 +200,8 @@ function extractOperatorDuesPayload(data: unknown): OperatorDue[] {
     if (Array.isArray(value.items)) return value.items;
     if (isRecord(value.data)) {
       if (Array.isArray(value.data.dues)) return value.data.dues;
-      if (Array.isArray(value.data.operatorDues)) return value.data.operatorDues;
+      if (Array.isArray(value.data.operatorDues))
+        return value.data.operatorDues;
       if (Array.isArray(value.data.items)) return value.data.items;
     }
     return [];
@@ -599,12 +600,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
         return_date: nextReturn,
       };
     });
-  }, [
-    booking,
-    editingServiceId,
-    isFormVisible,
-    setFormData,
-  ]);
+  }, [booking, editingServiceId, isFormVisible, setFormData]);
 
   const hasChanges = useMemo(() => {
     if (!booking) return false;
@@ -814,12 +810,12 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     const obj = input as Record<string, unknown>;
     const out: Record<string, number> = {};
     for (const [keyRaw, val] of Object.entries(obj)) {
-      const key = String(keyRaw || "").toUpperCase().trim();
+      const key = String(keyRaw || "")
+        .toUpperCase()
+        .trim();
       if (!key) continue;
       const n =
-        typeof val === "number"
-          ? val
-          : Number(String(val).replace(",", "."));
+        typeof val === "number" ? val : Number(String(val).replace(",", "."));
       if (Number.isFinite(n) && n >= 0) out[key] = n;
     }
     return out;
@@ -857,7 +853,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
   const normalizedSaleTotalsDraft = useMemo(() => {
     const out: Record<string, number> = {};
     for (const [keyRaw, val] of Object.entries(saleTotalsDraft)) {
-      const key = String(keyRaw || "").toUpperCase().trim();
+      const key = String(keyRaw || "")
+        .toUpperCase()
+        .trim();
       if (!key) continue;
       const n = Number(String(val).replace(",", "."));
       if (!Number.isFinite(n) || n < 0) continue;
@@ -895,7 +893,10 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     let cancelled = false;
     let timeoutId: number | null = null;
     const w = window as Window & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      requestIdleCallback?: (
+        cb: () => void,
+        opts?: { timeout: number },
+      ) => number;
       cancelIdleCallback?: (id: number) => void;
     };
     if (w.requestIdleCallback) {
@@ -1065,7 +1066,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
         const groupedData: unknown = await groupedRes.json();
         const groupedRows = extractOperatorDuesPayload(groupedData);
         const filtered = groupedRows.filter((due) => {
-          const rec = due as OperatorDue & { booking_id?: number | string | null };
+          const rec = due as OperatorDue & {
+            booking_id?: number | string | null;
+          };
           const dueBookingId = Number(rec.booking_id ?? 0);
           if (Number.isFinite(dueBookingId) && dueBookingId > 0) {
             return dueBookingId === booking.id_booking;
@@ -1130,9 +1133,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
           fee_value:
             p.fee_value != null ? toFiniteNumber(p.fee_value, 0) : undefined,
           fee_amount:
-            p.fee_amount != null
-              ? toFiniteNumber(p.fee_amount, 0)
-              : undefined,
+            p.fee_amount != null ? toFiniteNumber(p.fee_amount, 0) : undefined,
           operator_id: null,
           credit_account_id: null,
         }));
@@ -1454,7 +1455,8 @@ export default function ServicesContainer(props: ServicesContainerProps) {
       onBookingUpdated?.(updated);
       toast.success("Venta total guardada");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Error al guardar venta total";
+      const msg =
+        e instanceof Error ? e.message : "Error al guardar venta total";
       toast.error(msg);
     } finally {
       setSaleTotalsSaving(false);
@@ -1488,7 +1490,8 @@ export default function ServicesContainer(props: ServicesContainerProps) {
       onBookingUpdated?.(updated);
       toast.success("Modo de venta guardado");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Error al guardar modo de venta";
+      const msg =
+        e instanceof Error ? e.message : "Error al guardar modo de venta";
       toast.error(msg);
     } finally {
       setSaleModeSaving(false);
@@ -1653,6 +1656,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     role === "desarrollador" ||
     role === "gerente" ||
     role === "vendedor";
+  const hasServices = services.length > 0;
   const canShowBookingSaleTotalsForm =
     canEditSaleMode || (canEditSaleTotals && useBookingSaleTotal);
   const canUseReceiptsForm = canAccessBookingComponent(
@@ -1681,7 +1685,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
   const nextDisabled = neighborLoading || !neighborIds.nextId;
   const billingSection =
     canViewBilling &&
-    (services.length > 0 || invoices.length > 0 || creditNotes.length > 0) ? (
+    (hasServices || invoices.length > 0 || creditNotes.length > 0) ? (
       <div className="mb-16">
         <div className="mb-4 mt-8 flex items-center justify-center gap-2">
           <p className="text-2xl font-medium">Facturación</p>
@@ -1992,9 +1996,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={getStatusPillClasses(booking.clientStatus)}
-                    title={`Pax: ${formatStatusLabel(
-                      booking.clientStatus,
-                    )}`}
+                    title={`Pax: ${formatStatusLabel(booking.clientStatus)}`}
                   >
                     Pax:
                     <span className="ml-1 font-semibold">
@@ -2072,7 +2074,6 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                       booking.titular.id_client}
                   </p>
                 </div>
-
 
                 <div className="col-span-1 flex items-end gap-4 rounded-2xl border border-white/5 bg-white/20 p-4 shadow-sm shadow-sky-950/10 dark:bg-white/5 md:col-span-2 lg:col-span-1">
                   <div>
@@ -2291,7 +2292,117 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 passengerCategoryCounts={passengerCategoryCounts}
               />
 
-              {services.length > 0 && (
+              {!hasServices && canShowBookingSaleTotalsForm && (
+                <div className="mt-8 rounded-3xl border border-sky-900/10 bg-white/35 p-4 text-sky-950 shadow-sm shadow-sky-950/5 backdrop-blur dark:border-white/10 dark:bg-white/[0.04] dark:text-white">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">
+                        Venta total por reserva
+                      </p>
+                      <p className="text-xs text-sky-950/70 dark:text-white/70">
+                        Local por reserva. Por defecto hereda de la
+                        configuración general.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canEditSaleMode ? (
+                        <>
+                          <label className="inline-flex items-center gap-2 rounded-full border border-sky-900/15 bg-white/70 px-3 py-1 text-xs font-medium text-sky-950 dark:border-white/10 dark:bg-white/10 dark:text-white">
+                            <input
+                              type="checkbox"
+                              checked={useBookingSaleTotal}
+                              onChange={(e) =>
+                                setUseBookingSaleTotal(e.target.checked)
+                              }
+                              className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 dark:border-white/20 dark:bg-white/10"
+                            />
+                            {useBookingSaleTotal ? "Activo" : "Inactivo"}
+                          </label>
+                          <button
+                            type="button"
+                            onClick={handleSaleModeSave}
+                            disabled={!saleModeDirty || saleModeSaving}
+                            className="rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
+                          >
+                            {saleModeSaving
+                              ? "Guardando modo..."
+                              : "Guardar modo"}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="rounded-full border border-sky-900/10 bg-white/70 px-3 py-1 text-[11px] font-medium text-sky-900/80 dark:border-white/10 dark:bg-white/10 dark:text-white/70">
+                          Modo heredado de configuración general
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium">
+                    <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
+                      Global:{" "}
+                      {inheritedUseBookingSaleTotal ? "Activo" : "Inactivo"}
+                    </span>
+                    <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
+                      Reserva:{" "}
+                      {useBookingSaleTotalOverride == null
+                        ? "Heredado"
+                        : useBookingSaleTotalOverride
+                          ? "Override Activo"
+                          : "Override Inactivo"}
+                    </span>
+                  </div>
+
+                  {useBookingSaleTotal && (
+                    <>
+                      <div className="mt-4 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={handleSaleTotalsSave}
+                          disabled={!saleTotalsDirty || saleTotalsSaving}
+                          className="rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
+                        >
+                          {saleTotalsSaving
+                            ? "Guardando venta..."
+                            : "Guardar venta"}
+                        </button>
+                      </div>
+                      <div className="mt-4 space-y-2 rounded-2xl border border-sky-900/10 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                        {saleTotalCurrencies.map((cur) => (
+                          <div key={cur} className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              value={saleTotalsDraft[cur] ?? ""}
+                              onChange={(e) =>
+                                setSaleTotalsDraft((prev) => ({
+                                  ...prev,
+                                  [cur]: e.target.value,
+                                }))
+                              }
+                              className="w-full rounded-2xl border border-sky-900/10 bg-white p-2 px-3 text-sm shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 sm:max-w-[160px]"
+                            />
+                            <span className="rounded-full border border-sky-900/10 bg-white/75 px-2 py-1 text-xs font-semibold text-sky-900 dark:border-white/10 dark:bg-white/10 dark:text-white">
+                              {cur}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {!hasServices && (
+                <div className="mb-10 mt-6 rounded-3xl border border-amber-300/60 bg-amber-50/80 p-4 text-sm text-amber-900 shadow-sm shadow-amber-900/10 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-100">
+                  Todavía no hay servicios cargados. Para visualizar las
+                  secciones de archivos/documentación, recibos y plan de pagos
+                  se debe cargar al menos un servicio.
+                </div>
+              )}
+
+              {hasServices && (
                 <div>
                   <ServiceList
                     services={services}
@@ -2345,7 +2456,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                                       }
                                       className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 dark:border-white/20 dark:bg-white/10"
                                     />
-                                    {useBookingSaleTotal ? "Activo" : "Inactivo"}
+                                    {useBookingSaleTotal
+                                      ? "Activo"
+                                      : "Inactivo"}
                                   </label>
                                   <button
                                     type="button"
@@ -2369,7 +2482,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                           <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium">
                             <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
                               Global:{" "}
-                              {inheritedUseBookingSaleTotal ? "Activo" : "Inactivo"}
+                              {inheritedUseBookingSaleTotal
+                                ? "Activo"
+                                : "Inactivo"}
                             </span>
                             <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
                               Reserva:{" "}
@@ -2387,7 +2502,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                                 <button
                                   type="button"
                                   onClick={handleSaleTotalsSave}
-                                  disabled={!saleTotalsDirty || saleTotalsSaving}
+                                  disabled={
+                                    !saleTotalsDirty || saleTotalsSaving
+                                  }
                                   className="rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
                                 >
                                   {saleTotalsSaving
@@ -2397,7 +2514,10 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                               </div>
                               <div className="mt-4 space-y-2 rounded-2xl border border-sky-900/10 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
                                 {saleTotalCurrencies.map((cur) => (
-                                  <div key={cur} className="flex items-center gap-2">
+                                  <div
+                                    key={cur}
+                                    className="flex items-center gap-2"
+                                  >
                                     <input
                                       type="number"
                                       inputMode="decimal"
@@ -2427,7 +2547,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 </div>
               )}
 
-              {booking && filesReady && (
+              {hasServices && booking && filesReady && (
                 <div className="mb-16">
                   <div className="mb-4 mt-8 flex items-center justify-center gap-2">
                     <p className="text-2xl font-medium">Archivos</p>
@@ -2443,193 +2563,274 @@ export default function ServicesContainer(props: ServicesContainerProps) {
               )}
 
               {/* RECIBOS */}
-              <div className="mb-16">
-                <div className="mb-4 mt-8 flex items-center justify-center gap-2">
-                  <p className="text-2xl font-medium">Recibos</p>
-                </div>
+              {hasServices && (
+                <div className="mb-16">
+                  <div className="mb-4 mt-8 flex items-center justify-center gap-2">
+                    <p className="text-2xl font-medium">Recibos</p>
+                  </div>
 
-                {canUseReceiptsForm &&
-                  (services.length > 0 || receipts.length > 0) && (
-                    <ReceiptForm
-                      key={editingReceipt?.id_receipt ?? "booking-receipt-new"}
-                      token={token || null}
-                      editingReceiptId={editingReceipt?.id_receipt ?? null}
-                      isFormVisible={receiptFormVisible}
-                      setIsFormVisible={setReceiptFormVisible}
-                      bookingId={editingReceipt ? undefined : booking.id_booking}
-                      allowAgency={false}
-                      enableAttachAction={!editingReceipt}
-                      initialServiceIds={editingReceipt?.serviceIds ?? []}
-                      initialConcept={editingReceipt?.concept ?? ""}
-                      initialAmount={
-                        editingReceipt
-                          ? toFiniteNumber(editingReceipt.amount, 0)
-                          : undefined
-                      }
-                      initialCurrency={editingReceipt?.amount_currency ?? undefined}
-                      initialAmountWords={editingReceipt?.amount_string ?? ""}
-                      initialAmountWordsCurrency={
-                        editingReceipt?.base_currency ||
-                        editingReceipt?.amount_currency ||
-                        undefined
-                      }
-                      initialPaymentDescription={editingReceipt?.currency ?? ""}
-                      initialFeeAmount={
-                        editingReceipt?.payment_fee_amount != null
-                          ? toFiniteNumber(editingReceipt.payment_fee_amount, 0)
-                          : undefined
-                      }
-                      initialIssueDate={toInputDate(editingReceipt?.issue_date)}
-                      initialBaseAmount={editingReceipt?.base_amount ?? null}
-                      initialBaseCurrency={editingReceipt?.base_currency ?? null}
-                      initialCounterAmount={
-                        editingReceipt?.counter_amount ?? null
-                      }
-                      initialCounterCurrency={
-                        editingReceipt?.counter_currency ?? null
-                      }
-                      initialClientIds={editingReceipt?.clientIds ?? []}
-                      initialPayments={
-                        editingReceipt
-                          ? buildInitialReceiptPayments(editingReceipt)
-                          : []
-                      }
-                      loadServicesForBooking={async (
-                        bId,
-                      ): Promise<ServiceLite[]> => {
-                        if (!token)
-                          throw new Error(
-                            "Sesión expirada. Volvé a iniciar sesión.",
-                          );
-
-                        // Mapper seguro
-                        const mapToLite = (
-                          arr: ReadonlyArray<BookingServiceItem>,
-                        ): ServiceLite[] =>
-                          (arr || []).map((s) => {
-                            const rawId = s?.id_service ?? s?.id ?? 0;
-                            const id =
-                              typeof rawId === "number"
-                                ? rawId
-                                : Number(rawId ?? 0);
-                            const currency = String(
-                              s?.currency ?? s?.sale_currency ?? "ARS",
-                            ).toUpperCase();
-                            const sale =
-                              typeof s?.sale_price === "number"
-                                ? s.sale_price
-                                : Number(s?.sale_price ?? 0);
-                            const cardInt =
-                              typeof s?.card_interest === "number"
-                                ? s.card_interest
-                                : Number(s?.card_interest ?? 0);
-                            const cardBase =
-                              typeof s?.taxableCardInterest === "number"
-                                ? s.taxableCardInterest
-                                : Number(s?.taxableCardInterest ?? 0);
-                            const cardVat =
-                              typeof s?.vatOnCardInterest === "number"
-                                ? s.vatOnCardInterest
-                                : Number(s?.vatOnCardInterest ?? 0);
-
-                            return {
-                              id_service: Number.isFinite(id) ? id : 0,
-                              description:
-                                s?.description ??
-                                s?.type ??
-                                (Number.isFinite(id) && id > 0
-                                  ? `Servicio ${id}`
-                                  : "Servicio"),
-                              currency,
-                              sale_price: sale > 0 ? sale : undefined,
-                              card_interest:
-                                Number.isFinite(cardInt) && cardInt > 0
-                                  ? cardInt
-                                  : undefined,
-                              taxableCardInterest:
-                                Number.isFinite(cardBase) && cardBase > 0
-                                  ? cardBase
-                                  : undefined,
-                              vatOnCardInterest:
-                                Number.isFinite(cardVat) && cardVat > 0
-                                  ? cardVat
-                                  : undefined,
-                              type: s?.type ?? undefined,
-                              destination:
-                                s?.destination ?? s?.destino ?? undefined,
-                            };
-                          });
-
-                        if (
-                          booking?.id_booking === bId &&
-                          Array.isArray(services) &&
-                          services.length
-                        ) {
-                          return mapToLite(
-                            services as unknown as ReadonlyArray<BookingServiceItem>,
-                          );
+                  {canUseReceiptsForm &&
+                    (services.length > 0 || receipts.length > 0) && (
+                      <ReceiptForm
+                        key={
+                          editingReceipt?.id_receipt ?? "booking-receipt-new"
                         }
+                        token={token || null}
+                        editingReceiptId={editingReceipt?.id_receipt ?? null}
+                        isFormVisible={receiptFormVisible}
+                        setIsFormVisible={setReceiptFormVisible}
+                        bookingId={
+                          editingReceipt ? undefined : booking.id_booking
+                        }
+                        allowAgency={false}
+                        enableAttachAction={!editingReceipt}
+                        initialServiceIds={editingReceipt?.serviceIds ?? []}
+                        initialConcept={editingReceipt?.concept ?? ""}
+                        initialAmount={
+                          editingReceipt
+                            ? toFiniteNumber(editingReceipt.amount, 0)
+                            : undefined
+                        }
+                        initialCurrency={
+                          editingReceipt?.amount_currency ?? undefined
+                        }
+                        initialAmountWords={editingReceipt?.amount_string ?? ""}
+                        initialAmountWordsCurrency={
+                          editingReceipt?.base_currency ||
+                          editingReceipt?.amount_currency ||
+                          undefined
+                        }
+                        initialPaymentDescription={
+                          editingReceipt?.currency ?? ""
+                        }
+                        initialFeeAmount={
+                          editingReceipt?.payment_fee_amount != null
+                            ? toFiniteNumber(
+                                editingReceipt.payment_fee_amount,
+                                0,
+                              )
+                            : undefined
+                        }
+                        initialIssueDate={toInputDate(
+                          editingReceipt?.issue_date,
+                        )}
+                        initialBaseAmount={editingReceipt?.base_amount ?? null}
+                        initialBaseCurrency={
+                          editingReceipt?.base_currency ?? null
+                        }
+                        initialCounterAmount={
+                          editingReceipt?.counter_amount ?? null
+                        }
+                        initialCounterCurrency={
+                          editingReceipt?.counter_currency ?? null
+                        }
+                        initialClientIds={editingReceipt?.clientIds ?? []}
+                        initialPayments={
+                          editingReceipt
+                            ? buildInitialReceiptPayments(editingReceipt)
+                            : []
+                        }
+                        loadServicesForBooking={async (
+                          bId,
+                        ): Promise<ServiceLite[]> => {
+                          if (!token)
+                            throw new Error(
+                              "Sesión expirada. Volvé a iniciar sesión.",
+                            );
 
-                        const parseJsonToArray = (
-                          json: unknown,
-                        ): BookingServiceItem[] | null => {
-                          const root = json as Record<string, unknown> | null;
-                          const candidates: unknown[] = [
-                            json,
-                            root?.items,
-                            root?.results,
-                            root?.data,
-                            root?.services,
-                            (
-                              root?.booking as
-                                | Record<string, unknown>
-                                | undefined
-                            )?.services,
-                          ].filter(Boolean);
-                          for (const c of candidates) {
-                            if (Array.isArray(c))
-                              return c as BookingServiceItem[];
+                          // Mapper seguro
+                          const mapToLite = (
+                            arr: ReadonlyArray<BookingServiceItem>,
+                          ): ServiceLite[] =>
+                            (arr || []).map((s) => {
+                              const rawId = s?.id_service ?? s?.id ?? 0;
+                              const id =
+                                typeof rawId === "number"
+                                  ? rawId
+                                  : Number(rawId ?? 0);
+                              const currency = String(
+                                s?.currency ?? s?.sale_currency ?? "ARS",
+                              ).toUpperCase();
+                              const sale =
+                                typeof s?.sale_price === "number"
+                                  ? s.sale_price
+                                  : Number(s?.sale_price ?? 0);
+                              const cardInt =
+                                typeof s?.card_interest === "number"
+                                  ? s.card_interest
+                                  : Number(s?.card_interest ?? 0);
+                              const cardBase =
+                                typeof s?.taxableCardInterest === "number"
+                                  ? s.taxableCardInterest
+                                  : Number(s?.taxableCardInterest ?? 0);
+                              const cardVat =
+                                typeof s?.vatOnCardInterest === "number"
+                                  ? s.vatOnCardInterest
+                                  : Number(s?.vatOnCardInterest ?? 0);
+
+                              return {
+                                id_service: Number.isFinite(id) ? id : 0,
+                                description:
+                                  s?.description ??
+                                  s?.type ??
+                                  (Number.isFinite(id) && id > 0
+                                    ? `Servicio ${id}`
+                                    : "Servicio"),
+                                currency,
+                                sale_price: sale > 0 ? sale : undefined,
+                                card_interest:
+                                  Number.isFinite(cardInt) && cardInt > 0
+                                    ? cardInt
+                                    : undefined,
+                                taxableCardInterest:
+                                  Number.isFinite(cardBase) && cardBase > 0
+                                    ? cardBase
+                                    : undefined,
+                                vatOnCardInterest:
+                                  Number.isFinite(cardVat) && cardVat > 0
+                                    ? cardVat
+                                    : undefined,
+                                type: s?.type ?? undefined,
+                                destination:
+                                  s?.destination ?? s?.destino ?? undefined,
+                              };
+                            });
+
+                          if (
+                            booking?.id_booking === bId &&
+                            Array.isArray(services) &&
+                            services.length
+                          ) {
+                            return mapToLite(
+                              services as unknown as ReadonlyArray<BookingServiceItem>,
+                            );
                           }
-                          return null;
-                        };
 
-                        const tryFetch = async (
-                          url: string,
-                        ): Promise<BookingServiceItem[] | null> => {
+                          const parseJsonToArray = (
+                            json: unknown,
+                          ): BookingServiceItem[] | null => {
+                            const root = json as Record<string, unknown> | null;
+                            const candidates: unknown[] = [
+                              json,
+                              root?.items,
+                              root?.results,
+                              root?.data,
+                              root?.services,
+                              (
+                                root?.booking as
+                                  | Record<string, unknown>
+                                  | undefined
+                              )?.services,
+                            ].filter(Boolean);
+                            for (const c of candidates) {
+                              if (Array.isArray(c))
+                                return c as BookingServiceItem[];
+                            }
+                            return null;
+                          };
+
+                          const tryFetch = async (
+                            url: string,
+                          ): Promise<BookingServiceItem[] | null> => {
+                            const res = await authFetch(
+                              url,
+                              { cache: "no-store" },
+                              token,
+                            );
+                            if (!res.ok) return null;
+                            const json: unknown = await res.json();
+                            return parseJsonToArray(json);
+                          };
+
+                          const arr =
+                            (await tryFetch(`/api/bookings/${bId}/services`)) ??
+                            (await tryFetch(
+                              `/api/bookings/${bId}?include=services`,
+                            )) ??
+                            (await tryFetch(`/api/bookings/${bId}`)) ??
+                            (await tryFetch(
+                              `/api/services?bookingId=${bId}`,
+                            )) ??
+                            (await tryFetch(
+                              `/api/services/by-booking/${bId}`,
+                            )) ??
+                            [];
+
+                          return mapToLite(arr);
+                        }}
+                        onAttachExisting={handleAttachExistingReceipt}
+                        onSubmit={async (payload) => {
+                          const receiptToEdit = editingReceipt;
+                          if (receiptToEdit?.id_receipt) {
+                            const res = await authFetch(
+                              `/api/receipts/${
+                                receiptToEdit.public_id ??
+                                receiptToEdit.id_receipt
+                              }`,
+                              {
+                                method: "PATCH",
+                                body: JSON.stringify(payload),
+                              },
+                              token ?? undefined,
+                            );
+
+                            const json: unknown = await res
+                              .json()
+                              .catch(() => null);
+
+                            if (!res.ok) {
+                              let msg = "No se pudo actualizar el recibo.";
+                              const picked = pickApiMessage(json);
+                              if (picked) msg = picked;
+                              throw new Error(msg);
+                            }
+                            const submitResult = isSubmitResultLike(json)
+                              ? json
+                              : null;
+
+                            const updatedRaw =
+                              (isRecord(json) && isRecord(json.receipt)
+                                ? json.receipt
+                                : null) ||
+                              (isRecord(json) &&
+                              isRecord(json.data) &&
+                              isRecord(json.data.receipt)
+                                ? json.data.receipt
+                                : null);
+
+                            if (updatedRaw) {
+                              const updatedObj = isRecord(updatedRaw)
+                                ? updatedRaw
+                                : {};
+                              const updatedReceipt = {
+                                ...receiptToEdit,
+                                ...(updatedRaw as Partial<Receipt>),
+                                id_receipt: Number(
+                                  updatedObj.id_receipt ??
+                                    updatedObj.id ??
+                                    receiptToEdit.id_receipt,
+                                ),
+                                receipt_number: String(
+                                  updatedObj.receipt_number ??
+                                    updatedObj.number ??
+                                    receiptToEdit.receipt_number ??
+                                    "",
+                                ),
+                              } as Receipt;
+                              onReceiptCreated?.(updatedReceipt);
+                            } else {
+                              onReceiptCreated?.(receiptToEdit);
+                            }
+
+                            setEditingReceipt(null);
+                            setReceiptFormVisible(false);
+                            router.refresh();
+                            return submitResult;
+                          }
+
                           const res = await authFetch(
-                            url,
-                            { cache: "no-store" },
-                            token,
-                          );
-                          if (!res.ok) return null;
-                          const json: unknown = await res.json();
-                          return parseJsonToArray(json);
-                        };
-
-                        const arr =
-                          (await tryFetch(`/api/bookings/${bId}/services`)) ??
-                          (await tryFetch(
-                            `/api/bookings/${bId}?include=services`,
-                          )) ??
-                          (await tryFetch(`/api/bookings/${bId}`)) ??
-                          (await tryFetch(`/api/services?bookingId=${bId}`)) ??
-                          (await tryFetch(`/api/services/by-booking/${bId}`)) ??
-                          [];
-
-                        return mapToLite(arr);
-                      }}
-                      onAttachExisting={handleAttachExistingReceipt}
-                      onSubmit={async (payload) => {
-                        const receiptToEdit = editingReceipt;
-                        if (receiptToEdit?.id_receipt) {
-                          const res = await authFetch(
-                            `/api/receipts/${
-                              receiptToEdit.public_id ?? receiptToEdit.id_receipt
-                            }`,
-                            {
-                              method: "PATCH",
-                              body: JSON.stringify(payload),
-                            },
+                            "/api/receipts",
+                            { method: "POST", body: JSON.stringify(payload) },
                             token ?? undefined,
                           );
 
@@ -2638,7 +2839,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                             .catch(() => null);
 
                           if (!res.ok) {
-                            let msg = "No se pudo actualizar el recibo.";
+                            let msg = "No se pudo crear el recibo.";
                             const picked = pickApiMessage(json);
                             if (picked) msg = picked;
                             throw new Error(msg);
@@ -2647,114 +2848,59 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                             ? json
                             : null;
 
-                          const updatedRaw =
-                            (isRecord(json) && isRecord(json.receipt)
-                              ? json.receipt
-                              : null) ||
+                          const raw =
+                            (isRecord(json) && json.receipt) ||
                             (isRecord(json) &&
-                            isRecord(json.data) &&
-                            isRecord(json.data.receipt)
-                              ? json.data.receipt
+                              isRecord(json.data) &&
+                              json.data.receipt) ||
+                            (isRecord(json) && Array.isArray(json.items)
+                              ? json.items[0]
                               : null);
 
-                          if (updatedRaw) {
-                            const updatedObj = isRecord(updatedRaw)
-                              ? updatedRaw
-                              : {};
-                            const updatedReceipt = {
-                              ...receiptToEdit,
-                              ...(updatedRaw as Partial<Receipt>),
-                              id_receipt: Number(
-                                updatedObj.id_receipt ??
-                                  updatedObj.id ??
-                                  receiptToEdit.id_receipt,
-                              ),
-                              receipt_number: String(
-                                updatedObj.receipt_number ??
-                                  updatedObj.number ??
-                                  receiptToEdit.receipt_number ??
-                                  "",
-                              ),
-                            } as Receipt;
-                            onReceiptCreated?.(updatedReceipt);
-                          } else {
-                            onReceiptCreated?.(receiptToEdit);
+                          if (!raw) {
+                            router.refresh();
+                            return submitResult;
                           }
 
-                          setEditingReceipt(null);
-                          setReceiptFormVisible(false);
+                          const obj = isRecord(raw) ? raw : {};
+                          const receipt = {
+                            ...(raw as Partial<Receipt>),
+                            id_receipt: Number(obj.id_receipt ?? obj.id ?? 0),
+                            receipt_number: String(
+                              obj.receipt_number ?? obj.number ?? "",
+                            ),
+                          } as Receipt;
+
+                          onReceiptCreated?.(receipt);
                           router.refresh();
-                          return submitResult;
+                          return (
+                            submitResult ?? submitResultFromReceipt(receipt)
+                          );
+                        }}
+                        onCancel={
+                          editingReceipt ? cancelEditReceipt : undefined
                         }
+                      />
+                    )}
 
-                        const res = await authFetch(
-                          "/api/receipts",
-                          { method: "POST", body: JSON.stringify(payload) },
-                          token ?? undefined,
-                        );
-
-                        const json: unknown = await res
-                          .json()
-                          .catch(() => null);
-
-                        if (!res.ok) {
-                          let msg = "No se pudo crear el recibo.";
-                          const picked = pickApiMessage(json);
-                          if (picked) msg = picked;
-                          throw new Error(msg);
-                        }
-                        const submitResult = isSubmitResultLike(json)
-                          ? json
-                          : null;
-
-                        const raw =
-                          (isRecord(json) && json.receipt) ||
-                          (isRecord(json) &&
-                            isRecord(json.data) &&
-                            json.data.receipt) ||
-                          (isRecord(json) && Array.isArray(json.items)
-                            ? json.items[0]
-                            : null);
-
-                        if (!raw) {
-                          router.refresh();
-                          return submitResult;
-                        }
-
-                        const obj = isRecord(raw) ? raw : {};
-                        const receipt = {
-                          ...(raw as Partial<Receipt>),
-                          id_receipt: Number(obj.id_receipt ?? obj.id ?? 0),
-                          receipt_number: String(
-                            obj.receipt_number ?? obj.number ?? "",
-                          ),
-                        } as Receipt;
-
-                        onReceiptCreated?.(receipt);
-                        router.refresh();
-                        return submitResult ?? submitResultFromReceipt(receipt);
-                      }}
-                      onCancel={editingReceipt ? cancelEditReceipt : undefined}
+                  {receipts.length > 0 && (
+                    <ReceiptList
+                      token={token}
+                      receipts={receipts}
+                      booking={booking}
+                      services={services}
+                      role={role}
+                      onReceiptDeleted={onReceiptDeleted}
+                      onReceiptEdit={
+                        canUseReceiptsForm ? startEditReceipt : undefined
+                      }
                     />
                   )}
-
-                {receipts.length > 0 && (
-                  <ReceiptList
-                    token={token}
-                    receipts={receipts}
-                    booking={booking}
-                    services={services}
-                    role={role}
-                    onReceiptDeleted={onReceiptDeleted}
-                    onReceiptEdit={
-                      canUseReceiptsForm ? startEditReceipt : undefined
-                    }
-                  />
-                )}
-              </div>
+                </div>
+              )}
 
               {/* PAGOS A OPERADOR */}
-              {canUseOperatorPayments && services.length > 0 && (
+              {canUseOperatorPayments && hasServices && (
                 <div>
                   <div className="mb-4 mt-8 flex items-center justify-center gap-2">
                     <p className="text-2xl font-medium">Pagos al Operador</p>
@@ -2777,10 +2923,11 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 </div>
               )}
 
-              {billingSection}
+              {hasServices && billingSection}
 
               {/* ESTADOS RESERVA */}
-              {canEditBookingStatus &&
+              {hasServices &&
+                canEditBookingStatus &&
                 (services.length > 0 ||
                   invoices.length > 0 ||
                   receipts.length > 0 ||
@@ -2896,7 +3043,8 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 )}
 
               {/* OPERADOR */}
-              {canViewOperatorDues &&
+              {hasServices &&
+                canViewOperatorDues &&
                 booking &&
                 (services.length > 0 || operatorDues.length > 0) && (
                   <div className="mb-16">
@@ -2934,37 +3082,39 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 )}
 
               {/* PAGO AL CLIENTE */}
-              <div className="mb-16">
-                <div className="mb-4 mt-8 flex items-center justify-center gap-2">
-                  <p className="text-2xl font-medium">
-                    Plan de pagos del pax{" "}
-                    <span className="text-xl font-normal tracking-wide opacity-70">
-                      (Opcional)
-                    </span>
-                  </p>
+              {hasServices && (
+                <div className="mb-16">
+                  <div className="mb-4 mt-8 flex items-center justify-center gap-2">
+                    <p className="text-2xl font-medium">
+                      Plan de pagos del pax{" "}
+                      <span className="text-xl font-normal tracking-wide opacity-70">
+                        (Opcional)
+                      </span>
+                    </p>
+                  </div>
+
+                  {(role === "administrativo" ||
+                    role === "desarrollador" ||
+                    role === "gerente" ||
+                    role === "vendedor" ||
+                    role === "lider") &&
+                    booking && (
+                      <ClientPaymentForm
+                        token={token}
+                        booking={booking}
+                        onCreated={handleClientPaymentCreated}
+                      />
+                    )}
+
+                  <ClientPaymentList
+                    payments={clientPayments}
+                    booking={booking!}
+                    role={role}
+                    loading={clientPaymentsLoading}
+                    onPaymentDeleted={handleClientPaymentDeleted}
+                  />
                 </div>
-
-                {(role === "administrativo" ||
-                  role === "desarrollador" ||
-                  role === "gerente" ||
-                  role === "vendedor" ||
-                  role === "lider") &&
-                  booking && (
-                    <ClientPaymentForm
-                      token={token}
-                      booking={booking}
-                      onCreated={handleClientPaymentCreated}
-                    />
-                  )}
-
-                <ClientPaymentList
-                  payments={clientPayments}
-                  booking={booking!}
-                  role={role}
-                  loading={clientPaymentsLoading}
-                  onPaymentDeleted={handleClientPaymentDeleted}
-                />
-              </div>
+              )}
             </>
           ) : (
             <div className="flex h-40 items-center justify-center">

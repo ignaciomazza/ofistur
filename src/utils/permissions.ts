@@ -189,7 +189,7 @@ export function normalizeRole(role?: string | null): string {
     return "lider";
   }
   if (normalized.startsWith("gerent")) return "gerente";
-  if (["admin", "administrador", "administrativa"].includes(normalized)) {
+  if (normalized === "admin" || normalized.startsWith("administr")) {
     return "administrativo";
   }
   if (["dev", "developer"].includes(normalized)) return "desarrollador";

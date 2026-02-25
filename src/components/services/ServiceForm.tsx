@@ -671,27 +671,14 @@ async function fetchServiceCalcCfg(
 }
 
 /* ========= Helpers de moneda ========= */
-function isValidCurrencyCode(code: string): boolean {
-  const c = (code || "").trim().toUpperCase();
-  if (!c) return false;
-  try {
-    new Intl.NumberFormat("es-AR", { style: "currency", currency: c }).format(
-      1,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function pickDisplayCurrency(
   formCode: string,
   enabledOptions: string[],
 ): string {
   const form = (formCode || "").trim().toUpperCase();
-  if (isValidCurrencyCode(form)) return form;
-  const first = (enabledOptions[0] || "ARS").toUpperCase();
-  return isValidCurrencyCode(first) ? first : "ARS";
+  if (form) return form;
+  const first = (enabledOptions[0] || "").trim().toUpperCase();
+  return first || "ARS";
 }
 
 function extractServiceAdjustments(
@@ -1031,15 +1018,23 @@ export default function ServiceForm({
   }, [isFormVisible, token, selectedTypeFromList?.id, formData.id_operator]);
 
   /* ========== Moneda segura para UI/formatos ========== */
-  const currencyOptions = useMemo(
-    () =>
-      uniqSorted(
-        (financeCurrencies || [])
-          .filter((c) => c.enabled)
-          .map((c) => (c.code || "").toUpperCase()),
-      ),
-    [financeCurrencies],
-  );
+  const currencyOptions = useMemo(() => {
+    const financeEnabled = uniqSorted(
+      (financeCurrencies || [])
+        .filter((c) => c.enabled)
+        .map((c) => (c.code || "").toUpperCase()),
+    );
+
+    // Mantener visible la moneda actual o la sugerida por preset aunque no
+    // llegue en la lista de configuración.
+    const contextual = uniqSorted(
+      [formData.currency, activePreset?.currency]
+        .map((code) => String(code || "").toUpperCase())
+        .filter(Boolean),
+    );
+
+    return uniqSorted([...financeEnabled, ...contextual]);
+  }, [financeCurrencies, formData.currency, activePreset?.currency]);
 
   const currencyLabelDict = useMemo(() => {
     const dict: Record<string, string> = {};

@@ -9,11 +9,23 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
 
 function normalizeRole(r?: string) {
-  return (r ?? "")
+  const normalized = (r ?? "")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
-    .replace(/^leader$/, "lider");
+    .trim();
+  if (!normalized) return "";
+  if (normalized.startsWith("vendedor")) return "vendedor";
+  if (normalized.startsWith("lider") || normalized === "leader") {
+    return "lider";
+  }
+  if (normalized.startsWith("gerent")) return "gerente";
+  if (normalized === "admin" || normalized.startsWith("administr")) {
+    return "administrativo";
+  }
+  if (["dev", "developer"].includes(normalized)) return "desarrollador";
+  if (normalized.startsWith("desarrollador")) return "desarrollador";
+  return normalized;
 }
 
 /* ================== Handler ================== */

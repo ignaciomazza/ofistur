@@ -41,6 +41,17 @@ const WS_PRESERVE: React.CSSProperties = {
   tabSize: 4,
 };
 
+const PANEL_CLASS =
+  "rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur";
+const CHIP_TOGGLE_CLASS =
+  "flex cursor-pointer select-none items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-sm text-slate-700 shadow-sm shadow-sky-900/10 dark:text-slate-100";
+const SKY_ACTION_CLASS =
+  "inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-sm text-sky-950 shadow-sm shadow-sky-900/5 transition hover:scale-[0.98] dark:bg-sky-500/20 dark:text-sky-100";
+const ADD_BLOCK_CLASS =
+  "inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-slate-700 shadow-sm shadow-sky-900/10 transition hover:scale-[0.98] dark:text-slate-100";
+const DOWNLOAD_BTN_CLASS =
+  "inline-flex items-center justify-center rounded-full border border-emerald-100 bg-emerald-50/90 px-5 py-2 text-sm font-medium text-emerald-900 shadow-sm shadow-emerald-900/10 transition hover:scale-[0.98] dark:border-emerald-100/70 dark:bg-emerald-500/20 dark:text-emerald-100";
+
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(
     (hex || "").trim(),
@@ -535,6 +546,8 @@ const TemplateEditor: React.FC<Props> = ({
     labels.docTypeLabel ??
     (docType === "quote"
       ? "Cotización"
+      : docType === "quote_budget"
+        ? "Presupuesto"
       : docType === "confirmation"
         ? "Confirmación manual"
         : "Confirmación");
@@ -902,10 +915,10 @@ const TemplateEditor: React.FC<Props> = ({
   return (
     <section className={cx("space-y-6", className)}>
       {/* Toolbar superior */}
-      <div className="mb-2 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-md shadow-sky-950/10 backdrop-blur dark:bg-white/5">
+      <div className={cx("mb-2", PANEL_CLASS)}>
         <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2">
-            <span className="inline-flex size-8 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 shadow-sm shadow-emerald-900/10 dark:border-emerald-400/20 dark:text-emerald-300">
+            <span className="inline-flex size-8 items-center justify-center rounded-2xl border border-sky-400/40 bg-sky-500/10 text-sky-900 shadow-sm shadow-sky-900/10 dark:text-sky-100">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
@@ -928,7 +941,7 @@ const TemplateEditor: React.FC<Props> = ({
 
           <div className="flex flex-wrap items-center gap-3">
             {/* Toggle: desbloquear fijos */}
-            <label className="flex cursor-pointer select-none items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-sm shadow-sm shadow-sky-950/5">
+            <label className={CHIP_TOGGLE_CLASS}>
               <input
                 type="checkbox"
                 className="size-4 accent-emerald-600"
@@ -941,7 +954,7 @@ const TemplateEditor: React.FC<Props> = ({
             <button
               type="button"
               onClick={saveCurrentAsPreset}
-              className="inline-flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-sm text-amber-700 shadow-sm shadow-amber-900/10 hover:opacity-90 dark:text-amber-300"
+              className={SKY_ACTION_CLASS}
               title="Guardar los bloques actuales como preset"
             >
               <svg
@@ -1003,7 +1016,7 @@ const TemplateEditor: React.FC<Props> = ({
               key={t}
               type="button"
               onClick={() => onAddBlock(t)}
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-700 shadow-sm shadow-emerald-900/10 hover:opacity-90 dark:text-emerald-300"
+              className={ADD_BLOCK_CLASS}
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -1283,10 +1296,13 @@ const TemplateEditor: React.FC<Props> = ({
             filename ||
             (docType === "quote"
               ? `cotizacion-${todayDateKeyInBuenosAires()}.pdf`
+              : docType === "quote_budget"
+                ? `presupuesto-${todayDateKeyInBuenosAires()}.pdf`
               : docType === "confirmation"
                 ? `confirmacion-${todayDateKeyInBuenosAires()}.pdf`
                 : `confirmacion-${todayDateKeyInBuenosAires()}.pdf`)
           }
+          className={DOWNLOAD_BTN_CLASS}
         />
       </div>
     </section>

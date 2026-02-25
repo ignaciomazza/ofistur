@@ -27,6 +27,17 @@ const isCoverSavedItem = (v: unknown): v is CoverSavedItem =>
 const cx = (...c: Array<string | false | null | undefined>) =>
   c.filter(Boolean).join(" ");
 
+const PANEL_CLASS =
+  "mb-6 h-fit rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur dark:bg-white/5";
+const SUB_PANEL_CLASS =
+  "rounded-2xl border border-white/10 bg-white/20 p-4 shadow-sm shadow-sky-950/10";
+const EMPTY_STATE_CLASS =
+  "rounded-2xl border border-white/10 bg-white/20 p-4 text-sm text-slate-600 shadow-sm shadow-sky-950/10 dark:text-slate-200";
+const OPTION_TILE_BASE =
+  "relative rounded-2xl border border-white/10 bg-white/10 p-3 text-left shadow-sm shadow-sky-950/10 transition hover:scale-[0.98]";
+const OPTION_ICON_CLASS =
+  "mb-2 inline-flex size-8 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-slate-500 shadow-sm shadow-sky-950/10 dark:text-slate-300";
+
 type Props = {
   cfg: TemplateConfig;
   value: TemplateFormValues;
@@ -47,7 +58,7 @@ function Card({
   return (
     <section
       className={cx(
-        "mb-6 h-fit rounded-3xl border border-white/10 bg-white/10 p-4 shadow-md shadow-sky-950/10 backdrop-blur dark:bg-white/5",
+        PANEL_CLASS,
         className,
       )}
     >
@@ -71,12 +82,11 @@ function SectionHeader({
 }) {
   const toneClass =
     tone === "emerald"
-      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/20 dark:text-emerald-300"
-      : "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:border-amber-400/20 dark:text-amber-300";
-  const shadowClass =
-    tone === "emerald" ? "shadow-emerald-900/10" : "shadow-amber-900/10";
+      ? "border-sky-400/40 bg-sky-500/10 text-sky-900 dark:text-sky-100"
+      : "border-sky-400/40 bg-sky-500/10 text-sky-900 dark:text-sky-100";
+  const shadowClass = "shadow-sky-900/10";
   return (
-    <div className="flex items-start justify-between gap-3 p-4 pb-2">
+    <div className="flex items-start justify-between gap-3 pb-4">
       <div>
         <div className="flex items-center gap-2">
           {icon && (
@@ -112,7 +122,7 @@ function RadioBadge({ active }: { active: boolean }) {
       className={cx(
         "pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs shadow-sm",
         active
-          ? "border-emerald-400/60 bg-emerald-500/85 text-white"
+          ? "border-sky-400/60 bg-sky-500/85 text-white"
           : "border-white/10 bg-white/10 text-white/80 opacity-0",
       )}
     >
@@ -154,8 +164,8 @@ function OptionTile({
 }) {
   const activeClass =
     tone === "amber"
-      ? "border-amber-400/60 ring-2 ring-amber-200/70"
-      : "border-emerald-400/60 ring-2 ring-emerald-200/70";
+      ? "border-sky-400/60 ring-2 ring-sky-200/70"
+      : "border-sky-400/60 ring-2 ring-sky-200/70";
   return (
     <button
       type="button"
@@ -164,13 +174,12 @@ function OptionTile({
       role={role}
       aria-pressed={!!active}
       className={cx(
-        `relative rounded-2xl border bg-white/10 p-3 text-left shadow-sm shadow-sky-950/10 transition hover:scale-[0.99] ${
-          active ? activeClass : "border-white/10"
-        }`,
+        OPTION_TILE_BASE,
+        active ? activeClass : "border-white/10",
       )}
     >
       {icon && (
-        <div className="mb-2 inline-flex size-8 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-slate-500 shadow-sm shadow-sky-950/10 dark:text-slate-300">
+        <div className={OPTION_ICON_CLASS}>
           {icon}
         </div>
       )}
@@ -316,14 +325,14 @@ export default function TemplateConfigForm({
         />
 
         {coverOptions.length === 0 ? (
-          <div className="px-4 pb-4">
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-4 text-sm text-slate-600 shadow-sm shadow-sky-950/10 dark:text-slate-200">
+          <div className="pb-1">
+            <div className={EMPTY_STATE_CLASS}>
               No hay imágenes configuradas para portada.
             </div>
           </div>
         ) : (
           <div
-            className="grid grid-cols-2 gap-3 px-4 pb-4 md:grid-cols-3 lg:grid-cols-4"
+            className="grid grid-cols-2 gap-3 pb-1 md:grid-cols-3 lg:grid-cols-4"
             role="radiogroup"
             aria-label="Seleccionar portada"
           >
@@ -388,11 +397,11 @@ export default function TemplateConfigForm({
         />
 
         {loading ? (
-          <div className="grid grid-cols-1 gap-2 px-4 pb-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 pb-1 md:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div
                 key={i}
-                className="rounded-2xl border border-white/10 bg-white/10 p-3 shadow-sm shadow-sky-950/10"
+                className={SUB_PANEL_CLASS}
               >
                 <SkeletonLine className="mb-2 h-4 w-24" />
                 <SkeletonLine />
@@ -400,14 +409,14 @@ export default function TemplateConfigForm({
             ))}
           </div>
         ) : phoneOptions.length === 0 ? (
-          <div className="px-4 pb-4">
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-4 text-sm text-slate-600 shadow-sm shadow-sky-950/10 dark:text-slate-200">
+          <div className="pb-1">
+            <div className={EMPTY_STATE_CLASS}>
               La agencia no tiene teléfonos cargados.
             </div>
           </div>
         ) : (
           <div
-            className="grid grid-cols-1 gap-2 px-4 pb-4 md:grid-cols-2 lg:grid-cols-3"
+            className="grid grid-cols-1 gap-2 pb-1 md:grid-cols-2 lg:grid-cols-3"
             role="radiogroup"
             aria-label="Seleccionar teléfono"
           >
@@ -480,14 +489,14 @@ export default function TemplateConfigForm({
         />
 
         {paymentOptions.length === 0 ? (
-          <div className="px-4 pb-4">
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-4 text-sm text-slate-600 shadow-sm shadow-sky-950/10 dark:text-slate-200">
+          <div className="pb-1">
+            <div className={EMPTY_STATE_CLASS}>
               No hay opciones de pago cargadas.
             </div>
           </div>
         ) : (
           <div
-            className="space-y-3 px-4 pb-4"
+            className="space-y-3 pb-1"
             role="radiogroup"
             aria-label="Seleccionar forma de pago"
           >
@@ -528,7 +537,7 @@ export default function TemplateConfigForm({
             </div>
 
             {typeof paymentIdx === "number" && paymentOptions[paymentIdx] && (
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-3 text-sm text-slate-700 shadow-sm shadow-sky-950/10 dark:text-slate-200">
+              <div className={cx(SUB_PANEL_CLASS, "text-sm text-slate-700 dark:text-slate-200")}>
                 {paymentOptions[paymentIdx]}
               </div>
             )}

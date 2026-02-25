@@ -6,6 +6,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ButtonHTMLAttributes,
   type ChangeEvent,
   type ReactNode,
 } from "react";
@@ -30,6 +31,7 @@ import {
   normalizeClientProfiles,
   resolveClientProfile,
 } from "@/utils/clientConfig";
+import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
 import {
   normalizeQuoteCustomFields,
   normalizeQuoteHiddenFields,
@@ -45,6 +47,7 @@ import {
   type QuotePaxDraft,
   type QuoteServiceDraft,
 } from "@/utils/quoteDrafts";
+import { parseAmountInput } from "@/utils/receipts/receiptForm";
 
 type QuoteUser = {
   id_user: number;
@@ -170,36 +173,44 @@ type Profile = {
 };
 
 type FormMode = "create" | "edit";
+type QuoteWorkspaceView = "form" | "list";
 type QuoteListView = "card" | "grid" | "table";
 type PresenceFilter = "all" | "with" | "without";
+type MoneyFieldName = "sale_price" | "cost_price";
 type ServiceTypeOption = {
   id?: number | null;
   value: string;
   label: string;
 };
 
-const GLASS =
-  "rounded-3xl border border-sky-300/35 bg-gradient-to-br from-white/70 via-sky-100/55 to-sky-100/45 shadow-lg shadow-sky-950/10 backdrop-blur-xl dark:border-sky-200/20 dark:from-sky-950/40 dark:via-sky-900/35 dark:to-sky-900/25";
 const SECTION_GLASS =
   "rounded-2xl border border-sky-300/35 bg-white/45 shadow-sm shadow-sky-950/10 backdrop-blur-xl dark:border-sky-200/20 dark:bg-sky-950/25";
 const BTN =
-  "rounded-full border border-sky-500/45 bg-sky-400/20 px-4 py-2 text-sm font-medium text-sky-950 shadow-sm shadow-sky-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-sky-400/30 active:translate-y-0 disabled:opacity-50 dark:border-sky-300/45 dark:bg-sky-400/20 dark:text-sky-100";
+  "rounded-full border border-sky-500/45 bg-sky-400/20 px-4 py-2 text-sm font-medium text-sky-950 shadow-sm shadow-sky-950/20 transition-[opacity,transform,background-color] duration-200 hover:scale-[0.99] hover:opacity-95 hover:bg-sky-400/30 active:scale-[0.97] active:opacity-90 disabled:opacity-50 dark:border-sky-300/45 dark:bg-sky-400/20 dark:text-sky-100";
 const AMBER_BTN =
-  "rounded-full border border-sky-500/45 bg-sky-400/20 px-4 py-2 text-sm font-medium text-sky-950 shadow-sm shadow-sky-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-sky-400/30 active:translate-y-0 disabled:opacity-50 dark:border-sky-300/45 dark:bg-sky-400/20 dark:text-sky-100";
-const DETAIL_AMBER_BTN =
-  "rounded-full border border-amber-500/45 bg-amber-300/20 px-4 py-2 text-sm font-medium text-amber-950 shadow-sm shadow-amber-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-amber-300/30 active:translate-y-0 disabled:opacity-50 dark:border-amber-300/50 dark:bg-amber-300/20 dark:text-amber-100";
+  "rounded-full border border-sky-500/45 bg-sky-400/20 px-4 py-2 text-sm font-medium text-sky-950 shadow-sm shadow-sky-950/20 transition-[opacity,transform,background-color] duration-200 hover:scale-[0.99] hover:opacity-95 hover:bg-sky-400/30 active:scale-[0.97] active:opacity-90 disabled:opacity-50 dark:border-sky-300/45 dark:bg-sky-400/20 dark:text-sky-100";
 const SUBTLE_BTN =
-  "rounded-full border border-sky-500/35 bg-white/55 px-4 py-2 text-sm text-sky-900 shadow-sm shadow-sky-950/10 transition duration-200 hover:-translate-y-0.5 hover:bg-sky-100/65 active:translate-y-0 disabled:opacity-50 dark:border-sky-300/35 dark:bg-sky-950/30 dark:text-sky-100";
+  "rounded-full border border-sky-500/35 bg-white/55 px-4 py-2 text-sm text-sky-900 shadow-sm shadow-sky-950/10 transition-[opacity,transform,background-color] duration-200 hover:scale-[0.99] hover:opacity-95 hover:bg-sky-100/65 active:scale-[0.97] active:opacity-90 disabled:opacity-50 dark:border-sky-300/35 dark:bg-sky-950/30 dark:text-sky-100";
 const DANGER_BTN =
-  "rounded-full border border-rose-500/55 bg-rose-200/20 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm shadow-rose-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-rose-200/30 active:translate-y-0 disabled:opacity-50 dark:border-rose-300/55 dark:bg-rose-300/20 dark:text-rose-200";
+  "rounded-full border border-rose-500/55 bg-rose-200/20 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm shadow-rose-950/20 transition-[opacity,transform,background-color] duration-200 hover:scale-[0.99] hover:opacity-95 hover:bg-rose-200/30 active:scale-[0.97] active:opacity-90 disabled:opacity-50 dark:border-rose-300/55 dark:bg-rose-300/20 dark:text-rose-200";
 const INPUT =
-  "w-full rounded-2xl border border-sky-300/45 bg-white/75 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:text-slate-500/80 focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/35 dark:bg-sky-950/25 dark:text-sky-50 dark:placeholder:text-sky-100/60";
+  "w-full rounded-2xl border border-sky-300/45 bg-white/75 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:text-slate-500/80 focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/35 dark:bg-sky-950/20 dark:text-sky-50 dark:placeholder:text-sky-100/60";
 const SELECT =
-  "w-full appearance-none rounded-2xl border border-sky-300/45 bg-white/75 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/35 dark:bg-sky-950/25 dark:text-sky-50";
-const STAT_CARD =
-  "rounded-2xl border border-sky-300/35 bg-white/45 p-3 shadow-sm shadow-sky-950/10 backdrop-blur-xl dark:border-sky-200/20 dark:bg-sky-950/25";
+  "w-full cursor-pointer appearance-none rounded-2xl border border-sky-300/45 bg-white/75 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 disabled:cursor-not-allowed dark:border-sky-200/35 dark:bg-sky-950/20 dark:text-sky-50";
 const CHIP =
   "inline-flex items-center rounded-full border border-sky-400/40 bg-sky-300/20 px-2.5 py-1 text-[11px] font-semibold text-sky-900 dark:border-sky-300/40 dark:bg-sky-300/20 dark:text-sky-100";
+const ACTION_TRACK =
+  "grid grid-cols-[0fr_20px] items-center gap-0 overflow-hidden transition-[grid-template-columns,gap] duration-[600ms] ease-[cubic-bezier(0.2,0.85,0.25,1)] group-hover/btn:grid-cols-[1fr_20px] group-hover/btn:gap-2 group-focus-visible/btn:grid-cols-[1fr_20px] group-focus-visible/btn:gap-2";
+const ACTION_TEXT =
+  "min-w-0 -translate-x-2 text-left whitespace-nowrap text-sm opacity-0 transition-all duration-[520ms] ease-[cubic-bezier(0.2,0.85,0.25,1)] group-hover/btn:translate-x-0 group-hover/btn:opacity-100 group-focus-visible/btn:translate-x-0 group-focus-visible/btn:opacity-100";
+const ACTION_BTN_BASE =
+  "group/btn rounded-full px-3 py-2 shadow-sm backdrop-blur-sm transition-[transform,background-color,border-color,box-shadow,opacity] duration-[500ms] ease-[cubic-bezier(0.2,0.85,0.25,1)] hover:scale-[0.992] hover:opacity-95 active:scale-[0.98] active:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+const ACTION_TONE_CLASS: Record<"sky" | "amber" | "rose" | "neutral", string> = {
+  sky: `${ACTION_BTN_BASE} border border-sky-500/35 bg-sky-500/5 text-sky-900 shadow-sky-950/15 hover:bg-sky-500/10 dark:text-sky-100`,
+  amber: `${ACTION_BTN_BASE} border border-amber-500/40 bg-amber-500/5 text-amber-900 shadow-amber-950/15 hover:bg-amber-500/15 dark:text-amber-100`,
+  rose: `${ACTION_BTN_BASE} border border-rose-500/40 bg-rose-500/5 text-rose-900 shadow-rose-950/15 hover:bg-rose-500/15 dark:text-rose-100`,
+  neutral: `${ACTION_BTN_BASE} border border-slate-500/35 bg-slate-500/5 text-slate-800 shadow-slate-950/10 hover:bg-slate-500/10 dark:border-slate-300/25 dark:text-slate-100`,
+};
 
 const defaultPassenger = (): ConvertPassengerForm => ({
   mode: "new",
@@ -280,7 +291,11 @@ function cleanString(v: unknown): string {
 }
 
 function toNumber(v: unknown): number | null {
-  const n = Number(String(v ?? "").replace(",", "."));
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+  const parsed = parseAmountInput(raw);
+  if (parsed != null && Number.isFinite(parsed)) return parsed;
+  const n = Number(raw.replace(",", "."));
   if (!Number.isFinite(n)) return null;
   return n;
 }
@@ -524,6 +539,84 @@ function toDateMs(value: string): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
+function moneyInputKey(
+  scope: "draft" | "convert",
+  index: number,
+  field: MoneyFieldName,
+): string {
+  return `${scope}-${index}-${field}`;
+}
+
+function formatStoredMoneyInput(
+  value: number | string | null | undefined,
+  currency: string,
+): string {
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? parseMoneyInputSafe(value) ?? 0
+        : 0;
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  return formatMoneyInputSafe(String(numeric), currency, true);
+}
+
+function normalizeAmbiguousDotMoneyInput(raw: string, preferDotDecimal: boolean): string {
+  if (preferDotDecimal) return raw;
+  const cleaned = String(raw || "").replace(/[^\d.,]/g, "");
+  if (!cleaned || cleaned.includes(",")) return raw;
+
+  // When deleting over formatted values (e.g. "12.345" -> "12.34"),
+  // keep dot as thousands separator and avoid converting it to decimals.
+  const dotAsThousands = cleaned.match(/^(\d+)\.(\d{1,2})$/);
+  if (!dotAsThousands) return raw;
+  return `${dotAsThousands[1]}${dotAsThousands[2]}`;
+}
+
+function formatMoneyInputSafe(
+  raw: string,
+  currency: string,
+  preferDotDecimal = false,
+): string {
+  try {
+    const normalized = normalizeAmbiguousDotMoneyInput(raw, preferDotDecimal);
+    return formatMoneyInput(normalized, currency, { preferDotDecimal });
+  } catch {
+    return "";
+  }
+}
+
+function parseMoneyInputSafe(raw: string): number | null {
+  try {
+    const parsed = parseAmountInput(raw);
+    return parsed != null && Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+type ActionIconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  label: string;
+  tone?: "sky" | "amber" | "rose" | "neutral";
+};
+
+function ActionIconButton({
+  label,
+  tone = "sky",
+  className = "",
+  children,
+  ...props
+}: ActionIconButtonProps) {
+  return (
+    <button {...props} className={`${ACTION_TONE_CLASS[tone]} ${className}`}>
+      <span className={ACTION_TRACK}>
+        <span className={ACTION_TEXT}>{label}</span>
+        {children}
+      </span>
+    </button>
+  );
+}
+
 function SectionCard({
   id,
   title,
@@ -596,9 +689,10 @@ export default function QuotesPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
+  const [workspaceView, setWorkspaceView] = useState<QuoteWorkspaceView>("list");
   const [formMode, setFormMode] = useState<FormMode>("create");
   const [form, setForm] = useState<QuoteFormState>(defaultForm());
-  const [listView, setListView] = useState<QuoteListView>("card");
+  const [listView, setListView] = useState<QuoteListView>("grid");
   const [expandedQuoteId, setExpandedQuoteId] = useState<number | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
@@ -647,6 +741,7 @@ export default function QuotesPage() {
 
   const [convertQuote, setConvertQuote] = useState<QuoteItem | null>(null);
   const [convertForm, setConvertForm] = useState<ConvertFormState | null>(null);
+  const [moneyInputs, setMoneyInputs] = useState<Record<string, string>>({});
 
   const canConfigure = useMemo(() => isManagerRole(profile?.role), [profile]);
   const canAssignOwner = useMemo(
@@ -666,6 +761,28 @@ export default function QuotesPage() {
   const convertProfileOptions = useMemo(
     () => clientProfiles.map((profile) => ({ key: profile.key, label: profile.label })),
     [clientProfiles],
+  );
+  const clearMoneyInputsByScope = useCallback((scope: "draft" | "convert") => {
+    setMoneyInputs((prev) => {
+      const next: Record<string, string> = {};
+      for (const [key, value] of Object.entries(prev)) {
+        if (!key.startsWith(`${scope}-`)) {
+          next[key] = value;
+        }
+      }
+      return next;
+    });
+  }, []);
+  const clearMoneyInputsByIndex = useCallback(
+    (scope: "draft" | "convert", index: number) => {
+      setMoneyInputs((prev) => {
+        const next = { ...prev };
+        delete next[moneyInputKey(scope, index, "sale_price")];
+        delete next[moneyInputKey(scope, index, "cost_price")];
+        return next;
+      });
+    },
+    [],
   );
 
   const toggleFormSection = useCallback((section: string) => {
@@ -745,13 +862,7 @@ export default function QuotesPage() {
     return sorted;
   }, [createdFrom, createdTo, ownerFilter, paxFilter, quoteRows, search, serviceFilter, sortBy]);
 
-  const quoteStats = useMemo(() => {
-    const total = quoteRows.length;
-    const visible = filteredQuotes.length;
-    const withPax = filteredQuotes.filter((row) => row.paxCount > 0).length;
-    const withServices = filteredQuotes.filter((row) => row.serviceCount > 0).length;
-    return { total, visible, withPax, withServices };
-  }, [filteredQuotes, quoteRows]);
+  const visibleQuotesCount = filteredQuotes.length;
 
   const hasActiveFilters = useMemo(
     () =>
@@ -1002,10 +1113,12 @@ export default function QuotesPage() {
     };
 
   const startCreate = () => {
+    setWorkspaceView("form");
     setFormMode("create");
     const next = defaultForm();
     next.booking_draft.currency = currencyOptions[0] || "ARS";
     setForm(next);
+    clearMoneyInputsByScope("draft");
     setExpandedQuoteId(null);
     setFormSections({
       lead: true,
@@ -1017,7 +1130,9 @@ export default function QuotesPage() {
   };
 
   const startEdit = (quote: QuoteItem) => {
+    setWorkspaceView("form");
     setFormMode("edit");
+    const paxDrafts = normalizeQuotePaxDrafts(quote.pax_drafts);
     setForm({
       id_quote: quote.id_quote,
       id_user: quote.id_user,
@@ -1025,11 +1140,15 @@ export default function QuotesPage() {
       lead_phone: quote.lead_phone || "",
       lead_email: quote.lead_email || "",
       note: quote.note || "",
-      booking_draft: normalizeQuoteBookingDraft(quote.booking_draft),
-      pax_drafts: normalizeQuotePaxDrafts(quote.pax_drafts),
+      booking_draft: {
+        ...normalizeQuoteBookingDraft(quote.booking_draft),
+        pax_count: paxDrafts.length,
+      },
+      pax_drafts: paxDrafts,
       service_drafts: normalizeQuoteServiceDrafts(quote.service_drafts),
       custom_values: normalizeQuoteCustomValues(quote.custom_values),
     });
+    clearMoneyInputsByScope("draft");
     setExpandedQuoteId(quote.id_quote);
     setFormSections({
       lead: true,
@@ -1051,11 +1170,7 @@ export default function QuotesPage() {
       departure_date: cleanString(form.booking_draft.departure_date),
       return_date: cleanString(form.booking_draft.return_date),
       currency: cleanString(form.booking_draft.currency),
-      pax_count:
-        typeof form.booking_draft.pax_count === "number" &&
-        Number.isFinite(form.booking_draft.pax_count)
-          ? String(form.booking_draft.pax_count)
-          : "",
+      pax_count: String(form.pax_drafts.length),
     };
 
     for (const key of required) {
@@ -1081,12 +1196,17 @@ export default function QuotesPage() {
       return;
     }
 
+    const bookingDraftPayload = normalizeQuoteBookingDraft({
+      ...form.booking_draft,
+      pax_count: form.pax_drafts.length,
+    });
+
     const payload = {
       lead_name: cleanString(form.lead_name),
       lead_phone: cleanString(form.lead_phone),
       lead_email: cleanString(form.lead_email),
       note: cleanString(form.note),
-      booking_draft: normalizeQuoteBookingDraft(form.booking_draft),
+      booking_draft: bookingDraftPayload,
       pax_drafts: normalizeQuotePaxDrafts(form.pax_drafts),
       service_drafts: normalizeQuoteServiceDrafts(form.service_drafts),
       custom_values: normalizeQuoteCustomValues(form.custom_values),
@@ -1141,6 +1261,10 @@ export default function QuotesPage() {
   const addPaxDraft = () => {
     setForm((prev) => ({
       ...prev,
+      booking_draft: {
+        ...prev.booking_draft,
+        pax_count: prev.pax_drafts.length + 1,
+      },
       pax_drafts: [
         ...prev.pax_drafts,
         {
@@ -1184,7 +1308,11 @@ export default function QuotesPage() {
       if (!hasTitular && next.length > 0) {
         next[0] = { ...next[0], is_titular: true };
       }
-      return { ...prev, pax_drafts: next };
+      return {
+        ...prev,
+        booking_draft: { ...prev.booking_draft, pax_count: next.length },
+        pax_drafts: next,
+      };
     });
   };
 
@@ -1196,6 +1324,7 @@ export default function QuotesPage() {
         { ...defaultService(), currency: currencyOptions[0] || "ARS" },
       ],
     }));
+    clearMoneyInputsByScope("draft");
   };
 
   const updateServiceDraft = (index: number, patch: Partial<QuoteServiceDraft>) => {
@@ -1210,6 +1339,7 @@ export default function QuotesPage() {
       ...prev,
       service_drafts: prev.service_drafts.filter((_, i) => i !== index),
     }));
+    clearMoneyInputsByScope("draft");
   };
 
   const openConvert = (quote: QuoteItem) => {
@@ -1249,11 +1379,13 @@ export default function QuotesPage() {
           ? serviceDrafts.map((s) => toConvertServiceFromDraft(s))
           : [],
     });
+    clearMoneyInputsByScope("convert");
   };
 
   const closeConvert = () => {
     setConvertQuote(null);
     setConvertForm(null);
+    clearMoneyInputsByScope("convert");
   };
 
   const updateConvertPassenger = (
@@ -1327,6 +1459,7 @@ export default function QuotesPage() {
           }
         : prev,
     );
+    clearMoneyInputsByScope("convert");
   };
 
   const removeConvertService = (index: number) => {
@@ -1338,6 +1471,7 @@ export default function QuotesPage() {
           }
         : prev,
     );
+    clearMoneyInputsByScope("convert");
   };
 
   const submitConvert = async () => {
@@ -1408,7 +1542,7 @@ export default function QuotesPage() {
         throw new Error(data?.error || "No se pudo convertir");
       }
       toast.success(
-        `Cotización convertida en reserva #${
+        `Cotización convertida en reserva Nº ${
           data?.id_booking ?? ""
         }`,
       );
@@ -1436,66 +1570,60 @@ export default function QuotesPage() {
       <section className="mx-auto max-w-7xl p-6 text-slate-950 dark:text-white">
         <ToastContainer position="top-right" autoClose={2200} />
 
-        <div className="mb-6 space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold text-sky-950 dark:text-sky-50">
-                Cotizaciones
-              </h1>
-              <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
-                Guardá presupuestos flexibles y convertilos en reserva cuando se confirme.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {canConfigure && (
-                <Link href="/quotes/config" className={SUBTLE_BTN}>
-                  Configuración
-                </Link>
-              )}
-              <button type="button" className={BTN} onClick={startCreate}>
-                Nueva cotización
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold text-sky-950 dark:text-sky-50">
+            Cotizaciones
+          </h1>
+          <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
+            Guardá presupuestos flexibles y convertilos en reserva cuando se confirme.
+          </p>
+        </div>
+
+        <div className="space-y-6">
+          <div className="flex items-center justify-between gap-3">
+            <div className="relative flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/55 p-1 text-xs shadow-sm shadow-sky-950/10 dark:border-sky-200/25 dark:bg-sky-950/25">
+              <button
+                type="button"
+                onClick={() => setWorkspaceView("form")}
+                className={`relative flex items-center justify-center gap-1 overflow-hidden rounded-full px-4 py-1.5 text-sm transition-[color,transform,opacity] duration-300 ease-out hover:scale-[0.99] hover:opacity-95 active:scale-[0.97] active:opacity-90 ${
+                  workspaceView === "form"
+                    ? "text-sky-800 dark:text-sky-200"
+                    : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                }`}
+                aria-pressed={workspaceView === "form"}
+              >
+                {workspaceView === "form" && (
+                  <motion.span
+                    layoutId="quotes-workspace-toggle-pill"
+                    className="absolute inset-0 z-0 rounded-full bg-sky-500/15 shadow-sm shadow-sky-900/20"
+                    transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                  />
+                )}
+                <span className="relative z-10">Nueva cotización</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setWorkspaceView("list")}
+                className={`relative flex items-center justify-center gap-1 overflow-hidden rounded-full px-4 py-1.5 text-sm transition-[color,transform,opacity] duration-300 ease-out hover:scale-[0.99] hover:opacity-95 active:scale-[0.97] active:opacity-90 ${
+                  workspaceView === "list"
+                    ? "text-sky-800 dark:text-sky-200"
+                    : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                }`}
+                aria-pressed={workspaceView === "list"}
+              >
+                {workspaceView === "list" && (
+                  <motion.span
+                    layoutId="quotes-workspace-toggle-pill"
+                    className="absolute inset-0 z-0 rounded-full bg-sky-500/15 shadow-sm shadow-sky-900/20"
+                    transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                  />
+                )}
+                <span className="relative z-10">Listado</span>
               </button>
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-4">
-            <div className={STAT_CARD}>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-                Total
-              </p>
-              <p className="mt-1 text-xl font-semibold text-sky-950 dark:text-sky-50">
-                {quoteStats.total}
-              </p>
-            </div>
-            <div className={STAT_CARD}>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-                Visibles
-              </p>
-              <p className="mt-1 text-xl font-semibold text-sky-950 dark:text-sky-50">
-                {quoteStats.visible}
-              </p>
-            </div>
-            <div className={STAT_CARD}>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-                Con Pax
-              </p>
-              <p className="mt-1 text-xl font-semibold text-sky-950 dark:text-sky-50">
-                {quoteStats.withPax}
-              </p>
-            </div>
-            <div className={STAT_CARD}>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-                Con Servicios
-              </p>
-              <p className="mt-1 text-xl font-semibold text-sky-950 dark:text-sky-50">
-                {quoteStats.withServices}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
-          <div className={`${GLASS} space-y-4 p-5`}>
+          <div className={workspaceView === "form" ? "space-y-4" : "hidden"}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-sky-950 dark:text-sky-50">
@@ -1550,6 +1678,7 @@ export default function QuotesPage() {
                     <label className="mb-1 block text-xs opacity-75">Cliente · Nombre</label>
                     <input
                       className={INPUT}
+                      placeholder="Ej: Juan Pérez"
                       value={form.lead_name}
                       onChange={onChangeBase("lead_name")}
                     />
@@ -1560,6 +1689,7 @@ export default function QuotesPage() {
                     <label className="mb-1 block text-xs opacity-75">Cliente · Teléfono</label>
                     <input
                       className={INPUT}
+                      placeholder="Ej: +54 9 11 5555-5555"
                       value={form.lead_phone}
                       onChange={onChangeBase("lead_phone")}
                     />
@@ -1570,6 +1700,7 @@ export default function QuotesPage() {
                     <label className="mb-1 block text-xs opacity-75">Cliente · Email</label>
                     <input
                       className={INPUT}
+                      placeholder="Ej: cliente@email.com"
                       value={form.lead_email}
                       onChange={onChangeBase("lead_email")}
                     />
@@ -1581,6 +1712,7 @@ export default function QuotesPage() {
                 <label className="mb-1 block text-xs opacity-75">Notas</label>
                 <textarea
                   className={`${INPUT} min-h-24`}
+                  placeholder="Notas internas o contexto de la cotización"
                   value={form.note}
                   onChange={onChangeBase("note")}
                 />
@@ -1600,6 +1732,7 @@ export default function QuotesPage() {
                     <label className="mb-1 block text-xs opacity-75">Detalle</label>
                     <textarea
                       className={`${INPUT} min-h-20`}
+                      placeholder="Resumen del viaje, condiciones, ideas o comentarios"
                       value={String(form.booking_draft.details || "")}
                       onChange={onChangeBookingDraft("details")}
                     />
@@ -1611,6 +1744,7 @@ export default function QuotesPage() {
                     <input
                       type="date"
                       className={INPUT}
+                      placeholder="Seleccionar fecha"
                       value={String(form.booking_draft.departure_date || "")}
                       onChange={onChangeBookingDraft("departure_date")}
                     />
@@ -1622,6 +1756,7 @@ export default function QuotesPage() {
                     <input
                       type="date"
                       className={INPUT}
+                      placeholder="Seleccionar fecha"
                       value={String(form.booking_draft.return_date || "")}
                       onChange={onChangeBookingDraft("return_date")}
                     />
@@ -1667,24 +1802,6 @@ export default function QuotesPage() {
                     </select>
                   </div>
                 )}
-                {!hiddenFields.includes("pax_count") && (
-                  <div>
-                    <label className="mb-1 block text-xs opacity-75">
-                      Cantidad de pasajeros (count)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      className={INPUT}
-                      value={
-                        typeof form.booking_draft.pax_count === "number"
-                          ? form.booking_draft.pax_count
-                          : ""
-                      }
-                      onChange={onChangeBookingDraft("pax_count")}
-                    />
-                  </div>
-                )}
               </div>
             </SectionCard>
 
@@ -1701,6 +1818,7 @@ export default function QuotesPage() {
                     const val = form.custom_values[field.key];
                     const commonProps = {
                       className: INPUT,
+                      placeholder: field.label,
                       value:
                         typeof val === "string" || typeof val === "number"
                           ? String(val)
@@ -1835,29 +1953,64 @@ export default function QuotesPage() {
                       className="rounded-2xl border border-sky-300/30 bg-white/55 p-3 dark:border-sky-200/20 dark:bg-sky-950/20"
                     >
                       <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <select
-                          className={SELECT}
-                          value={p.mode === "existing" ? "existing" : "free"}
-                          onChange={(e) =>
-                            updatePaxDraft(idx, {
-                              mode: e.target.value === "existing" ? "existing" : "free",
-                              client_id: e.target.value === "existing" ? p.client_id || null : null,
-                            })
-                          }
-                        >
-                          <option value="free">Pax libre</option>
-                          <option value="existing">Pax existente</option>
-                        </select>
-                        <label className="inline-flex items-center gap-2 text-xs">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(p.is_titular)}
-                            onChange={(e) =>
-                              updatePaxDraft(idx, { is_titular: e.target.checked }, true)
+                        <div className="flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/60 p-1 text-xs dark:border-sky-200/20 dark:bg-sky-950/20">
+                          <button
+                            type="button"
+                            className={`rounded-full px-3 py-1 transition ${
+                              p.mode !== "existing"
+                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                : "text-sky-900/75 dark:text-sky-100"
+                            }`}
+                            onClick={() =>
+                              updatePaxDraft(idx, {
+                                mode: "free",
+                                client_id: null,
+                              })
                             }
-                          />
-                          Titular
-                        </label>
+                          >
+                            Pax libre
+                          </button>
+                          <button
+                            type="button"
+                            className={`rounded-full px-3 py-1 transition ${
+                              p.mode === "existing"
+                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                : "text-sky-900/75 dark:text-sky-100"
+                            }`}
+                            onClick={() =>
+                              updatePaxDraft(idx, {
+                                mode: "existing",
+                                client_id: p.client_id || null,
+                              })
+                            }
+                          >
+                            Pax existente
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/60 p-1 text-xs dark:border-sky-200/20 dark:bg-sky-950/20">
+                          <button
+                            type="button"
+                            className={`rounded-full px-3 py-1 transition ${
+                              p.is_titular
+                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                : "text-sky-900/75 dark:text-sky-100"
+                            }`}
+                            onClick={() => updatePaxDraft(idx, { is_titular: true }, true)}
+                          >
+                            Titular
+                          </button>
+                          <button
+                            type="button"
+                            className={`rounded-full px-3 py-1 transition ${
+                              !p.is_titular
+                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                : "text-sky-900/75 dark:text-sky-100"
+                            }`}
+                            onClick={() => updatePaxDraft(idx, { is_titular: false })}
+                          >
+                            No titular
+                          </button>
+                        </div>
                         <button
                           type="button"
                           className={DANGER_BTN}
@@ -1913,6 +2066,7 @@ export default function QuotesPage() {
                           <input
                             type="date"
                             className={INPUT}
+                            placeholder="Seleccionar fecha"
                             value={p.birth_date || ""}
                             onChange={(e) => updatePaxDraft(idx, { birth_date: e.target.value })}
                           />
@@ -2013,7 +2167,10 @@ export default function QuotesPage() {
                         <select
                           className={SELECT}
                           value={s.currency || ""}
-                          onChange={(e) => updateServiceDraft(idx, { currency: e.target.value })}
+                          onChange={(e) => {
+                            updateServiceDraft(idx, { currency: e.target.value });
+                            clearMoneyInputsByIndex("draft", idx);
+                          }}
                           disabled={loadingCurrencies}
                         >
                           <option value="">Moneda</option>
@@ -2028,26 +2185,92 @@ export default function QuotesPage() {
                             )}
                         </select>
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           className={INPUT}
                           placeholder="Venta"
-                          value={typeof s.sale_price === "number" ? s.sale_price : ""}
-                          onChange={(e) =>
-                            updateServiceDraft(idx, {
-                              sale_price: e.target.value === "" ? null : Number(e.target.value),
-                            })
+                          value={
+                            moneyInputs[moneyInputKey("draft", idx, "sale_price")] ??
+                            formatStoredMoneyInput(
+                              s.sale_price,
+                              s.currency || form.booking_draft.currency || "ARS",
+                            )
                           }
+                          onChange={(e) => {
+                            const currency = s.currency || form.booking_draft.currency || "ARS";
+                            const formatted = formatMoneyInputSafe(
+                              e.target.value,
+                              currency,
+                              shouldPreferDotDecimal(e),
+                            );
+                            const parsed = parseMoneyInputSafe(formatted);
+                            setMoneyInputs((prev) => ({
+                              ...prev,
+                              [moneyInputKey("draft", idx, "sale_price")]: formatted,
+                            }));
+                            updateServiceDraft(idx, {
+                              sale_price:
+                                parsed != null && Number.isFinite(parsed) ? parsed : null,
+                            });
+                          }}
+                          onBlur={(e) => {
+                            const currency = s.currency || form.booking_draft.currency || "ARS";
+                            const parsed = parseMoneyInputSafe(e.target.value);
+                            const numeric =
+                              parsed != null && Number.isFinite(parsed) ? parsed : null;
+                            updateServiceDraft(idx, { sale_price: numeric });
+                            setMoneyInputs((prev) => ({
+                              ...prev,
+                              [moneyInputKey("draft", idx, "sale_price")]:
+                                numeric != null
+                                  ? formatMoneyInputSafe(String(numeric), currency)
+                                  : "",
+                            }));
+                          }}
                         />
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           className={INPUT}
                           placeholder="Costo"
-                          value={typeof s.cost_price === "number" ? s.cost_price : ""}
-                          onChange={(e) =>
-                            updateServiceDraft(idx, {
-                              cost_price: e.target.value === "" ? null : Number(e.target.value),
-                            })
+                          value={
+                            moneyInputs[moneyInputKey("draft", idx, "cost_price")] ??
+                            formatStoredMoneyInput(
+                              s.cost_price,
+                              s.currency || form.booking_draft.currency || "ARS",
+                            )
                           }
+                          onChange={(e) => {
+                            const currency = s.currency || form.booking_draft.currency || "ARS";
+                            const formatted = formatMoneyInputSafe(
+                              e.target.value,
+                              currency,
+                              shouldPreferDotDecimal(e),
+                            );
+                            const parsed = parseMoneyInputSafe(formatted);
+                            setMoneyInputs((prev) => ({
+                              ...prev,
+                              [moneyInputKey("draft", idx, "cost_price")]: formatted,
+                            }));
+                            updateServiceDraft(idx, {
+                              cost_price:
+                                parsed != null && Number.isFinite(parsed) ? parsed : null,
+                            });
+                          }}
+                          onBlur={(e) => {
+                            const currency = s.currency || form.booking_draft.currency || "ARS";
+                            const parsed = parseMoneyInputSafe(e.target.value);
+                            const numeric =
+                              parsed != null && Number.isFinite(parsed) ? parsed : null;
+                            updateServiceDraft(idx, { cost_price: numeric });
+                            setMoneyInputs((prev) => ({
+                              ...prev,
+                              [moneyInputKey("draft", idx, "cost_price")]:
+                                numeric != null
+                                  ? formatMoneyInputSafe(String(numeric), currency)
+                                  : "",
+                            }));
+                          }}
                         />
                         <select
                           className={SELECT}
@@ -2095,6 +2318,7 @@ export default function QuotesPage() {
                         <input
                           type="date"
                           className={INPUT}
+                          placeholder="Seleccionar fecha"
                           value={s.departure_date || ""}
                           onChange={(e) =>
                             updateServiceDraft(idx, { departure_date: e.target.value })
@@ -2103,6 +2327,7 @@ export default function QuotesPage() {
                         <input
                           type="date"
                           className={INPUT}
+                          placeholder="Seleccionar fecha"
                           value={s.return_date || ""}
                           onChange={(e) =>
                             updateServiceDraft(idx, { return_date: e.target.value })
@@ -2139,26 +2364,47 @@ export default function QuotesPage() {
             </div>
           </div>
 
-          <div className={`${GLASS} space-y-4 p-5`}>
+          <div className={workspaceView === "list" ? "space-y-4" : "hidden"}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-base font-semibold text-sky-950 dark:text-sky-50">
                   Listado
                 </h2>
                 <p className="text-xs text-sky-900/75 dark:text-sky-100/70">
-                  Vistas: card, grilla y tabla.
+                  Vistas: grilla, card y tabla.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
+                {canConfigure && (
+                  <Link href="/quotes/config" className={SUBTLE_BTN}>
+                    Configuración
+                  </Link>
+                )}
                 <button
                   type="button"
                   className={SUBTLE_BTN}
                   onClick={() => void loadQuotes()}
                   disabled={loading}
                 >
-                  {loading ? "Cargando..." : "Actualizar"}
+                  <span className="inline-flex items-center gap-2">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.8}
+                      stroke="currentColor"
+                      className={`size-4 ${loading ? "animate-spin" : ""}`}
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M21 2v6h-6M3 22v-6h6M21 8a9 9 0 0 0-15-5.36L3 8M3 16a9 9 0 0 0 15 5.36L21 16"
+                      />
+                    </svg>
+                    {loading ? "Cargando..." : "Actualizar"}
+                  </span>
                 </button>
-                <span className={CHIP}>{quoteStats.visible} visibles</span>
               </div>
             </div>
 
@@ -2171,7 +2417,7 @@ export default function QuotesPage() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
                 <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-sky-700/70 dark:text-sky-100/60">
-                  #{quoteStats.visible}
+                  Nº {visibleQuotesCount}
                 </span>
               </div>
               <button
@@ -2183,21 +2429,112 @@ export default function QuotesPage() {
               </button>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {([
-                { id: "card", label: "Card" },
-                { id: "grid", label: "Grilla" },
-                { id: "table", label: "Tabla" },
-              ] as Array<{ id: QuoteListView; label: string }>).map((mode) => (
-                <button
-                  key={mode.id}
-                  type="button"
-                  className={listView === mode.id ? AMBER_BTN : SUBTLE_BTN}
-                  onClick={() => setListView(mode.id)}
-                >
-                  {mode.label}
-                </button>
-              ))}
+            <div className="relative flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/55 p-1 text-xs shadow-sm shadow-sky-950/10 dark:border-sky-200/25 dark:bg-sky-950/25">
+              <button
+                type="button"
+                onClick={() => setListView("grid")}
+                className={`relative flex items-center justify-center gap-1 overflow-hidden rounded-full px-4 py-1.5 text-sm transition-[color,transform,opacity] duration-300 ease-out hover:scale-[0.99] hover:opacity-95 active:scale-[0.97] active:opacity-90 ${
+                  listView === "grid"
+                    ? "text-sky-800 dark:text-sky-200"
+                    : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                }`}
+                aria-pressed={listView === "grid"}
+              >
+                {listView === "grid" && (
+                  <motion.span
+                    layoutId="quotes-list-view-toggle-pill"
+                    className="absolute inset-0 z-0 rounded-full bg-sky-500/15 shadow-sm shadow-sky-900/20"
+                    transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                  />
+                )}
+                <span className="relative z-10 inline-flex items-center gap-1">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="size-4"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z"
+                    />
+                  </svg>
+                  Grilla
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setListView("card")}
+                className={`relative flex items-center justify-center gap-1 overflow-hidden rounded-full px-4 py-1.5 text-sm transition-[color,transform,opacity] duration-300 ease-out hover:scale-[0.99] hover:opacity-95 active:scale-[0.97] active:opacity-90 ${
+                  listView === "card"
+                    ? "text-sky-800 dark:text-sky-200"
+                    : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                }`}
+                aria-pressed={listView === "card"}
+              >
+                {listView === "card" && (
+                  <motion.span
+                    layoutId="quotes-list-view-toggle-pill"
+                    className="absolute inset-0 z-0 rounded-full bg-sky-500/15 shadow-sm shadow-sky-900/20"
+                    transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                  />
+                )}
+                <span className="relative z-10 inline-flex items-center gap-1">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="size-4"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
+                    />
+                  </svg>
+                  Card
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setListView("table")}
+                className={`relative flex items-center justify-center gap-1 overflow-hidden rounded-full px-4 py-1.5 text-sm transition-[color,transform,opacity] duration-300 ease-out hover:scale-[0.99] hover:opacity-95 active:scale-[0.97] active:opacity-90 ${
+                  listView === "table"
+                    ? "text-sky-800 dark:text-sky-200"
+                    : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                }`}
+                aria-pressed={listView === "table"}
+              >
+                {listView === "table" && (
+                  <motion.span
+                    layoutId="quotes-list-view-toggle-pill"
+                    className="absolute inset-0 z-0 rounded-full bg-sky-500/15 shadow-sm shadow-sky-900/20"
+                    transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                  />
+                )}
+                <span className="relative z-10 inline-flex items-center gap-1">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="size-4"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3.75 5.25h16.5M3.75 9.75h16.5M3.75 14.25h16.5M3.75 18.75h16.5"
+                    />
+                  </svg>
+                  Tabla
+                </span>
+              </button>
             </div>
 
             <AnimatePresence initial={false}>
@@ -2259,6 +2596,7 @@ export default function QuotesPage() {
                       <input
                         type="date"
                         className={INPUT}
+                        placeholder="Seleccionar fecha"
                         value={createdFrom}
                         onChange={(e) => setCreatedFrom(e.target.value)}
                       />
@@ -2269,6 +2607,7 @@ export default function QuotesPage() {
                       <input
                         type="date"
                         className={INPUT}
+                        placeholder="Seleccionar fecha"
                         value={createdTo}
                         onChange={(e) => setCreatedTo(e.target.value)}
                       />
@@ -2318,9 +2657,9 @@ export default function QuotesPage() {
               <div className="overflow-hidden rounded-2xl border border-sky-300/35 bg-white/55 shadow-sm shadow-sky-950/10 dark:border-sky-200/20 dark:bg-sky-950/20">
                 <div className="max-h-[72vh] overflow-auto">
                   <table className="min-w-full text-sm">
-                    <thead className="sticky top-0 bg-sky-100/80 text-sky-900 dark:bg-sky-900/50 dark:text-sky-50">
+                    <thead className="sticky top-0 bg-sky-100/80 text-sky-900 dark:bg-sky-900/45 dark:text-sky-50">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold">#</th>
+                        <th className="px-3 py-2 text-left font-semibold">Nº</th>
                         <th className="px-3 py-2 text-left font-semibold">Cliente</th>
                         <th className="px-3 py-2 text-left font-semibold">Responsable</th>
                         <th className="px-3 py-2 text-left font-semibold">Creación</th>
@@ -2333,6 +2672,7 @@ export default function QuotesPage() {
                       {filteredQuotes.map((row) => {
                         const q = row.quote;
                         const isExpanded = expandedQuoteId === q.id_quote;
+                        const quoteTemplateId = q.public_id ?? q.id_quote;
                         return (
                           <Fragment key={q.id_quote}>
                             <tr
@@ -2362,6 +2702,13 @@ export default function QuotesPage() {
                                   >
                                     Editar
                                   </button>
+                                  <Link
+                                    href={`/quotes/${encodeURIComponent(String(quoteTemplateId))}/template`}
+                                    className="rounded-full border border-emerald-500/45 bg-emerald-300/25 px-3 py-1 text-xs font-medium text-emerald-900 transition hover:bg-emerald-300/35 dark:text-emerald-50"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    Armar PDF
+                                  </Link>
                                   <button
                                     type="button"
                                     className="rounded-full border border-amber-500/45 bg-amber-300/25 px-3 py-1 text-xs font-medium text-amber-900 transition hover:bg-amber-300/35 dark:text-amber-50"
@@ -2425,6 +2772,7 @@ export default function QuotesPage() {
                 {filteredQuotes.map((row, idx) => {
                   const q = row.quote;
                   const isExpanded = expandedQuoteId === q.id_quote;
+                  const quoteTemplateId = q.public_id ?? q.id_quote;
                   return (
                     <motion.article
                       key={q.id_quote}
@@ -2436,7 +2784,7 @@ export default function QuotesPage() {
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <p className="text-xs uppercase tracking-[0.16em] text-sky-800/75 dark:text-sky-100/70">
-                            Cotización #{row.displayId}
+                            Cotización Nº {row.displayId}
                           </p>
                           <h3 className="text-sm font-semibold text-sky-950 dark:text-sky-50">
                             {q.lead_name || "Cliente sin nombre"}
@@ -2457,26 +2805,146 @@ export default function QuotesPage() {
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button type="button" className={SUBTLE_BTN} onClick={() => startEdit(q)}>
-                          Editar
-                        </button>
-                        <button
+                        <ActionIconButton
                           type="button"
-                          className={DETAIL_AMBER_BTN}
+                          tone="sky"
+                          onClick={() => startEdit(q)}
+                          label="Editar"
+                          aria-label="Editar cotización"
+                          title="Editar cotización"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="size-5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.4}
+                            aria-hidden="true"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                            />
+                          </svg>
+                        </ActionIconButton>
+                        <ActionIconButton
+                          type="button"
+                          tone="amber"
                           onClick={() => openConvert(q)}
+                          label="Convertir"
+                          aria-label="Convertir cotización"
+                          title="Convertir cotización"
                         >
-                          Convertir
-                        </button>
-                        <button
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="size-5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.4}
+                            aria-hidden="true"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M8.25 4.5 3.75 9m0 0 4.5 4.5M3.75 9h10.5a4.5 4.5 0 0 1 0 9h-1.5"
+                            />
+                          </svg>
+                        </ActionIconButton>
+                        <ActionIconButton
                           type="button"
-                          className={SUBTLE_BTN}
+                          tone="neutral"
                           onClick={() => toggleExpandedQuote(q.id_quote)}
+                          label={isExpanded ? "Ocultar detalle" : "Ver detalle"}
+                          aria-label={isExpanded ? "Ocultar detalle" : "Ver detalle"}
+                          title={isExpanded ? "Ocultar detalle" : "Ver detalle"}
                         >
-                          {isExpanded ? "Ocultar detalle" : "Ver detalle"}
-                        </button>
-                        <button type="button" className={DANGER_BTN} onClick={() => deleteQuote(q)}>
-                          Eliminar
-                        </button>
+                          {isExpanded ? (
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="size-5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={1.4}
+                              aria-hidden="true"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="m3 3 18 18M10.477 10.476a3 3 0 0 0 4.047 4.048M9.88 5.091A10.477 10.477 0 0 1 12 4.875c4.478 0 8.268 2.943 9.542 7.003a9.659 9.659 0 0 1-1.318 2.473M6.228 6.228A9.649 9.649 0 0 0 2.458 11.878C3.732 15.938 7.522 18.88 12 18.88c1.57 0 3.06-.362 4.386-1.007"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="size-5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={1.4}
+                              aria-hidden="true"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M2.458 12C3.732 7.94 7.523 5 12 5c4.478 0 8.268 2.94 9.542 7-1.274 4.06-5.064 7-9.542 7-4.477 0-8.268-2.94-9.542-7Z"
+                              />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                          )}
+                        </ActionIconButton>
+                        <Link
+                          href={`/quotes/${encodeURIComponent(String(quoteTemplateId))}/template`}
+                          className={ACTION_TONE_CLASS.neutral}
+                          aria-label="Armar PDF de cotización"
+                          title="Armar PDF de cotización"
+                        >
+                          <span className={ACTION_TRACK}>
+                            <span className={ACTION_TEXT}>Armar PDF</span>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="size-5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={1.4}
+                              aria-hidden="true"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M12 16.5v-9m0 9-3-3m3 3 3-3M4.5 18.75A2.25 2.25 0 0 0 6.75 21h10.5a2.25 2.25 0 0 0 2.25-2.25"
+                              />
+                            </svg>
+                          </span>
+                        </Link>
+                        <ActionIconButton
+                          type="button"
+                          tone="rose"
+                          onClick={() => deleteQuote(q)}
+                          label="Eliminar"
+                          aria-label="Eliminar cotización"
+                          title="Eliminar cotización"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="size-5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={1.4}
+                            aria-hidden="true"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                            />
+                          </svg>
+                        </ActionIconButton>
                       </div>
 
                       <AnimatePresence initial={false}>
@@ -2526,7 +2994,8 @@ export default function QuotesPage() {
             <div className="absolute left-1/2 top-1/2 max-h-[92vh] w-[min(96vw,1100px)] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-3xl border border-white/30 bg-slate-900/95 p-5 text-white shadow-2xl">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-lg font-semibold">
-                  Convertir cotización #{convertQuote.agency_quote_id ?? convertQuote.id_quote}
+                  Convertir cotización Nº{" "}
+                  {convertQuote.agency_quote_id ?? convertQuote.id_quote}
                 </h2>
                 <button type="button" className={BTN} onClick={closeConvert}>
                   Cerrar
@@ -2628,6 +3097,7 @@ export default function QuotesPage() {
                     <input
                       type="date"
                       className={INPUT}
+                      placeholder="Seleccionar fecha"
                       value={convertForm.booking.departure_date}
                       onChange={(e) =>
                         setConvertForm((prev) =>
@@ -2646,6 +3116,7 @@ export default function QuotesPage() {
                     <input
                       type="date"
                       className={INPUT}
+                      placeholder="Seleccionar fecha"
                       value={convertForm.booking.return_date}
                       onChange={(e) =>
                         setConvertForm((prev) =>
@@ -2799,6 +3270,7 @@ export default function QuotesPage() {
                         <input
                           type="date"
                           className={INPUT}
+                          placeholder="Seleccionar fecha"
                           value={convertForm.titular.birth_date}
                           onChange={(e) =>
                             updateConvertPassenger("titular", 0, {
@@ -3139,6 +3611,7 @@ export default function QuotesPage() {
                               <input
                                 type="date"
                                 className={INPUT}
+                                placeholder="Seleccionar fecha"
                                 value={p.birth_date}
                                 onChange={(e) =>
                                   updateConvertPassenger("companions", idx, {
@@ -3238,9 +3711,10 @@ export default function QuotesPage() {
                             <select
                               className={SELECT}
                               value={s.currency}
-                              onChange={(e) =>
-                                updateConvertService(idx, { currency: e.target.value })
-                              }
+                              onChange={(e) => {
+                                updateConvertService(idx, { currency: e.target.value });
+                                clearMoneyInputsByIndex("convert", idx);
+                              }}
                               disabled={loadingCurrencies}
                             >
                               <option value="">Moneda</option>
@@ -3255,22 +3729,94 @@ export default function QuotesPage() {
                                 )}
                             </select>
                             <input
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               className={INPUT}
                               placeholder="Venta"
-                              value={s.sale_price}
-                              onChange={(e) =>
-                                updateConvertService(idx, { sale_price: e.target.value })
+                              value={
+                                moneyInputs[moneyInputKey("convert", idx, "sale_price")] ??
+                                formatStoredMoneyInput(s.sale_price, s.currency || "ARS")
                               }
+                              onChange={(e) => {
+                                const currency = s.currency || "ARS";
+                                const formatted = formatMoneyInputSafe(
+                                  e.target.value,
+                                  currency,
+                                  shouldPreferDotDecimal(e),
+                                );
+                                const parsed = parseMoneyInputSafe(formatted);
+                                setMoneyInputs((prev) => ({
+                                  ...prev,
+                                  [moneyInputKey("convert", idx, "sale_price")]: formatted,
+                                }));
+                                updateConvertService(idx, {
+                                  sale_price:
+                                    parsed != null && Number.isFinite(parsed)
+                                      ? String(parsed)
+                                      : "",
+                                });
+                              }}
+                              onBlur={(e) => {
+                                const currency = s.currency || "ARS";
+                                const parsed = parseMoneyInputSafe(e.target.value);
+                                const numeric =
+                                  parsed != null && Number.isFinite(parsed) ? parsed : null;
+                                updateConvertService(idx, {
+                                  sale_price: numeric != null ? String(numeric) : "",
+                                });
+                                setMoneyInputs((prev) => ({
+                                  ...prev,
+                                  [moneyInputKey("convert", idx, "sale_price")]:
+                                    numeric != null
+                                      ? formatMoneyInputSafe(String(numeric), currency)
+                                      : "",
+                                }));
+                              }}
                             />
                             <input
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               className={INPUT}
                               placeholder="Costo"
-                              value={s.cost_price}
-                              onChange={(e) =>
-                                updateConvertService(idx, { cost_price: e.target.value })
+                              value={
+                                moneyInputs[moneyInputKey("convert", idx, "cost_price")] ??
+                                formatStoredMoneyInput(s.cost_price, s.currency || "ARS")
                               }
+                              onChange={(e) => {
+                                const currency = s.currency || "ARS";
+                                const formatted = formatMoneyInputSafe(
+                                  e.target.value,
+                                  currency,
+                                  shouldPreferDotDecimal(e),
+                                );
+                                const parsed = parseMoneyInputSafe(formatted);
+                                setMoneyInputs((prev) => ({
+                                  ...prev,
+                                  [moneyInputKey("convert", idx, "cost_price")]: formatted,
+                                }));
+                                updateConvertService(idx, {
+                                  cost_price:
+                                    parsed != null && Number.isFinite(parsed)
+                                      ? String(parsed)
+                                      : "",
+                                });
+                              }}
+                              onBlur={(e) => {
+                                const currency = s.currency || "ARS";
+                                const parsed = parseMoneyInputSafe(e.target.value);
+                                const numeric =
+                                  parsed != null && Number.isFinite(parsed) ? parsed : null;
+                                updateConvertService(idx, {
+                                  cost_price: numeric != null ? String(numeric) : "",
+                                });
+                                setMoneyInputs((prev) => ({
+                                  ...prev,
+                                  [moneyInputKey("convert", idx, "cost_price")]:
+                                    numeric != null
+                                      ? formatMoneyInputSafe(String(numeric), currency)
+                                      : "",
+                                }));
+                              }}
                             />
                             <select
                               className={SELECT}
@@ -3318,6 +3864,7 @@ export default function QuotesPage() {
                             <input
                               type="date"
                               className={INPUT}
+                              placeholder="Seleccionar fecha"
                               value={s.departure_date}
                               onChange={(e) =>
                                 updateConvertService(idx, {
@@ -3328,6 +3875,7 @@ export default function QuotesPage() {
                             <input
                               type="date"
                               className={INPUT}
+                              placeholder="Seleccionar fecha"
                               value={s.return_date}
                               onChange={(e) =>
                                 updateConvertService(idx, {

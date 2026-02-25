@@ -20,7 +20,7 @@ import type { ContentBlock } from "@/types/templates";
 import { setAt } from "@/components/template-config/sections/_helpers";
 
 // ===== Tipos =====
-export type DocType = "quote" | "confirmation" | "voucher";
+export type DocType = "quote" | "quote_budget" | "confirmation" | "voucher";
 
 type ApiGetResponse<T extends DocType = DocType> = {
   exists: boolean;
@@ -74,6 +74,17 @@ const LOCAL_DEFAULTS: Record<DocType, Config> = {
     paymentOptions: [],
   },
   quote: {
+    styles: {
+      colors: { background: "#FFFFFF", text: "#111111", accent: "#6B7280" },
+      fonts: { heading: "Poppins", body: "Poppins" },
+    },
+    layout: "layoutA",
+    coverImage: { mode: "logo" },
+    contactItems: ["phones", "email", "website", "address"],
+    content: { blocks: [] },
+    paymentOptions: [],
+  },
+  quote_budget: {
     styles: {
       colors: { background: "#FFFFFF", text: "#111111", accent: "#6B7280" },
       fonts: { heading: "Poppins", body: "Poppins" },
@@ -306,6 +317,8 @@ const TemplateConfigContainer: React.FC<Props> = ({ docType }) => {
             docTypeLabel={
               docType === "quote"
                 ? "Cotización"
+                : docType === "quote_budget"
+                  ? "Presupuesto de cotización"
                 : docType === "confirmation"
                   ? "Confirmación manual"
                   : "Confirmación"

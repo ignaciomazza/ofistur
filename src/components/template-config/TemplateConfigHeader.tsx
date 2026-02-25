@@ -77,6 +77,8 @@ const TemplateConfigHeader: React.FC<Props> = ({
             <p className="text-sm text-slate-500 dark:text-slate-300">
               {docType === "quote"
                 ? "Cotización"
+                : docType === "quote_budget"
+                  ? "Presupuesto de cotización"
                 : docType === "confirmation"
                   ? "Confirmación manual"
                   : docType === "voucher"

@@ -15,6 +15,7 @@ import type {
 } from "@/types/templates";
 import { buildInitialOrderedBlocks } from "@/lib/templateConfig";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 type ApiGetResponse = {
   exists: boolean;
@@ -29,8 +30,43 @@ type ApiGetResponse = {
 const EMPTY_CFG: TemplateConfig = {};
 const EMPTY_VALUE: TemplateFormValues = { blocks: [] };
 const CONTACT_STORAGE_KEY = "mupu:templates:contact";
+const QUOTE_DRAFT_STORAGE_VERSION = 1;
+const PANEL_CLASS =
+  "rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur";
+const HEADER_BTN_CLASS =
+  "inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-950 shadow-sm shadow-sky-900/5 transition hover:scale-[0.98] dark:bg-sky-500/20 dark:text-sky-100";
+const INPUT_CLASS =
+  "w-full rounded-2xl border border-white/15 bg-white/15 px-3 py-2 text-sm outline-none transition placeholder:text-slate-500 focus:border-sky-400/60 dark:placeholder:text-slate-400";
+
+type QuoteCreateResponse = {
+  id_quote?: number;
+  agency_quote_id?: number | null;
+  error?: string;
+};
+
+function cleanInput(value: string): string | undefined {
+  const next = value.trim();
+  return next.length > 0 ? next : undefined;
+}
+
+function writeQuoteDraftToStorage(quoteId: number, value: TemplateFormValues): void {
+  if (!Number.isFinite(quoteId) || quoteId <= 0) return;
+  if (typeof window === "undefined") return;
+  try {
+    const storageKey = `ofistur:quotes:pdf-draft:${quoteId}`;
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: QUOTE_DRAFT_STORAGE_VERSION,
+        saved_at: new Date().toISOString(),
+        value,
+      }),
+    );
+  } catch {}
+}
 
 export default function TemplatesPage() {
+  const router = useRouter();
   const { token } = useAuth();
 
   const [docType, setDocType] = useState<DocType>("quote");
@@ -38,6 +74,11 @@ export default function TemplatesPage() {
   const [formValue, setFormValue] = useState<TemplateFormValues>(EMPTY_VALUE);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<string | null>(null);
+  const [creatingQuote, setCreatingQuote] = useState(false);
+  const [quoteCreateError, setQuoteCreateError] = useState<string | null>(null);
+  const [quickLeadName, setQuickLeadName] = useState("");
+  const [quickLeadPhone, setQuickLeadPhone] = useState("");
+  const [quickLeadEmail, setQuickLeadEmail] = useState("");
   const allowContactPersistRef = useRef(false);
 
   const docTypeOptions = useMemo(
@@ -200,9 +241,57 @@ export default function TemplatesPage() {
     } catch {}
   }, [docType, formValue.contact]);
 
+  const createQuoteFromTemplate = useCallback(async () => {
+    if (!token || creatingQuote || docType !== "quote") return;
+    try {
+      setCreatingQuote(true);
+      setQuoteCreateError(null);
+
+      const payload = {
+        lead_name: cleanInput(quickLeadName),
+        lead_phone: cleanInput(quickLeadPhone),
+        lead_email: cleanInput(quickLeadEmail),
+        note: "Creada desde PDF libre (Templates).",
+      };
+
+      const res = await authFetch(
+        "/api/quotes",
+        { method: "POST", body: JSON.stringify(payload) },
+        token,
+      );
+      const data = (await res.json().catch(() => ({}))) as QuoteCreateResponse;
+      if (!res.ok) {
+        throw new Error(data.error || "No se pudo guardar como cotización.");
+      }
+
+      const quoteId = Number(data.id_quote);
+      if (!Number.isFinite(quoteId) || quoteId <= 0) {
+        throw new Error("No se obtuvo el identificador de la cotización creada.");
+      }
+
+      writeQuoteDraftToStorage(quoteId, formValue);
+      router.push(`/quotes/${quoteId}/template`);
+    } catch (err) {
+      setQuoteCreateError(
+        err instanceof Error ? err.message : "No se pudo guardar como cotización.",
+      );
+    } finally {
+      setCreatingQuote(false);
+    }
+  }, [
+    token,
+    creatingQuote,
+    docType,
+    quickLeadName,
+    quickLeadPhone,
+    quickLeadEmail,
+    formValue,
+    router,
+  ]);
+
   return (
     <ProtectedRoute>
-      <section className="mx-auto max-w-6xl p-6 text-slate-950 dark:text-white">
+      <section className="mx-auto p-6 text-slate-950 dark:text-white">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Templates</h1>
@@ -212,7 +301,7 @@ export default function TemplatesPage() {
           </div>
           {(role == "gerente" || role == "desarrollador") && (
             <Link
-              className="inline-flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 shadow-sm shadow-amber-900/10 transition-transform hover:scale-95 active:scale-90 dark:text-amber-300"
+              className={HEADER_BTN_CLASS}
               href={`/template-config/${docType}`}
             >
               <svg
@@ -234,15 +323,18 @@ export default function TemplatesPage() {
                   d="M15 12a3 3 0 11-6 0 3 3 0 016 0Z"
                 />
               </svg>
-              Configuracion
+              Configurar template
             </Link>
           )}
         </div>
 
         {/* Selector DocType */}
-        <div className="mb-6 rounded-3xl border border-white/10 bg-white/10 p-3 shadow-md shadow-sky-950/10 backdrop-blur">
-          <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
-            Tipo de documento
+        <div className={PANEL_CLASS}>
+          <div className="mb-4">
+            <h2 className="text-base font-semibold">Tipo de documento</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-300">
+              Seleccioná el tipo de PDF y trabajá su versión editable.
+            </p>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {docTypeOptions.map((opt) => {
@@ -282,6 +374,60 @@ export default function TemplatesPage() {
           </div>
         </div>
 
+        {docType === "quote" && (
+          <div className={`${PANEL_CLASS} mt-6`}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold">Guardar como cotización</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-300">
+                  Convertí este PDF libre en cotización y seguí el flujo a reserva.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={createQuoteFromTemplate}
+                disabled={creatingQuote || loading}
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50/90 px-5 py-2 text-sm font-medium text-emerald-900 shadow-sm shadow-emerald-900/10 transition hover:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-100/70 dark:bg-emerald-500/20 dark:text-emerald-100"
+              >
+                {creatingQuote ? "Guardando..." : "Guardar y abrir cotización"}
+              </button>
+            </div>
+
+            <div className="grid gap-2 md:grid-cols-3">
+              <input
+                type="text"
+                value={quickLeadName}
+                onChange={(e) => setQuickLeadName(e.target.value)}
+                placeholder="Cliente (opcional)"
+                className={INPUT_CLASS}
+              />
+              <input
+                type="text"
+                value={quickLeadPhone}
+                onChange={(e) => setQuickLeadPhone(e.target.value)}
+                placeholder="Teléfono (opcional)"
+                className={INPUT_CLASS}
+              />
+              <input
+                type="email"
+                value={quickLeadEmail}
+                onChange={(e) => setQuickLeadEmail(e.target.value)}
+                placeholder="Email (opcional)"
+                className={INPUT_CLASS}
+              />
+            </div>
+
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
+              Tip: podés guardar sin completar datos y terminarlos después en Cotizaciones.
+            </p>
+            {quoteCreateError && (
+              <p className="mt-2 text-sm text-rose-600 dark:text-rose-300">
+                {quoteCreateError}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Layout principal */}
         {loading ? (
           <div className="flex min-h-[60vh] items-center justify-center">
@@ -289,20 +435,35 @@ export default function TemplatesPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-6">
-            {/* Config del doc (portada/contacto/pago…) */}
-            <TemplateConfigForm
-              cfg={cfg}
-              value={formValue}
-              onChange={setFormValue}
-            />
+            <div>
+              <div className="mb-4 px-1">
+                <h2 className="text-base font-semibold">Personalización</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-300">
+                  Elegí portada, contacto y forma de pago para el documento.
+                </p>
+              </div>
+              <TemplateConfigForm
+                cfg={cfg}
+                value={formValue}
+                onChange={setFormValue}
+              />
+            </div>
 
-            {/* Editor en vivo (preview editable con presets + PDF adentro) */}
-            <TemplateEditor
-              cfg={cfg}
-              value={formValue}
-              onChange={setFormValue}
-              docType={docType}
-            />
+            <div>
+              <div className="mb-4 px-1">
+                <h2 className="text-base font-semibold">Vista previa editable</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-300">
+                  Editá bloques y ajustá el contenido final antes de descargar
+                  el PDF.
+                </p>
+              </div>
+              <TemplateEditor
+                cfg={cfg}
+                value={formValue}
+                onChange={setFormValue}
+                docType={docType}
+              />
+            </div>
           </div>
         )}
       </section>

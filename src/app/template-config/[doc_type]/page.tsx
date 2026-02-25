@@ -9,7 +9,7 @@ import TemplateConfigContainer from "@/components/template-config/TemplateConfig
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
-type DocType = "quote" | "confirmation" | "voucher";
+type DocType = "quote" | "quote_budget" | "confirmation" | "voucher";
 
 export default function Page() {
   const params = useParams<{ doc_type?: string }>();
@@ -17,7 +17,11 @@ export default function Page() {
     .trim()
     .toLowerCase();
 
-  const isValid = raw === "quote" || raw === "confirmation" || raw === "voucher";
+  const isValid =
+    raw === "quote" ||
+    raw === "quote_budget" ||
+    raw === "confirmation" ||
+    raw === "voucher";
   const docType = (isValid ? raw : "quote") as DocType;
 
   if (!isValid) {
@@ -38,6 +42,18 @@ export default function Page() {
               <div className="text-lg font-medium">Cotización</div>
               <div className="text-sm opacity-70">
                 Configurar estilos y contenido de la cotización.
+              </div>
+            </Link>
+
+            <Link
+              href="/template-config/quote_budget"
+              className="rounded-2xl border border-white/10 bg-white/10 p-4 shadow-md shadow-sky-950/10 backdrop-blur transition hover:scale-[0.99]"
+            >
+              <div className="text-lg font-medium">
+                Presupuesto de cotización
+              </div>
+              <div className="text-sm opacity-70">
+                Configurar estilos base para PDF de cotización.
               </div>
             </Link>
 

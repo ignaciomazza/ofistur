@@ -19,11 +19,14 @@ function normalizeRole(r?: string) {
     .trim()
     .toLowerCase();
   if (!normalized) return "";
-  if (["admin", "administrador", "administrativa"].includes(normalized)) {
+  if (normalized === "admin" || normalized.startsWith("administr")) {
     return "administrativo";
   }
+  if (normalized.startsWith("gerent")) return "gerente";
   if (["dev", "developer"].includes(normalized)) return "desarrollador";
+  if (normalized.startsWith("desarrollador")) return "desarrollador";
   if (normalized === "leader") return "lider";
+  if (normalized.startsWith("lider")) return "lider";
   return normalized;
 }
 

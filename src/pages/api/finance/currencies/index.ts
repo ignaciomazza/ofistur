@@ -30,7 +30,15 @@ export default async function handler(
 
   if (req.method === "GET") {
     try {
-      if (!canRead) return res.status(403).json({ error: "Sin permisos" });
+      const canReadForServiceUsers = [
+        "vendedor",
+        "lider",
+        "equipo",
+        "marketing",
+      ].includes(auth.role);
+      if (!canRead && !canReadForServiceUsers) {
+        return res.status(403).json({ error: "Sin permisos" });
+      }
 
       const items = await prisma.financeCurrency.findMany({
         where: { id_agency: auth.id_agency },

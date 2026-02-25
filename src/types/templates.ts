@@ -3,7 +3,7 @@
 // Tipos base compartidos de Templates
 // ---------------------------------------------
 
-export type DocType = "quote" | "confirmation" | "voucher";
+export type DocType = "quote" | "confirmation" | "voucher" | "quote_budget";
 
 // ========= Agency / User (para preview/runtime) =========
 export type AgencySocials = Partial<{

@@ -339,6 +339,9 @@ export default function SideBar({
         title: "Cotizaciones",
         items: [
           { href: "/quotes", label: "Cotizaciones" },
+          hasAccess("/templates")
+            ? { href: "/templates", label: "PDFs" }
+            : null,
           hasAccess("/quotes/config")
             ? { href: "/quotes/config", label: "Configuración" }
             : null,

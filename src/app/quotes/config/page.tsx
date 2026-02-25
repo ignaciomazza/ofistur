@@ -259,6 +259,29 @@ export default function QuotesConfigPage() {
           </div>
         </div>
 
+        <div className={`${GLASS} mb-5 p-4`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
+                PDF de cotización
+              </p>
+              <p className="mt-1 text-base font-semibold text-sky-950 dark:text-sky-50">
+                Editor de presupuesto PDF
+              </p>
+              <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
+                Configurá estilos, portada, bloques y opciones para
+                <code className="ml-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-xs">
+                  quote_budget
+                </code>
+                .
+              </p>
+            </div>
+            <Link href="/template-config/quote_budget" className={BTN}>
+              Editar PDF
+            </Link>
+          </div>
+        </div>
+
         <div className="mb-5 grid gap-3 sm:grid-cols-3">
           <div className={`${GLASS} p-3`}>
             <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">

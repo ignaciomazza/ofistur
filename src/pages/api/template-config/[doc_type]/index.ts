@@ -458,6 +458,34 @@ const CFG_DEFAULTS: Record<string, Prisma.InputJsonObject> = {
     payment: { selectedIndex: null },
     content: { blocks: [] },
   },
+  quote_budget: {
+    layout: "layoutA",
+    styles: {
+      colors: { background: "#ffffff", text: "#111111", accent: "#6B7280" },
+      fonts: { heading: "Poppins", body: "Poppins" },
+      ui: {
+        radius: "xl",
+        contentWidth: "normal",
+        density: "comfortable",
+        dividers: true,
+      },
+      note: "",
+    },
+    coverImage: { mode: "logo", url: "", saved: [] },
+    contactItems: [
+      "website",
+      "address",
+      "phones",
+      "email",
+      "instagram",
+      "facebook",
+      "twitter",
+      "tiktok",
+    ],
+    paymentOptions: [],
+    payment: { selectedIndex: null },
+    content: { blocks: [] },
+  },
   voucher: {
     layout: "layoutA",
     styles: {

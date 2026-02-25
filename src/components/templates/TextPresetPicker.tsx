@@ -9,7 +9,7 @@ import { authFetch } from "@/utils/authFetch";
 /* =========================
  * Tipos
  * ======================= */
-export type DocType = "quote" | "confirmation" | "voucher";
+export type DocType = "quote" | "confirmation" | "voucher" | "quote_budget";
 
 export type TextPreset = {
   id_preset: number;
@@ -332,6 +332,8 @@ export default function TextPresetPicker({
           Presets (
           {docType === "quote"
             ? "Cotización"
+            : docType === "quote_budget"
+              ? "Presupuesto cotización"
             : docType === "voucher"
               ? "Confirmación"
               : "Confirmación manual"}
