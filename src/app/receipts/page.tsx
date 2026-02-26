@@ -148,6 +148,7 @@ type ReceiptRow = {
 
   serviceIds?: number[] | null;
   clientIds?: number[] | null;
+  clientLabels?: string[] | null;
   booking?: {
     id_booking: number;
     agency_booking_id?: number | null;
@@ -433,9 +434,23 @@ export default function ReceiptsPage() {
       const ownerFull = r.booking?.user
         ? `${r.booking.user.first_name || ""} ${r.booking.user.last_name || ""}`.trim()
         : "";
+      const paxFromLabels = Array.isArray(r.clientLabels)
+        ? r.clientLabels
+            .map((label) => String(label || "").trim())
+            .filter(Boolean)
+            .join(", ")
+        : "";
+      const paxFromIds =
+        !paxFromLabels && Array.isArray(r.clientIds) && r.clientIds.length > 0
+          ? r.clientIds
+              .filter((id): id is number => typeof id === "number" && id > 0)
+              .map((id) => `N°${id}`)
+              .join(", ")
+          : "";
       const titularFull = r.booking?.titular
         ? `${r.booking.titular.first_name || ""} ${r.booking.titular.last_name || ""}`.trim()
         : "";
+      const paxFull = paxFromLabels || paxFromIds || titularFull;
 
       const hasCounter = r.counter_amount != null && r.counter_currency;
       const counterAmount = hasCounter
@@ -486,7 +501,7 @@ export default function ReceiptsPage() {
         _displayAmount: displayAmount,
         _displayCurrency: (displayCurrency || "ARS").toUpperCase(),
         _ownerFull: ownerFull || "—",
-        _titularFull: titularFull || "—",
+        _titularFull: paxFull || "—",
         _convLabel: convLabel,
         _feeLabel: feeLabel,
         _clientTotalLabel: clientTotalLabel,
@@ -788,7 +803,7 @@ export default function ReceiptsPage() {
         "Fecha",
         "N° Recibo",
         "Reserva",
-        "Titular",
+        "Pax",
         "Vendedor",
         "Método",
         "Cuenta",
@@ -2181,7 +2196,7 @@ export default function ReceiptsPage() {
                         </span>
 
                         <span className={CHIP}>
-                          <b>Titular:</b> {r._titularFull}
+                          <b>Pax:</b> {r._titularFull}
                         </span>
 
                         {(r.payment_method || r.currency) && (

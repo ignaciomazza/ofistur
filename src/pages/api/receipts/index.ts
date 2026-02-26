@@ -1102,6 +1102,45 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       },
     });
 
+    const uniqueClientIds = Array.from(
+      new Set(
+        items.flatMap((r) =>
+          Array.isArray(r.clientIds)
+            ? r.clientIds.filter(
+                (id): id is number => Number.isFinite(id) && id > 0,
+              )
+            : [],
+        ),
+      ),
+    );
+
+    const receiptClients = uniqueClientIds.length
+      ? await prisma.client.findMany({
+          where: {
+            id_agency: authAgencyId,
+            id_client: { in: uniqueClientIds },
+          },
+          select: {
+            id_client: true,
+            agency_client_id: true,
+            first_name: true,
+            last_name: true,
+          },
+        })
+      : [];
+
+    const receiptClientById = new Map(
+      receiptClients.map((c) => [c.id_client, c]),
+    );
+
+    const formatClientLabel = (clientId: number): string => {
+      const found = receiptClientById.get(clientId);
+      if (!found) return `N°${clientId}`;
+      const fullName = `${found.first_name ?? ""} ${found.last_name ?? ""}`.trim();
+      const displayId = found.agency_client_id ?? found.id_client ?? clientId;
+      return fullName ? `${fullName} · N°${displayId}` : `N°${displayId}`;
+    };
+
     const normalized = items.map((r) => {
       const public_id =
         r.agency_receipt_id != null
@@ -1119,8 +1158,14 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
               i: r.booking.agency_booking_id,
             })
           : null;
+      const clientLabels = Array.isArray(r.clientIds)
+        ? r.clientIds
+            .filter((id): id is number => Number.isFinite(id) && id > 0)
+            .map((id) => formatClientLabel(id))
+        : [];
       return {
         ...r,
+        clientLabels,
         public_id,
         booking: r.booking
           ? { ...r.booking, public_id: bookingPublicId }
