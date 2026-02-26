@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Spinner from "@/components/Spinner";
+import ClientPicker from "@/components/clients/ClientPicker";
 import DestinationPicker, {
   type DestinationOption,
 } from "@/components/DestinationPicker";
@@ -87,19 +88,6 @@ type QuoteConfigDTO = {
   custom_fields?: unknown;
 };
 
-type PassengerOption = {
-  id_client: number;
-  first_name: string;
-  last_name: string;
-  phone?: string;
-  email?: string | null;
-};
-
-type OperatorOption = {
-  id_operator: number;
-  name: string;
-};
-
 type AppUserOption = {
   id_user: number;
   first_name: string | null;
@@ -111,6 +99,7 @@ type AppUserOption = {
 type QuoteFormState = {
   id_quote: number | null;
   id_user: number | null;
+  creation_date: string;
   lead_name: string;
   lead_phone: string;
   lead_email: string;
@@ -201,6 +190,8 @@ const SUBTLE_BTN =
   "rounded-full border border-sky-500/35 bg-white/55 px-4 py-2 text-sm text-sky-900 shadow-sm shadow-sky-950/10 transition-[opacity,transform,background-color] duration-200 hover:scale-[0.99] hover:opacity-95 hover:bg-sky-100/65 active:scale-[0.97] active:opacity-90 disabled:opacity-50 dark:border-sky-300/35 dark:bg-sky-950/30 dark:text-sky-100";
 const DANGER_BTN =
   "rounded-full border border-rose-500/55 bg-rose-200/20 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm shadow-rose-950/20 transition-[opacity,transform,background-color] duration-200 hover:scale-[0.99] hover:opacity-95 hover:bg-rose-200/30 active:scale-[0.97] active:opacity-90 disabled:opacity-50 dark:border-rose-300/55 dark:bg-rose-300/20 dark:text-rose-200";
+const DANGER_ICON_BTN =
+  "inline-flex size-9 items-center justify-center rounded-full border border-rose-500/55 bg-rose-200/20 text-rose-700 shadow-sm shadow-rose-950/20 transition-[opacity,transform,background-color] duration-200 hover:scale-[0.99] hover:opacity-95 hover:bg-rose-200/30 active:scale-[0.97] active:opacity-90 disabled:opacity-50 dark:border-rose-300/55 dark:bg-rose-300/20 dark:text-rose-200";
 const INPUT =
   "w-full rounded-2xl border border-sky-300/45 bg-white/75 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:text-slate-500/80 focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/35 dark:bg-sky-950/20 dark:text-sky-50 dark:placeholder:text-sky-100/60";
 const SELECT =
@@ -213,12 +204,13 @@ const ACTION_TEXT =
   "min-w-0 -translate-x-2 text-left whitespace-nowrap text-sm opacity-0 transition-all duration-[520ms] ease-[cubic-bezier(0.2,0.85,0.25,1)] group-hover/btn:translate-x-0 group-hover/btn:opacity-100 group-focus-visible/btn:translate-x-0 group-focus-visible/btn:opacity-100";
 const ACTION_BTN_BASE =
   "group/btn rounded-full px-3 py-2 shadow-sm backdrop-blur-sm transition-[transform,background-color,border-color,box-shadow,opacity] duration-[500ms] ease-[cubic-bezier(0.2,0.85,0.25,1)] hover:scale-[0.992] hover:opacity-95 active:scale-[0.98] active:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
-const ACTION_TONE_CLASS: Record<"sky" | "amber" | "rose" | "neutral", string> = {
-  sky: `${ACTION_BTN_BASE} border border-sky-500/35 bg-sky-500/5 text-sky-900 shadow-sky-950/15 hover:bg-sky-500/10 dark:text-sky-100`,
-  amber: `${ACTION_BTN_BASE} border border-amber-500/40 bg-amber-500/5 text-amber-900 shadow-amber-950/15 hover:bg-amber-500/15 dark:text-amber-100`,
-  rose: `${ACTION_BTN_BASE} border border-rose-500/40 bg-rose-500/5 text-rose-900 shadow-rose-950/15 hover:bg-rose-500/15 dark:text-rose-100`,
-  neutral: `${ACTION_BTN_BASE} border border-slate-500/35 bg-slate-500/5 text-slate-800 shadow-slate-950/10 hover:bg-slate-500/10 dark:border-slate-300/25 dark:text-slate-100`,
-};
+const ACTION_TONE_CLASS: Record<"sky" | "amber" | "rose" | "neutral", string> =
+  {
+    sky: `${ACTION_BTN_BASE} border border-sky-500/35 bg-sky-500/5 text-sky-900 shadow-sky-950/15 hover:bg-sky-500/10 dark:text-sky-100`,
+    amber: `${ACTION_BTN_BASE} border border-amber-500/40 bg-amber-500/5 text-amber-900 shadow-amber-950/15 hover:bg-amber-500/15 dark:text-amber-100`,
+    rose: `${ACTION_BTN_BASE} border border-rose-500/40 bg-rose-500/5 text-rose-900 shadow-rose-950/15 hover:bg-rose-500/15 dark:text-rose-100`,
+    neutral: `${ACTION_BTN_BASE} border border-slate-500/35 bg-slate-500/5 text-slate-800 shadow-slate-950/10 hover:bg-slate-500/10 dark:border-slate-300/25 dark:text-slate-100`,
+  };
 
 const defaultPassenger = (): ConvertPassengerForm => ({
   mode: "new",
@@ -272,6 +264,7 @@ const defaultConvertService = (): ConvertServiceForm => ({
 const defaultForm = (): QuoteFormState => ({
   id_quote: null,
   id_user: null,
+  creation_date: "",
   lead_name: "",
   lead_phone: "",
   lead_email: "",
@@ -432,11 +425,13 @@ function normalizeQuoteItem(input: unknown): QuoteItem | null {
         ? {
             id_user: Number((rec.user as Record<string, unknown>).id_user),
             first_name:
-              typeof (rec.user as Record<string, unknown>).first_name === "string"
+              typeof (rec.user as Record<string, unknown>).first_name ===
+              "string"
                 ? ((rec.user as Record<string, unknown>).first_name as string)
                 : null,
             last_name:
-              typeof (rec.user as Record<string, unknown>).last_name === "string"
+              typeof (rec.user as Record<string, unknown>).last_name ===
+              "string"
                 ? ((rec.user as Record<string, unknown>).last_name as string)
                 : null,
             role:
@@ -464,7 +459,56 @@ function isLeaderRole(role?: string | null): boolean {
   return cleanString(role).toLowerCase() === "lider";
 }
 
-function isCustomValueMissing(field: QuoteCustomField, value: unknown): boolean {
+function canOverrideQuoteMetaByRole(role?: string | null): boolean {
+  const normalized = cleanString(role).toLowerCase();
+  return [
+    "gerente",
+    "administrativo",
+    "admin",
+    "administrador",
+    "desarrollador",
+    "developer",
+    "dev",
+  ].includes(normalized);
+}
+
+function toDateInputValue(value: string | null | undefined): string {
+  const raw = cleanString(value);
+  if (!raw) return "";
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(
+    parsed.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+function todayDateInputValue(): string {
+  return toDateInputValue(new Date().toISOString());
+}
+
+function resolveLeadFromPaxDrafts(paxDrafts: QuotePaxDraft[]): {
+  leadName: string;
+  leadPhone: string;
+  leadEmail: string;
+} {
+  const primary = paxDrafts.find((pax) => pax.is_titular) ?? paxDrafts[0];
+  if (!primary) {
+    return { leadName: "", leadPhone: "", leadEmail: "" };
+  }
+  const firstName = cleanString(primary.first_name);
+  const lastName = cleanString(primary.last_name);
+  const leadName = `${firstName} ${lastName}`.trim();
+  const leadPhone = cleanString(primary.phone);
+  const leadEmail = cleanString(primary.email);
+  return { leadName, leadPhone, leadEmail };
+}
+
+function isCustomValueMissing(
+  field: QuoteCustomField,
+  value: unknown,
+): boolean {
   if (!field.required) return false;
   if (field.type === "boolean") return typeof value !== "boolean";
   if (field.type === "number") {
@@ -476,10 +520,12 @@ function isCustomValueMissing(field: QuoteCustomField, value: unknown): boolean 
 }
 
 function toPassengerFromDraft(draft: QuotePaxDraft): ConvertPassengerForm {
-  const mode = draft.mode === "existing" && draft.client_id ? "existing" : "new";
+  const mode =
+    draft.mode === "existing" && draft.client_id ? "existing" : "new";
   return {
     mode,
-    client_id: mode === "existing" ? Number(draft.client_id || 0) || null : null,
+    client_id:
+      mode === "existing" ? Number(draft.client_id || 0) || null : null,
     profile_key: DEFAULT_CLIENT_PROFILE_KEY,
     first_name: draft.first_name || "",
     last_name: draft.last_name || "",
@@ -499,7 +545,9 @@ function toPassengerFromDraft(draft: QuotePaxDraft): ConvertPassengerForm {
   };
 }
 
-function toConvertServiceFromDraft(draft: QuoteServiceDraft): ConvertServiceForm {
+function toConvertServiceFromDraft(
+  draft: QuoteServiceDraft,
+): ConvertServiceForm {
   return {
     type: draft.type || "",
     description: draft.description || "",
@@ -516,7 +564,8 @@ function toConvertServiceFromDraft(draft: QuoteServiceDraft): ConvertServiceForm
     destination: draft.destination || "",
     reference: draft.reference || "",
     operator_id:
-      typeof draft.operator_id === "number" && Number.isFinite(draft.operator_id)
+      typeof draft.operator_id === "number" &&
+      Number.isFinite(draft.operator_id)
         ? Math.trunc(draft.operator_id)
         : null,
     departure_date: draft.departure_date || "",
@@ -554,10 +603,7 @@ function endOfDayMs(dateValue: string): number | null {
   return d.getTime();
 }
 
-function matchesPresenceFilter(
-  filter: PresenceFilter,
-  count: number,
-): boolean {
+function matchesPresenceFilter(filter: PresenceFilter, count: number): boolean {
   if (filter === "with") return count > 0;
   if (filter === "without") return count === 0;
   return true;
@@ -584,13 +630,16 @@ function formatStoredMoneyInput(
     typeof value === "number"
       ? value
       : typeof value === "string"
-        ? parseMoneyInputSafe(value) ?? 0
+        ? (parseMoneyInputSafe(value) ?? 0)
         : 0;
   if (!Number.isFinite(numeric) || numeric <= 0) return "";
   return formatMoneyInputSafe(String(numeric), currency, true);
 }
 
-function normalizeAmbiguousDotMoneyInput(raw: string, preferDotDecimal: boolean): string {
+function normalizeAmbiguousDotMoneyInput(
+  raw: string,
+  preferDotDecimal: boolean,
+): string {
   if (preferDotDecimal) return raw;
   const cleaned = String(raw || "").replace(/[^\d.,]/g, "");
   if (!cleaned || cleaned.includes(",")) return raw;
@@ -646,6 +695,26 @@ function ActionIconButton({
   );
 }
 
+function TrashIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+      />
+    </svg>
+  );
+}
+
 function SectionCard({
   id,
   title,
@@ -671,9 +740,13 @@ function SectionCard({
           className="flex-1 text-left transition hover:opacity-90"
           onClick={() => onToggle(id)}
         >
-          <h3 className="text-sm font-semibold text-sky-950 dark:text-sky-100">{title}</h3>
+          <h3 className="text-sm font-semibold text-sky-950 dark:text-sky-100">
+            {title}
+          </h3>
           {subtitle && (
-            <p className="text-xs text-sky-900/75 dark:text-sky-100/70">{subtitle}</p>
+            <p className="text-xs text-sky-900/75 dark:text-sky-100/70">
+              {subtitle}
+            </p>
           )}
         </button>
         <div className="flex items-center gap-2">
@@ -719,7 +792,8 @@ export default function QuotesPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
-  const [workspaceView, setWorkspaceView] = useState<QuoteWorkspaceView>("list");
+  const [workspaceView, setWorkspaceView] =
+    useState<QuoteWorkspaceView>("list");
   const [formMode, setFormMode] = useState<FormMode>("create");
   const [form, setForm] = useState<QuoteFormState>(defaultForm());
   const [listView, setListView] = useState<QuoteListView>("grid");
@@ -740,12 +814,12 @@ export default function QuotesPage() {
     | "quote_asc"
   >("updated_desc");
   const [formSections, setFormSections] = useState<Record<string, boolean>>({
-    lead: true,
     booking: true,
     custom: true,
     pax: true,
     services: true,
   });
+  const [showMetaOverrides, setShowMetaOverrides] = useState(false);
 
   const [requiredFields, setRequiredFields] = useState<string[]>([]);
   const [hiddenFields, setHiddenFields] = useState<string[]>([]);
@@ -760,8 +834,6 @@ export default function QuotesPage() {
     },
   ]);
 
-  const [passengers, setPassengers] = useState<PassengerOption[]>([]);
-  const [operators, setOperators] = useState<OperatorOption[]>([]);
   const [users, setUsers] = useState<AppUserOption[]>([]);
   const [financeCurrencies, setFinanceCurrencies] = useState<FinanceCurrency[]>(
     [],
@@ -775,6 +847,10 @@ export default function QuotesPage() {
   const [moneyInputs, setMoneyInputs] = useState<Record<string, string>>({});
 
   const canConfigure = useMemo(() => isManagerRole(profile?.role), [profile]);
+  const canOverrideQuoteMeta = useMemo(
+    () => canOverrideQuoteMetaByRole(profile?.role),
+    [profile],
+  );
   const canAssignOwner = useMemo(
     () => isManagerRole(profile?.role) || isLeaderRole(profile?.role),
     [profile],
@@ -790,7 +866,11 @@ export default function QuotesPage() {
     return unique.length > 0 ? unique : ["ARS", "USD"];
   }, [financeCurrencies]);
   const convertProfileOptions = useMemo(
-    () => clientProfiles.map((profile) => ({ key: profile.key, label: profile.label })),
+    () =>
+      clientProfiles.map((profile) => ({
+        key: profile.key,
+        label: profile.label,
+      })),
     [clientProfiles],
   );
   const clearMoneyInputsByScope = useCallback((scope: "draft" | "convert") => {
@@ -825,7 +905,9 @@ export default function QuotesPage() {
       quotes.map((q) => {
         const bookingDraft = normalizeQuoteBookingDraft(q.booking_draft);
         const paxCount = normalizeQuotePaxDrafts(q.pax_drafts).length;
-        const serviceCount = normalizeQuoteServiceDrafts(q.service_drafts).length;
+        const serviceCount = normalizeQuoteServiceDrafts(
+          q.service_drafts,
+        ).length;
         const displayId = q.agency_quote_id ?? q.id_quote;
         const ownerName = formatUserName(
           q.user
@@ -877,7 +959,8 @@ export default function QuotesPage() {
       if (!matchesPresenceFilter(serviceFilter, row.serviceCount)) return false;
       if (fromMs != null && row.createdAtMs < fromMs) return false;
       if (toMs != null && row.createdAtMs > toMs) return false;
-      if (normalizedSearch && !row.localSearchBlob.includes(normalizedSearch)) return false;
+      if (normalizedSearch && !row.localSearchBlob.includes(normalizedSearch))
+        return false;
       return true;
     });
 
@@ -891,7 +974,16 @@ export default function QuotesPage() {
     });
 
     return sorted;
-  }, [createdFrom, createdTo, ownerFilter, paxFilter, quoteRows, search, serviceFilter, sortBy]);
+  }, [
+    createdFrom,
+    createdTo,
+    ownerFilter,
+    paxFilter,
+    quoteRows,
+    search,
+    serviceFilter,
+    sortBy,
+  ]);
 
   const visibleQuotesCount = filteredQuotes.length;
 
@@ -903,7 +995,14 @@ export default function QuotesPage() {
       createdTo !== "" ||
       paxFilter !== "all" ||
       serviceFilter !== "all",
-    [createdFrom, createdTo, ownerFilter, paxFilter, serviceFilter, statusScope],
+    [
+      createdFrom,
+      createdTo,
+      ownerFilter,
+      paxFilter,
+      serviceFilter,
+      statusScope,
+    ],
   );
 
   const clearFilters = useCallback(() => {
@@ -927,19 +1026,28 @@ export default function QuotesPage() {
       const qs = new URLSearchParams({ take: "50" });
       qs.set("status_scope", statusScope);
       if (search.trim()) qs.set("q", search.trim());
-      const res = await authFetch(`/api/quotes?${qs.toString()}`, { cache: "no-store" }, token);
-      const payload = (await res.json().catch(() => null)) as
-        | { items?: unknown[]; error?: string }
-        | null;
+      const res = await authFetch(
+        `/api/quotes?${qs.toString()}`,
+        { cache: "no-store" },
+        token,
+      );
+      const payload = (await res.json().catch(() => null)) as {
+        items?: unknown[];
+        error?: string;
+      } | null;
       if (!res.ok) {
         throw new Error(payload?.error || "No se pudo cargar cotizaciones");
       }
       const items = Array.isArray(payload?.items)
-        ? payload.items.map(normalizeQuoteItem).filter((x): x is QuoteItem => x !== null)
+        ? payload.items
+            .map(normalizeQuoteItem)
+            .filter((x): x is QuoteItem => x !== null)
         : [];
       setQuotes(items);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Error cargando cotizaciones");
+      toast.error(
+        error instanceof Error ? error.message : "Error cargando cotizaciones",
+      );
       setQuotes([]);
     } finally {
       setLoading(false);
@@ -951,11 +1059,9 @@ export default function QuotesPage() {
     let alive = true;
     (async () => {
       try {
-        const [profileRes, cfgRes, paxRes, opRes, userRes, clientCfgRes] = await Promise.all([
+        const [profileRes, cfgRes, userRes, clientCfgRes] = await Promise.all([
           authFetch("/api/user/profile", { cache: "no-store" }, token),
           authFetch("/api/quotes/config", { cache: "no-store" }, token),
-          authFetch("/api/clients?take=200", { cache: "no-store" }, token),
-          authFetch("/api/operators", { cache: "no-store" }, token),
           authFetch("/api/users", { cache: "no-store" }, token),
           authFetch("/api/clients/config", { cache: "no-store" }, token),
         ]);
@@ -968,21 +1074,21 @@ export default function QuotesPage() {
         if (cfgRes.ok) {
           const cfg = (await cfgRes.json()) as QuoteConfigDTO | null;
           if (alive) {
-            setRequiredFields(normalizeQuoteRequiredFields(cfg?.required_fields));
+            setRequiredFields(
+              normalizeQuoteRequiredFields(cfg?.required_fields),
+            );
             setHiddenFields(normalizeQuoteHiddenFields(cfg?.hidden_fields));
             setCustomFields(normalizeQuoteCustomFields(cfg?.custom_fields));
           }
         }
 
         if (clientCfgRes.ok) {
-          const cfg = (await clientCfgRes.json().catch(() => null)) as
-            | {
-                profiles?: unknown;
-                required_fields?: unknown;
-                hidden_fields?: unknown;
-                custom_fields?: unknown;
-              }
-            | null;
+          const cfg = (await clientCfgRes.json().catch(() => null)) as {
+            profiles?: unknown;
+            required_fields?: unknown;
+            hidden_fields?: unknown;
+            custom_fields?: unknown;
+          } | null;
           if (alive) {
             setClientProfiles(
               normalizeClientProfiles(cfg?.profiles, {
@@ -990,48 +1096,6 @@ export default function QuotesPage() {
                 hidden_fields: cfg?.hidden_fields,
                 custom_fields: cfg?.custom_fields,
               }),
-            );
-          }
-        }
-
-        if (paxRes.ok) {
-          const payload = (await paxRes.json()) as { items?: unknown[] };
-          const list = Array.isArray(payload?.items) ? payload.items : [];
-          if (alive) {
-            setPassengers(
-              list
-                .map((item) => {
-                  if (!item || typeof item !== "object") return null;
-                  const rec = item as Record<string, unknown>;
-                  const id = Number(rec.id_client);
-                  if (!Number.isFinite(id)) return null;
-                  return {
-                    id_client: id,
-                    first_name: String(rec.first_name || ""),
-                    last_name: String(rec.last_name || ""),
-                    phone: typeof rec.phone === "string" ? rec.phone : undefined,
-                    email: typeof rec.email === "string" ? rec.email : null,
-                  } as PassengerOption;
-                })
-                .filter((x): x is PassengerOption => x !== null),
-            );
-          }
-        }
-
-        if (opRes.ok) {
-          const list = (await opRes.json()) as unknown[];
-          if (alive) {
-            setOperators(
-              (Array.isArray(list) ? list : [])
-                .map((op) => {
-                  if (!op || typeof op !== "object") return null;
-                  const rec = op as Record<string, unknown>;
-                  const id = Number(rec.id_operator);
-                  const name = cleanString(rec.name);
-                  if (!Number.isFinite(id) || !name) return null;
-                  return { id_operator: id, name } as OperatorOption;
-                })
-                .filter((x): x is OperatorOption => x !== null),
             );
           }
         }
@@ -1049,7 +1113,9 @@ export default function QuotesPage() {
                   return {
                     id_user: id,
                     first_name:
-                      typeof rec.first_name === "string" ? rec.first_name : null,
+                      typeof rec.first_name === "string"
+                        ? rec.first_name
+                        : null,
                     last_name:
                       typeof rec.last_name === "string" ? rec.last_name : null,
                     role: typeof rec.role === "string" ? rec.role : null,
@@ -1098,7 +1164,11 @@ export default function QuotesPage() {
     (async () => {
       try {
         setLoadingServiceTypes(true);
-        const res = await authFetch("/api/service-types", { cache: "no-store" }, token);
+        const res = await authFetch(
+          "/api/service-types",
+          { cache: "no-store" },
+          token,
+        );
         if (!res.ok) throw new Error("No se pudieron cargar tipos de servicio");
         const data = (await res.json().catch(() => null)) as unknown;
         if (!alive) return;
@@ -1122,10 +1192,29 @@ export default function QuotesPage() {
     return () => clearTimeout(t);
   }, [loadQuotes]);
 
+  useEffect(() => {
+    if (formMode !== "create") return;
+    setForm((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      if (!next.id_user && profile?.id_user) {
+        next.id_user = profile.id_user;
+        changed = true;
+      }
+      if (!next.creation_date) {
+        next.creation_date = todayDateInputValue();
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [formMode, profile?.id_user]);
+
   const onChangeBase =
     (key: keyof QuoteFormState) =>
     (
-      e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+      e: ChangeEvent<
+        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      >,
     ) => {
       const value = e.target.value;
       setForm((prev) => ({ ...prev, [key]: value }));
@@ -1134,7 +1223,9 @@ export default function QuotesPage() {
   const onChangeBookingDraft =
     (key: keyof QuoteBookingDraft) =>
     (
-      e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+      e: ChangeEvent<
+        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      >,
     ) => {
       const raw = e.target.value;
       setForm((prev) => ({
@@ -1150,12 +1241,14 @@ export default function QuotesPage() {
     setWorkspaceView("form");
     setFormMode("create");
     const next = defaultForm();
+    next.id_user = profile?.id_user ?? null;
+    next.creation_date = todayDateInputValue();
     next.booking_draft.currency = currencyOptions[0] || "ARS";
     setForm(next);
+    setShowMetaOverrides(false);
     clearMoneyInputsByScope("draft");
     setExpandedQuoteId(null);
     setFormSections({
-      lead: true,
       booking: true,
       custom: true,
       pax: true,
@@ -1170,6 +1263,7 @@ export default function QuotesPage() {
     setForm({
       id_quote: quote.id_quote,
       id_user: quote.id_user,
+      creation_date: toDateInputValue(quote.creation_date),
       lead_name: quote.lead_name || "",
       lead_phone: quote.lead_phone || "",
       lead_email: quote.lead_email || "",
@@ -1184,8 +1278,8 @@ export default function QuotesPage() {
     });
     clearMoneyInputsByScope("draft");
     setExpandedQuoteId(quote.id_quote);
+    setShowMetaOverrides(false);
     setFormSections({
-      lead: true,
       booking: true,
       custom: true,
       pax: false,
@@ -1195,11 +1289,15 @@ export default function QuotesPage() {
 
   const validateForm = (): string | null => {
     const required = requiredFields.filter((f) => !hiddenFields.includes(f));
+    const leadFromPax = resolveLeadFromPaxDrafts(form.pax_drafts);
+    const fallbackLeadName = cleanString(form.lead_name);
+    const fallbackLeadPhone = cleanString(form.lead_phone);
+    const fallbackLeadEmail = cleanString(form.lead_email);
 
     const valueByKey: Record<string, string> = {
-      lead_name: cleanString(form.lead_name),
-      lead_phone: cleanString(form.lead_phone),
-      lead_email: cleanString(form.lead_email),
+      lead_name: leadFromPax.leadName || fallbackLeadName,
+      lead_phone: leadFromPax.leadPhone || fallbackLeadPhone,
+      lead_email: leadFromPax.leadEmail || fallbackLeadEmail,
       details: cleanString(form.booking_draft.details),
       departure_date: cleanString(form.booking_draft.departure_date),
       return_date: cleanString(form.booking_draft.return_date),
@@ -1234,17 +1332,30 @@ export default function QuotesPage() {
       ...form.booking_draft,
       pax_count: form.pax_drafts.length,
     });
+    const leadFromPax = resolveLeadFromPaxDrafts(form.pax_drafts);
+    const resolvedLeadName =
+      leadFromPax.leadName || cleanString(form.lead_name);
+    const resolvedLeadPhone =
+      leadFromPax.leadPhone || cleanString(form.lead_phone);
+    const resolvedLeadEmail =
+      leadFromPax.leadEmail || cleanString(form.lead_email);
+    const normalizedCreationDate = cleanString(form.creation_date);
 
     const payload = {
-      lead_name: cleanString(form.lead_name),
-      lead_phone: cleanString(form.lead_phone),
-      lead_email: cleanString(form.lead_email),
+      lead_name: resolvedLeadName,
+      lead_phone: resolvedLeadPhone,
+      lead_email: resolvedLeadEmail,
       note: cleanString(form.note),
       booking_draft: bookingDraftPayload,
       pax_drafts: normalizeQuotePaxDrafts(form.pax_drafts),
       service_drafts: normalizeQuoteServiceDrafts(form.service_drafts),
       custom_values: normalizeQuoteCustomValues(form.custom_values),
-      ...(canAssignOwner && form.id_user ? { id_user: form.id_user } : {}),
+      ...(canOverrideQuoteMeta && showMetaOverrides && form.id_user
+        ? { id_user: form.id_user }
+        : {}),
+      ...(canOverrideQuoteMeta && showMetaOverrides && normalizedCreationDate
+        ? { creation_date: normalizedCreationDate }
+        : {}),
     };
 
     try {
@@ -1263,9 +1374,13 @@ export default function QuotesPage() {
         | { error?: string }
         | QuoteItem
         | null;
-      if (!res.ok) throw new Error(data && "error" in data ? data.error || "Error" : "Error");
+      if (!res.ok)
+        throw new Error(
+          data && "error" in data ? data.error || "Error" : "Error",
+        );
       const normalized = normalizeQuoteItem(data);
-      const targetId = normalized?.public_id ?? normalized?.id_quote ?? form.id_quote;
+      const targetId =
+        normalized?.public_id ?? normalized?.id_quote ?? form.id_quote;
 
       if (nextAction === "open_studio" && targetId) {
         toast.success(
@@ -1277,11 +1392,15 @@ export default function QuotesPage() {
         return;
       }
 
-      toast.success(formMode === "edit" ? "Cotización actualizada" : "Cotización creada");
+      toast.success(
+        formMode === "edit" ? "Cotización actualizada" : "Cotización creada",
+      );
       startCreate();
       await loadQuotes();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Error guardando cotización");
+      toast.error(
+        error instanceof Error ? error.message : "Error guardando cotización",
+      );
     } finally {
       setSaving(false);
     }
@@ -1294,8 +1413,14 @@ export default function QuotesPage() {
     );
     if (!ok) return;
     try {
-      const res = await authFetch(`/api/quotes/${quote.id_quote}`, { method: "DELETE" }, token);
-      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      const res = await authFetch(
+        `/api/quotes/${quote.id_quote}`,
+        { method: "DELETE" },
+        token,
+      );
+      const data = (await res.json().catch(() => null)) as {
+        error?: string;
+      } | null;
       if (!res.ok) throw new Error(data?.error || "No se pudo eliminar");
       if (form.id_quote === quote.id_quote) startCreate();
       await loadQuotes();
@@ -1337,7 +1462,9 @@ export default function QuotesPage() {
     normalizeTitular = false,
   ) => {
     setForm((prev) => {
-      const next = prev.pax_drafts.map((p, i) => (i === index ? { ...p, ...patch } : p));
+      const next = prev.pax_drafts.map((p, i) =>
+        i === index ? { ...p, ...patch } : p,
+      );
       if (normalizeTitular && patch.is_titular) {
         return {
           ...prev,
@@ -1374,10 +1501,15 @@ export default function QuotesPage() {
     clearMoneyInputsByScope("draft");
   };
 
-  const updateServiceDraft = (index: number, patch: Partial<QuoteServiceDraft>) => {
+  const updateServiceDraft = (
+    index: number,
+    patch: Partial<QuoteServiceDraft>,
+  ) => {
     setForm((prev) => ({
       ...prev,
-      service_drafts: prev.service_drafts.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+      service_drafts: prev.service_drafts.map((s, i) =>
+        i === index ? { ...s, ...patch } : s,
+      ),
     }));
   };
 
@@ -1417,7 +1549,8 @@ export default function QuotesPage() {
         operatorStatus: bookingDraft.operatorStatus || "Pendiente",
         status: bookingDraft.status || "Abierta",
         details: bookingDraft.details || "",
-        invoice_type: bookingDraft.invoice_type || "Coordinar con administracion",
+        invoice_type:
+          bookingDraft.invoice_type || "Coordinar con administracion",
         invoice_observation: bookingDraft.invoice_observation || "",
         observation: bookingDraft.observation || "",
         departure_date: bookingDraft.departure_date || "",
@@ -1448,7 +1581,8 @@ export default function QuotesPage() {
       patch.profile_key !== undefined
         ? {
             ...patch,
-            profile_key: resolveClientProfile(clientProfiles, patch.profile_key).key,
+            profile_key: resolveClientProfile(clientProfiles, patch.profile_key)
+              .key,
           }
         : patch;
     setConvertForm((prev) => {
@@ -1487,12 +1621,17 @@ export default function QuotesPage() {
     );
   };
 
-  const updateConvertService = (index: number, patch: Partial<ConvertServiceForm>) => {
+  const updateConvertService = (
+    index: number,
+    patch: Partial<ConvertServiceForm>,
+  ) => {
     setConvertForm((prev) =>
       prev
         ? {
             ...prev,
-            services: prev.services.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+            services: prev.services.map((s, i) =>
+              i === index ? { ...s, ...patch } : s,
+            ),
           }
         : prev,
     );
@@ -1505,7 +1644,10 @@ export default function QuotesPage() {
             ...prev,
             services: [
               ...prev.services,
-              { ...defaultConvertService(), currency: currencyOptions[0] || "ARS" },
+              {
+                ...defaultConvertService(),
+                currency: currencyOptions[0] || "ARS",
+              },
             ],
           }
         : prev,
@@ -1585,9 +1727,10 @@ export default function QuotesPage() {
         { method: "POST", body: JSON.stringify(payload) },
         token,
       );
-      const data = (await res.json().catch(() => null)) as
-        | { error?: string; id_booking?: number }
-        | null;
+      const data = (await res.json().catch(() => null)) as {
+        error?: string;
+        id_booking?: number;
+      } | null;
       if (!res.ok) {
         throw new Error(data?.error || "No se pudo convertir");
       }
@@ -1597,7 +1740,9 @@ export default function QuotesPage() {
       closeConvert();
       await loadQuotes();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Error al convertir");
+      toast.error(
+        error instanceof Error ? error.message : "Error al convertir",
+      );
     } finally {
       setConverting(false);
     }
@@ -1623,7 +1768,8 @@ export default function QuotesPage() {
             Cotizaciones
           </h1>
           <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
-            Creá cotizaciones y trabajalas en el estudio visual de PDF dentro del mismo flujo.
+            Creá cotizaciones y trabajalas en el estudio visual de PDF dentro
+            del mismo flujo.
           </p>
         </div>
 
@@ -1675,82 +1821,71 @@ export default function QuotesPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-sky-950 dark:text-sky-50">
-                  {formMode === "edit" ? "Editar cotización" : "Nueva cotización"}
+                  {formMode === "edit"
+                    ? "Editar cotización"
+                    : "Nueva cotización"}
                 </h2>
                 <p className="text-xs text-sky-900/75 dark:text-sky-100/70">
-                  Formulario flexible con datos base, potencial cliente/s, pax y servicios.
+                  Formulario flexible con datos base, pax y servicios.
                 </p>
               </div>
               {formMode === "edit" && (
-                <button type="button" className={SUBTLE_BTN} onClick={startCreate}>
+                <button
+                  type="button"
+                  className={SUBTLE_BTN}
+                  onClick={startCreate}
+                >
                   Cancelar edición
                 </button>
               )}
             </div>
 
             <SectionCard
-              id="lead"
-              title="Potencial cliente/s y contacto"
-              subtitle="Datos iniciales de potencial cliente/s"
-              open={Boolean(formSections.lead)}
+              id="booking"
+              title="Datos base de reserva"
+              subtitle="Borrador editable para la futura conversión"
+              open={Boolean(formSections.booking)}
               onToggle={toggleFormSection}
             >
-              {canAssignOwner && (
-                <div>
-                  <label className="mb-1 block text-xs opacity-75">Vendedor responsable</label>
-                  <select
-                    className={SELECT}
-                    value={form.id_user || profile?.id_user || ""}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        id_user: e.target.value ? Number(e.target.value) : null,
-                      }))
-                    }
-                  >
-                    <option value="">Seleccionar</option>
-                    {users.map((u) => (
-                      <option key={u.id_user} value={u.id_user}>
-                        {`${u.first_name || ""} ${u.last_name || ""}`.trim() ||
-                          u.email ||
-                          `Usuario ${u.id_user}`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {!hiddenFields.includes("lead_name") && (
-                  <div>
-                    <label className="mb-1 block text-xs opacity-75">Cliente · Nombre</label>
-                    <input
-                      className={INPUT}
-                      placeholder="Ej: Juan Pérez"
-                      value={form.lead_name}
-                      onChange={onChangeBase("lead_name")}
-                    />
-                  </div>
-                )}
-                {!hiddenFields.includes("lead_phone") && (
-                  <div>
-                    <label className="mb-1 block text-xs opacity-75">Cliente · Teléfono</label>
-                    <input
-                      className={INPUT}
-                      placeholder="Ej: +54 9 11 5555-5555"
-                      value={form.lead_phone}
-                      onChange={onChangeBase("lead_phone")}
-                    />
-                  </div>
-                )}
-                {!hiddenFields.includes("lead_email") && (
+              <div className="grid gap-3 md:grid-cols-2">
+                {!hiddenFields.includes("details") && (
                   <div className="md:col-span-2">
-                    <label className="mb-1 block text-xs opacity-75">Cliente · Email</label>
+                    <label className="mb-1 block text-xs opacity-75">
+                      Detalle
+                    </label>
+                    <textarea
+                      className={`${INPUT} min-h-20`}
+                      placeholder="Resumen del viaje, condiciones, ideas o comentarios"
+                      value={String(form.booking_draft.details || "")}
+                      onChange={onChangeBookingDraft("details")}
+                    />
+                  </div>
+                )}
+                {!hiddenFields.includes("departure_date") && (
+                  <div>
+                    <label className="mb-1 block text-xs opacity-75">
+                      Salida
+                    </label>
                     <input
+                      type="date"
                       className={INPUT}
-                      placeholder="Ej: cliente@email.com"
-                      value={form.lead_email}
-                      onChange={onChangeBase("lead_email")}
+                      placeholder="Seleccionar fecha"
+                      value={String(form.booking_draft.departure_date || "")}
+                      onChange={onChangeBookingDraft("departure_date")}
+                    />
+                  </div>
+                )}
+                {!hiddenFields.includes("return_date") && (
+                  <div>
+                    <label className="mb-1 block text-xs opacity-75">
+                      Regreso
+                    </label>
+                    <input
+                      type="date"
+                      className={INPUT}
+                      placeholder="Seleccionar fecha"
+                      value={String(form.booking_draft.return_date || "")}
+                      onChange={onChangeBookingDraft("return_date")}
                     />
                   </div>
                 )}
@@ -1768,89 +1903,625 @@ export default function QuotesPage() {
             </SectionCard>
 
             <SectionCard
-              id="booking"
-              title="Datos base de reserva"
-              subtitle="Borrador editable para la futura conversión"
-              open={Boolean(formSections.booking)}
+              id="pax"
+              title="Pax borrador"
+              subtitle="Titular y acompañantes opcionales"
+              open={Boolean(formSections.pax)}
               onToggle={toggleFormSection}
+              right={
+                <button
+                  type="button"
+                  className={AMBER_BTN}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addPaxDraft();
+                  }}
+                >
+                  Agregar pax
+                </button>
+              }
             >
-              <div className="grid gap-3 md:grid-cols-2">
-                {!hiddenFields.includes("details") && (
-                  <div className="md:col-span-2">
-                    <label className="mb-1 block text-xs opacity-75">Detalle</label>
-                    <textarea
-                      className={`${INPUT} min-h-20`}
-                      placeholder="Resumen del viaje, condiciones, ideas o comentarios"
-                      value={String(form.booking_draft.details || "")}
-                      onChange={onChangeBookingDraft("details")}
-                    />
-                  </div>
-                )}
-                {!hiddenFields.includes("departure_date") && (
-                  <div>
-                    <label className="mb-1 block text-xs opacity-75">Salida</label>
-                    <input
-                      type="date"
-                      className={INPUT}
-                      placeholder="Seleccionar fecha"
-                      value={String(form.booking_draft.departure_date || "")}
-                      onChange={onChangeBookingDraft("departure_date")}
-                    />
-                  </div>
-                )}
-                {!hiddenFields.includes("return_date") && (
-                  <div>
-                    <label className="mb-1 block text-xs opacity-75">Regreso</label>
-                    <input
-                      type="date"
-                      className={INPUT}
-                      placeholder="Seleccionar fecha"
-                      value={String(form.booking_draft.return_date || "")}
-                      onChange={onChangeBookingDraft("return_date")}
-                    />
-                  </div>
-                )}
-                {!hiddenFields.includes("currency") && (
-                  <div>
-                    <label className="mb-1 block text-xs opacity-75">Moneda</label>
-                    <select
-                      className={SELECT}
-                      value={String(form.booking_draft.currency || "")}
-                      onChange={onChangeBookingDraft("currency")}
-                      disabled={loadingCurrencies}
+              {form.pax_drafts.length === 0 ? (
+                <p className="text-xs opacity-75">No hay pax cargados.</p>
+              ) : (
+                <div className="space-y-3">
+                  {form.pax_drafts.map((p, idx) => (
+                    <div
+                      key={`pax-${idx}`}
+                      className="rounded-2xl border border-sky-300/30 bg-white/55 p-4 dark:border-sky-200/20 dark:bg-sky-950/20"
                     >
-                      {loadingCurrencies && (
-                        <>
-                          {form.booking_draft.currency ? (
-                            <option value={String(form.booking_draft.currency)}>
-                              {String(form.booking_draft.currency)}
-                            </option>
-                          ) : null}
-                          <option value="" disabled>
-                            Cargando monedas...
-                          </option>
-                        </>
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.16em] text-sky-800/70 dark:text-sky-100/70">
+                            Pax #{idx + 1}
+                          </p>
+                          <p className="text-xs text-sky-900/75 dark:text-sky-100/75">
+                            {p.is_titular
+                              ? "Titular de la cotización"
+                              : "Acompañante"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className={DANGER_ICON_BTN}
+                          onClick={() => removePaxDraft(idx)}
+                          aria-label="Quitar pax"
+                          title="Quitar pax"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+
+                      <div className="mb-3 grid gap-3 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Tipo de carga
+                          </label>
+                          <div className="flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/60 p-1 text-xs dark:border-sky-200/20 dark:bg-sky-950/20">
+                            <button
+                              type="button"
+                              className={`rounded-full px-3 py-1 transition ${
+                                p.mode !== "existing"
+                                  ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                  : "text-sky-900/75 dark:text-sky-100"
+                              }`}
+                              onClick={() =>
+                                updatePaxDraft(idx, {
+                                  mode: "free",
+                                  client_id: null,
+                                })
+                              }
+                            >
+                              Pax libre
+                            </button>
+                            <button
+                              type="button"
+                              className={`rounded-full px-3 py-1 transition ${
+                                p.mode === "existing"
+                                  ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                  : "text-sky-900/75 dark:text-sky-100"
+                              }`}
+                              onClick={() =>
+                                updatePaxDraft(idx, {
+                                  mode: "existing",
+                                  client_id: p.client_id || null,
+                                })
+                              }
+                            >
+                              Pax existente
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Rol en reserva
+                          </label>
+                          <div className="flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/60 p-1 text-xs dark:border-sky-200/20 dark:bg-sky-950/20">
+                            <button
+                              type="button"
+                              className={`rounded-full px-3 py-1 transition ${
+                                p.is_titular
+                                  ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                  : "text-sky-900/75 dark:text-sky-100"
+                              }`}
+                              onClick={() =>
+                                updatePaxDraft(idx, { is_titular: true }, true)
+                              }
+                            >
+                              Titular
+                            </button>
+                            <button
+                              type="button"
+                              className={`rounded-full px-3 py-1 transition ${
+                                !p.is_titular
+                                  ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                  : "text-sky-900/75 dark:text-sky-100"
+                              }`}
+                              onClick={() =>
+                                updatePaxDraft(idx, { is_titular: false })
+                              }
+                            >
+                              No titular
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {p.mode === "existing" ? (
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Pax existente
+                          </label>
+                          <ClientPicker
+                            token={token}
+                            valueId={p.client_id ?? null}
+                            placeholder="Buscar pax existente..."
+                            excludeIds={form.pax_drafts
+                              .map((draft, draftIdx) =>
+                                draftIdx !== idx &&
+                                draft.mode === "existing" &&
+                                typeof draft.client_id === "number"
+                                  ? draft.client_id
+                                  : null,
+                              )
+                              .filter(
+                                (id): id is number => typeof id === "number",
+                              )}
+                            onSelect={(client) =>
+                              updatePaxDraft(idx, {
+                                mode: "existing",
+                                client_id: client.id_client,
+                                first_name: client.first_name || "",
+                                last_name: client.last_name || "",
+                                phone: client.phone || "",
+                                email: client.email || "",
+                                birth_date: client.birth_date || "",
+                                nationality: client.nationality || "",
+                                gender: client.gender || "",
+                              })
+                            }
+                            onClear={() =>
+                              updatePaxDraft(idx, {
+                                client_id: null,
+                                first_name: "",
+                                last_name: "",
+                                phone: "",
+                                email: "",
+                                birth_date: "",
+                                nationality: "",
+                                gender: "",
+                              })
+                            }
+                          />
+                        </div>
+                      ) : (
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs opacity-75">
+                              Nombre
+                            </label>
+                            <input
+                              className={INPUT}
+                              placeholder="Nombre"
+                              value={p.first_name || ""}
+                              onChange={(e) =>
+                                updatePaxDraft(idx, {
+                                  first_name: e.target.value,
+                                })
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs opacity-75">
+                              Apellido
+                            </label>
+                            <input
+                              className={INPUT}
+                              placeholder="Apellido"
+                              value={p.last_name || ""}
+                              onChange={(e) =>
+                                updatePaxDraft(idx, {
+                                  last_name: e.target.value,
+                                })
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs opacity-75">
+                              Teléfono
+                            </label>
+                            <input
+                              className={INPUT}
+                              placeholder="Teléfono"
+                              value={p.phone || ""}
+                              onChange={(e) =>
+                                updatePaxDraft(idx, { phone: e.target.value })
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs opacity-75">
+                              Email
+                            </label>
+                            <input
+                              className={INPUT}
+                              placeholder="Email"
+                              value={p.email || ""}
+                              onChange={(e) =>
+                                updatePaxDraft(idx, { email: e.target.value })
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs opacity-75">
+                              Fecha de nacimiento
+                            </label>
+                            <input
+                              type="date"
+                              className={INPUT}
+                              placeholder="Seleccionar fecha"
+                              value={p.birth_date || ""}
+                              onChange={(e) =>
+                                updatePaxDraft(idx, {
+                                  birth_date: e.target.value,
+                                })
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs opacity-75">
+                              Género
+                            </label>
+                            <select
+                              className={SELECT}
+                              value={p.gender || ""}
+                              onChange={(e) =>
+                                updatePaxDraft(idx, { gender: e.target.value })
+                              }
+                            >
+                              <option value="">Género</option>
+                              <option value="Masculino">Masculino</option>
+                              <option value="Femenino">Femenino</option>
+                              <option value="Otro">Otro</option>
+                              <option value="Prefiere no decir">
+                                Prefiere no decir
+                              </option>
+                            </select>
+                          </div>
+                          <div className="space-y-1 md:col-span-2">
+                            <label className="mb-1 block text-xs opacity-75">
+                              Nacionalidad
+                            </label>
+                            <DestinationPicker
+                              type="country"
+                              multiple={false}
+                              value={null}
+                              onChange={(value) =>
+                                updatePaxDraft(idx, {
+                                  nationality: destinationValueToLabel(value),
+                                })
+                              }
+                              placeholder="Nacionalidad"
+                              includeDisabled={true}
+                              className="relative z-30 [&>label]:hidden"
+                            />
+                            {p.nationality ? (
+                              <p className="text-xs text-sky-900/70 dark:text-sky-100/70">
+                                Guardará: <b>{p.nationality}</b>
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
                       )}
-                      {!loadingCurrencies && <option value="">Seleccionar moneda</option>}
-                      {!loadingCurrencies &&
-                        currencyOptions.map((code) => (
-                          <option key={code} value={code}>
-                            {code}
-                          </option>
-                        ))}
-                      {!loadingCurrencies &&
-                        form.booking_draft.currency &&
-                        !currencyOptions.includes(
-                          String(form.booking_draft.currency).toUpperCase(),
-                        ) && (
-                          <option value={String(form.booking_draft.currency)}>
-                            {String(form.booking_draft.currency)} (no listado)
-                          </option>
-                        )}
-                    </select>
-                  </div>
-                )}
-              </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              id="services"
+              title="Servicios borrador"
+              subtitle="Servicios opcionales a convertir luego en reserva"
+              open={Boolean(formSections.services)}
+              onToggle={toggleFormSection}
+              right={
+                <button
+                  type="button"
+                  className={AMBER_BTN}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addServiceDraft();
+                  }}
+                >
+                  Agregar servicio
+                </button>
+              }
+            >
+              {form.service_drafts.length === 0 ? (
+                <p className="text-xs opacity-75">No hay servicios cargados.</p>
+              ) : (
+                <div className="space-y-3">
+                  {form.service_drafts.map((s, idx) => (
+                    <div
+                      key={`svc-${idx}`}
+                      className="rounded-2xl border border-sky-300/30 bg-white/55 p-4 dark:border-sky-200/20 dark:bg-sky-950/20"
+                    >
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.16em] text-sky-800/70 dark:text-sky-100/70">
+                            Servicio #{idx + 1}
+                          </p>
+                          <p className="text-xs text-sky-900/75 dark:text-sky-100/75">
+                            Carga comercial y de viaje
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className={DANGER_ICON_BTN}
+                          onClick={() => removeServiceDraft(idx)}
+                          aria-label="Quitar servicio"
+                          title="Quitar servicio"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Tipo de servicio
+                          </label>
+                          <select
+                            className={SELECT}
+                            value={s.type || ""}
+                            onChange={(e) =>
+                              updateServiceDraft(idx, { type: e.target.value })
+                            }
+                            disabled={loadingServiceTypes}
+                          >
+                            <option value="">Tipo de servicio</option>
+                            {serviceTypes.map((typeOption) => (
+                              <option
+                                key={typeOption.value}
+                                value={typeOption.value}
+                              >
+                                {typeOption.label}
+                              </option>
+                            ))}
+                            {s.type &&
+                              !serviceTypes.some(
+                                (typeOption) => typeOption.value === s.type,
+                              ) && (
+                                <option value={s.type}>
+                                  {s.type} (no listado)
+                                </option>
+                              )}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Moneda
+                          </label>
+                          <select
+                            className={SELECT}
+                            value={s.currency || ""}
+                            onChange={(e) => {
+                              updateServiceDraft(idx, {
+                                currency: e.target.value,
+                              });
+                              clearMoneyInputsByIndex("draft", idx);
+                            }}
+                            disabled={loadingCurrencies}
+                          >
+                            <option value="">Moneda</option>
+                            {currencyOptions.map((code) => (
+                              <option key={code} value={code}>
+                                {code}
+                              </option>
+                            ))}
+                            {s.currency &&
+                              !currencyOptions.includes(
+                                s.currency.toUpperCase(),
+                              ) && (
+                                <option value={s.currency}>
+                                  {s.currency} (no listado)
+                                </option>
+                              )}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Precio de venta
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className={INPUT}
+                            placeholder="Venta"
+                            value={
+                              moneyInputs[
+                                moneyInputKey("draft", idx, "sale_price")
+                              ] ??
+                              formatStoredMoneyInput(
+                                s.sale_price,
+                                s.currency ||
+                                  form.booking_draft.currency ||
+                                  "ARS",
+                              )
+                            }
+                            onChange={(e) => {
+                              const currency =
+                                s.currency ||
+                                form.booking_draft.currency ||
+                                "ARS";
+                              const formatted = formatMoneyInputSafe(
+                                e.target.value,
+                                currency,
+                                shouldPreferDotDecimal(e),
+                              );
+                              const parsed = parseMoneyInputSafe(formatted);
+                              setMoneyInputs((prev) => ({
+                                ...prev,
+                                [moneyInputKey("draft", idx, "sale_price")]:
+                                  formatted,
+                              }));
+                              updateServiceDraft(idx, {
+                                sale_price:
+                                  parsed != null && Number.isFinite(parsed)
+                                    ? parsed
+                                    : null,
+                              });
+                            }}
+                            onBlur={(e) => {
+                              const currency =
+                                s.currency ||
+                                form.booking_draft.currency ||
+                                "ARS";
+                              const parsed = parseMoneyInputSafe(
+                                e.target.value,
+                              );
+                              const numeric =
+                                parsed != null && Number.isFinite(parsed)
+                                  ? parsed
+                                  : null;
+                              updateServiceDraft(idx, { sale_price: numeric });
+                              setMoneyInputs((prev) => ({
+                                ...prev,
+                                [moneyInputKey("draft", idx, "sale_price")]:
+                                  numeric != null
+                                    ? formatMoneyInputSafe(
+                                        String(numeric),
+                                        currency,
+                                      )
+                                    : "",
+                              }));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Costo
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className={INPUT}
+                            placeholder="Costo"
+                            value={
+                              moneyInputs[
+                                moneyInputKey("draft", idx, "cost_price")
+                              ] ??
+                              formatStoredMoneyInput(
+                                s.cost_price,
+                                s.currency ||
+                                  form.booking_draft.currency ||
+                                  "ARS",
+                              )
+                            }
+                            onChange={(e) => {
+                              const currency =
+                                s.currency ||
+                                form.booking_draft.currency ||
+                                "ARS";
+                              const formatted = formatMoneyInputSafe(
+                                e.target.value,
+                                currency,
+                                shouldPreferDotDecimal(e),
+                              );
+                              const parsed = parseMoneyInputSafe(formatted);
+                              setMoneyInputs((prev) => ({
+                                ...prev,
+                                [moneyInputKey("draft", idx, "cost_price")]:
+                                  formatted,
+                              }));
+                              updateServiceDraft(idx, {
+                                cost_price:
+                                  parsed != null && Number.isFinite(parsed)
+                                    ? parsed
+                                    : null,
+                              });
+                            }}
+                            onBlur={(e) => {
+                              const currency =
+                                s.currency ||
+                                form.booking_draft.currency ||
+                                "ARS";
+                              const parsed = parseMoneyInputSafe(
+                                e.target.value,
+                              );
+                              const numeric =
+                                parsed != null && Number.isFinite(parsed)
+                                  ? parsed
+                                  : null;
+                              updateServiceDraft(idx, { cost_price: numeric });
+                              setMoneyInputs((prev) => ({
+                                ...prev,
+                                [moneyInputKey("draft", idx, "cost_price")]:
+                                  numeric != null
+                                    ? formatMoneyInputSafe(
+                                        String(numeric),
+                                        currency,
+                                      )
+                                    : "",
+                              }));
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="mb-1 block text-xs opacity-75">
+                            Destino
+                          </label>
+                          <DestinationPicker
+                            type="destination"
+                            multiple={false}
+                            value={null}
+                            onChange={(value) =>
+                              updateServiceDraft(idx, {
+                                destination: destinationValueToLabel(value),
+                              })
+                            }
+                            placeholder="Destino"
+                            className="relative z-30 [&>label]:hidden"
+                          />
+                          {s.destination ? (
+                            <p className="text-xs text-sky-900/70 dark:text-sky-100/70">
+                              Guardará: <b>{s.destination}</b>
+                            </p>
+                          ) : null}
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Salida
+                          </label>
+                          <input
+                            type="date"
+                            className={INPUT}
+                            placeholder="Seleccionar fecha"
+                            value={s.departure_date || ""}
+                            onChange={(e) =>
+                              updateServiceDraft(idx, {
+                                departure_date: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs opacity-75">
+                            Regreso
+                          </label>
+                          <input
+                            type="date"
+                            className={INPUT}
+                            placeholder="Seleccionar fecha"
+                            value={s.return_date || ""}
+                            onChange={(e) =>
+                              updateServiceDraft(idx, {
+                                return_date: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="mb-1 block text-xs opacity-75">
+                            Descripción
+                          </label>
+                          <textarea
+                            className={`${INPUT} min-h-16`}
+                            placeholder="Descripción"
+                            value={s.description || ""}
+                            onChange={(e) =>
+                              updateServiceDraft(idx, {
+                                description: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </SectionCard>
 
             {customFields.length > 0 && (
@@ -1872,7 +2543,11 @@ export default function QuotesPage() {
                           ? String(val)
                           : "",
                       onChange: (
-                        e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+                        e: ChangeEvent<
+                          | HTMLInputElement
+                          | HTMLTextAreaElement
+                          | HTMLSelectElement
+                        >,
                       ) => {
                         const raw = e.target.value;
                         setForm((prev) => ({
@@ -1893,8 +2568,13 @@ export default function QuotesPage() {
                     if (field.type === "textarea") {
                       return (
                         <div className="md:col-span-2" key={field.key}>
-                          <label className="mb-1 block text-xs opacity-75">{field.label}</label>
-                          <textarea {...commonProps} className={`${INPUT} min-h-20`} />
+                          <label className="mb-1 block text-xs opacity-75">
+                            {field.label}
+                          </label>
+                          <textarea
+                            {...commonProps}
+                            className={`${INPUT} min-h-20`}
+                          />
                         </div>
                       );
                     }
@@ -1902,7 +2582,9 @@ export default function QuotesPage() {
                     if (field.type === "select") {
                       return (
                         <div key={field.key}>
-                          <label className="mb-1 block text-xs opacity-75">{field.label}</label>
+                          <label className="mb-1 block text-xs opacity-75">
+                            {field.label}
+                          </label>
                           <select {...commonProps} className={SELECT}>
                             <option value="">Seleccionar</option>
                             {(field.options || []).map((opt) => (
@@ -1918,7 +2600,9 @@ export default function QuotesPage() {
                     if (field.type === "boolean") {
                       return (
                         <div key={field.key}>
-                          <label className="mb-1 block text-xs opacity-75">{field.label}</label>
+                          <label className="mb-1 block text-xs opacity-75">
+                            {field.label}
+                          </label>
                           <select
                             className={SELECT}
                             value={
@@ -1954,7 +2638,9 @@ export default function QuotesPage() {
 
                     return (
                       <div key={field.key}>
-                        <label className="mb-1 block text-xs opacity-75">{field.label}</label>
+                        <label className="mb-1 block text-xs opacity-75">
+                          {field.label}
+                        </label>
                         <input
                           {...commonProps}
                           type={
@@ -1972,429 +2658,77 @@ export default function QuotesPage() {
               </SectionCard>
             )}
 
-            <SectionCard
-              id="pax"
-              title="Pax borrador"
-              subtitle="Titular y acompañantes opcionales"
-              open={Boolean(formSections.pax)}
-              onToggle={toggleFormSection}
-              right={
-                <button
-                  type="button"
-                  className={AMBER_BTN}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    addPaxDraft();
-                  }}
-                >
-                  Agregar pax
-                </button>
-              }
-            >
-              {form.pax_drafts.length === 0 ? (
-                <p className="text-xs opacity-75">No hay pax cargados.</p>
-              ) : (
-                <div className="space-y-3">
-                  {form.pax_drafts.map((p, idx) => (
-                    <div
-                      key={`pax-${idx}`}
-                      className="rounded-2xl border border-sky-300/30 bg-white/55 p-3 dark:border-sky-200/20 dark:bg-sky-950/20"
-                    >
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <div className="flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/60 p-1 text-xs dark:border-sky-200/20 dark:bg-sky-950/20">
-                          <button
-                            type="button"
-                            className={`rounded-full px-3 py-1 transition ${
-                              p.mode !== "existing"
-                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
-                                : "text-sky-900/75 dark:text-sky-100"
-                            }`}
-                            onClick={() =>
-                              updatePaxDraft(idx, {
-                                mode: "free",
-                                client_id: null,
-                              })
-                            }
-                          >
-                            Pax libre
-                          </button>
-                          <button
-                            type="button"
-                            className={`rounded-full px-3 py-1 transition ${
-                              p.mode === "existing"
-                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
-                                : "text-sky-900/75 dark:text-sky-100"
-                            }`}
-                            onClick={() =>
-                              updatePaxDraft(idx, {
-                                mode: "existing",
-                                client_id: p.client_id || null,
-                              })
-                            }
-                          >
-                            Pax existente
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/60 p-1 text-xs dark:border-sky-200/20 dark:bg-sky-950/20">
-                          <button
-                            type="button"
-                            className={`rounded-full px-3 py-1 transition ${
-                              p.is_titular
-                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
-                                : "text-sky-900/75 dark:text-sky-100"
-                            }`}
-                            onClick={() => updatePaxDraft(idx, { is_titular: true }, true)}
-                          >
-                            Titular
-                          </button>
-                          <button
-                            type="button"
-                            className={`rounded-full px-3 py-1 transition ${
-                              !p.is_titular
-                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
-                                : "text-sky-900/75 dark:text-sky-100"
-                            }`}
-                            onClick={() => updatePaxDraft(idx, { is_titular: false })}
-                          >
-                            No titular
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          className={DANGER_BTN}
-                          onClick={() => removePaxDraft(idx)}
-                        >
-                          Quitar
-                        </button>
-                      </div>
-
-                      {p.mode === "existing" ? (
-                        <select
-                          className={SELECT}
-                          value={p.client_id || ""}
-                          onChange={(e) =>
-                            updatePaxDraft(idx, {
-                              client_id: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
-                        >
-                          <option value="">Seleccionar pasajero</option>
-                          {passengers.map((opt) => (
-                            <option key={opt.id_client} value={opt.id_client}>
-                              {opt.first_name} {opt.last_name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <input
-                            className={INPUT}
-                            placeholder="Nombre"
-                            value={p.first_name || ""}
-                            onChange={(e) => updatePaxDraft(idx, { first_name: e.target.value })}
-                          />
-                          <input
-                            className={INPUT}
-                            placeholder="Apellido"
-                            value={p.last_name || ""}
-                            onChange={(e) => updatePaxDraft(idx, { last_name: e.target.value })}
-                          />
-                          <input
-                            className={INPUT}
-                            placeholder="Teléfono"
-                            value={p.phone || ""}
-                            onChange={(e) => updatePaxDraft(idx, { phone: e.target.value })}
-                          />
-                          <input
-                            className={INPUT}
-                            placeholder="Email"
-                            value={p.email || ""}
-                            onChange={(e) => updatePaxDraft(idx, { email: e.target.value })}
-                          />
-                          <input
-                            type="date"
-                            className={INPUT}
-                            placeholder="Seleccionar fecha"
-                            value={p.birth_date || ""}
-                            onChange={(e) => updatePaxDraft(idx, { birth_date: e.target.value })}
-                          />
-                          <div className="space-y-1">
-                            <DestinationPicker
-                              type="country"
-                              multiple={false}
-                              value={null}
-                              onChange={(value) =>
-                                updatePaxDraft(idx, {
-                                  nationality: destinationValueToLabel(value),
-                                })
-                              }
-                              placeholder="Nacionalidad"
-                              includeDisabled={true}
-                              className="relative z-30 [&>label]:hidden"
-                            />
-                            {p.nationality ? (
-                              <p className="text-xs text-sky-900/70 dark:text-sky-100/70">
-                                Guardará: <b>{p.nationality}</b>
-                              </p>
-                            ) : null}
-                          </div>
-                          <select
-                            className={SELECT}
-                            value={p.gender || ""}
-                            onChange={(e) => updatePaxDraft(idx, { gender: e.target.value })}
-                          >
-                            <option value="">Género</option>
-                            <option value="Masculino">Masculino</option>
-                            <option value="Femenino">Femenino</option>
-                            <option value="Otro">Otro</option>
-                            <option value="Prefiere no decir">Prefiere no decir</option>
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+            {canOverrideQuoteMeta && (
+              <div className={`${SECTION_GLASS} p-4`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-sky-950 dark:text-sky-100">
+                      Ajustes administrativos
+                    </p>
+                    <p className="text-xs text-sky-900/75 dark:text-sky-100/70">
+                      Por defecto se usa tu usuario y la fecha actual.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={CHIP}
+                    onClick={() => setShowMetaOverrides((prev) => !prev)}
+                    aria-pressed={showMetaOverrides}
+                  >
+                    {showMetaOverrides
+                      ? "Ocultar modificación"
+                      : "Modificar vendedor y/o fecha de creación"}
+                  </button>
                 </div>
-              )}
-            </SectionCard>
 
-            <SectionCard
-              id="services"
-              title="Servicios borrador"
-              subtitle="Servicios opcionales a convertir luego en reserva"
-              open={Boolean(formSections.services)}
-              onToggle={toggleFormSection}
-              right={
-                <button
-                  type="button"
-                  className={AMBER_BTN}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    addServiceDraft();
-                  }}
-                >
-                  Agregar servicio
-                </button>
-              }
-            >
-              {form.service_drafts.length === 0 ? (
-                <p className="text-xs opacity-75">No hay servicios cargados.</p>
-              ) : (
-                <div className="space-y-3">
-                  {form.service_drafts.map((s, idx) => (
-                    <div
-                      key={`svc-${idx}`}
-                      className="rounded-2xl border border-sky-300/30 bg-white/55 p-3 dark:border-sky-200/20 dark:bg-sky-950/20"
-                    >
-                      <div className="mb-2 flex justify-end">
-                        <button
-                          type="button"
-                          className={DANGER_BTN}
-                          onClick={() => removeServiceDraft(idx)}
-                        >
-                          Quitar
-                        </button>
-                      </div>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <select
-                          className={SELECT}
-                          value={s.type || ""}
-                          onChange={(e) => updateServiceDraft(idx, { type: e.target.value })}
-                          disabled={loadingServiceTypes}
-                        >
-                          <option value="">Tipo de servicio</option>
-                          {serviceTypes.map((typeOption) => (
-                            <option key={typeOption.value} value={typeOption.value}>
-                              {typeOption.label}
-                            </option>
-                          ))}
-                          {s.type &&
-                            !serviceTypes.some((typeOption) => typeOption.value === s.type) && (
-                              <option value={s.type}>{s.type} (no listado)</option>
-                            )}
-                        </select>
-                        <select
-                          className={SELECT}
-                          value={s.currency || ""}
-                          onChange={(e) => {
-                            updateServiceDraft(idx, { currency: e.target.value });
-                            clearMoneyInputsByIndex("draft", idx);
-                          }}
-                          disabled={loadingCurrencies}
-                        >
-                          <option value="">Moneda</option>
-                          {currencyOptions.map((code) => (
-                            <option key={code} value={code}>
-                              {code}
-                            </option>
-                          ))}
-                          {s.currency &&
-                            !currencyOptions.includes(s.currency.toUpperCase()) && (
-                              <option value={s.currency}>{s.currency} (no listado)</option>
-                            )}
-                        </select>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          className={INPUT}
-                          placeholder="Venta"
-                          value={
-                            moneyInputs[moneyInputKey("draft", idx, "sale_price")] ??
-                            formatStoredMoneyInput(
-                              s.sale_price,
-                              s.currency || form.booking_draft.currency || "ARS",
-                            )
-                          }
-                          onChange={(e) => {
-                            const currency = s.currency || form.booking_draft.currency || "ARS";
-                            const formatted = formatMoneyInputSafe(
-                              e.target.value,
-                              currency,
-                              shouldPreferDotDecimal(e),
-                            );
-                            const parsed = parseMoneyInputSafe(formatted);
-                            setMoneyInputs((prev) => ({
-                              ...prev,
-                              [moneyInputKey("draft", idx, "sale_price")]: formatted,
-                            }));
-                            updateServiceDraft(idx, {
-                              sale_price:
-                                parsed != null && Number.isFinite(parsed) ? parsed : null,
-                            });
-                          }}
-                          onBlur={(e) => {
-                            const currency = s.currency || form.booking_draft.currency || "ARS";
-                            const parsed = parseMoneyInputSafe(e.target.value);
-                            const numeric =
-                              parsed != null && Number.isFinite(parsed) ? parsed : null;
-                            updateServiceDraft(idx, { sale_price: numeric });
-                            setMoneyInputs((prev) => ({
-                              ...prev,
-                              [moneyInputKey("draft", idx, "sale_price")]:
-                                numeric != null
-                                  ? formatMoneyInputSafe(String(numeric), currency)
-                                  : "",
-                            }));
-                          }}
-                        />
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          className={INPUT}
-                          placeholder="Costo"
-                          value={
-                            moneyInputs[moneyInputKey("draft", idx, "cost_price")] ??
-                            formatStoredMoneyInput(
-                              s.cost_price,
-                              s.currency || form.booking_draft.currency || "ARS",
-                            )
-                          }
-                          onChange={(e) => {
-                            const currency = s.currency || form.booking_draft.currency || "ARS";
-                            const formatted = formatMoneyInputSafe(
-                              e.target.value,
-                              currency,
-                              shouldPreferDotDecimal(e),
-                            );
-                            const parsed = parseMoneyInputSafe(formatted);
-                            setMoneyInputs((prev) => ({
-                              ...prev,
-                              [moneyInputKey("draft", idx, "cost_price")]: formatted,
-                            }));
-                            updateServiceDraft(idx, {
-                              cost_price:
-                                parsed != null && Number.isFinite(parsed) ? parsed : null,
-                            });
-                          }}
-                          onBlur={(e) => {
-                            const currency = s.currency || form.booking_draft.currency || "ARS";
-                            const parsed = parseMoneyInputSafe(e.target.value);
-                            const numeric =
-                              parsed != null && Number.isFinite(parsed) ? parsed : null;
-                            updateServiceDraft(idx, { cost_price: numeric });
-                            setMoneyInputs((prev) => ({
-                              ...prev,
-                              [moneyInputKey("draft", idx, "cost_price")]:
-                                numeric != null
-                                  ? formatMoneyInputSafe(String(numeric), currency)
-                                  : "",
-                            }));
-                          }}
-                        />
-                        <select
-                          className={SELECT}
-                          value={s.operator_id || ""}
-                          onChange={(e) =>
-                            updateServiceDraft(idx, {
-                              operator_id: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
-                        >
-                          <option value="">Operador</option>
-                          {operators.map((op) => (
-                            <option key={op.id_operator} value={op.id_operator}>
-                              {op.name}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="space-y-1">
-                          <DestinationPicker
-                            type="destination"
-                            multiple={false}
-                            value={null}
-                            onChange={(value) =>
-                              updateServiceDraft(idx, {
-                                destination: destinationValueToLabel(value),
-                              })
-                            }
-                            placeholder="Destino"
-                            className="relative z-30 [&>label]:hidden"
-                          />
-                          {s.destination ? (
-                            <p className="text-xs text-sky-900/70 dark:text-sky-100/70">
-                              Guardará: <b>{s.destination}</b>
-                            </p>
-                          ) : null}
-                        </div>
-                        <input
-                          className={INPUT}
-                          placeholder="Referencia / Nro File / Localizador"
-                          value={s.reference || ""}
-                          onChange={(e) =>
-                            updateServiceDraft(idx, { reference: e.target.value })
-                          }
-                        />
-                        <input
-                          type="date"
-                          className={INPUT}
-                          placeholder="Seleccionar fecha"
-                          value={s.departure_date || ""}
-                          onChange={(e) =>
-                            updateServiceDraft(idx, { departure_date: e.target.value })
-                          }
-                        />
-                        <input
-                          type="date"
-                          className={INPUT}
-                          placeholder="Seleccionar fecha"
-                          value={s.return_date || ""}
-                          onChange={(e) =>
-                            updateServiceDraft(idx, { return_date: e.target.value })
-                          }
-                        />
-                        <textarea
-                          className={`${INPUT} min-h-16 md:col-span-2`}
-                          placeholder="Descripción"
-                          value={s.description || ""}
-                          onChange={(e) =>
-                            updateServiceDraft(idx, { description: e.target.value })
-                          }
-                        />
-                      </div>
+                {showMetaOverrides && (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Vendedor responsable
+                      </label>
+                      <select
+                        className={SELECT}
+                        value={form.id_user || profile?.id_user || ""}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            id_user: e.target.value
+                              ? Number(e.target.value)
+                              : null,
+                          }))
+                        }
+                      >
+                        <option value="">Seleccionar</option>
+                        {users.map((u) => (
+                          <option key={u.id_user} value={u.id_user}>
+                            {`${u.first_name || ""} ${u.last_name || ""}`.trim() ||
+                              u.email ||
+                              `Usuario ${u.id_user}`}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                  ))}
-                </div>
-              )}
-            </SectionCard>
+                    <div>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Fecha de creación
+                      </label>
+                      <input
+                        type="date"
+                        className={INPUT}
+                        value={form.creation_date}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            creation_date: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -2418,7 +2752,11 @@ export default function QuotesPage() {
                 Guardar y abrir estudio
               </button>
               {formMode === "edit" && (
-                <button type="button" className={SUBTLE_BTN} onClick={startCreate}>
+                <button
+                  type="button"
+                  className={SUBTLE_BTN}
+                  onClick={startCreate}
+                >
                   Nueva cotización
                 </button>
               )}
@@ -2461,7 +2799,25 @@ export default function QuotesPage() {
               <div className="flex flex-wrap gap-2">
                 {canConfigure && (
                   <Link href="/quotes/config" className={SUBTLE_BTN}>
-                    Configuración
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      className="size-5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                      />
+                    </svg>
                   </Link>
                 )}
                 <button
@@ -2470,23 +2826,23 @@ export default function QuotesPage() {
                   onClick={() => void loadQuotes()}
                   disabled={loading}
                 >
-                  <span className="inline-flex items-center gap-2">
+                  <span className="flex items-center justify-center">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
                       fill="none"
                       viewBox="0 0 24 24"
                       strokeWidth={1.8}
                       stroke="currentColor"
-                      className={`size-4 ${loading ? "animate-spin" : ""}`}
+                      className={`size-5 ${loading ? "animate-spin" : ""}`}
                       aria-hidden="true"
                     >
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        d="M21 2v6h-6M3 22v-6h6M21 8a9 9 0 0 0-15-5.36L3 8M3 16a9 9 0 0 0 15 5.36L21 16"
+                        d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"
                       />
                     </svg>
-                    {loading ? "Cargando..." : "Actualizar"}
+
                   </span>
                 </button>
               </div>
@@ -2632,7 +2988,9 @@ export default function QuotesPage() {
                 >
                   <div className="grid gap-2 md:grid-cols-2">
                     <div>
-                      <label className="mb-1 block text-xs opacity-75">Responsable</label>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Responsable
+                      </label>
                       <select
                         className={SELECT}
                         value={ownerFilter}
@@ -2650,7 +3008,9 @@ export default function QuotesPage() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs opacity-75">Orden</label>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Orden
+                      </label>
                       <select
                         className={SELECT}
                         value={sortBy}
@@ -2666,17 +3026,27 @@ export default function QuotesPage() {
                           )
                         }
                       >
-                        <option value="updated_desc">Actualizadas (nuevas primero)</option>
-                        <option value="updated_asc">Actualizadas (viejas primero)</option>
-                        <option value="created_desc">Creadas (nuevas primero)</option>
-                        <option value="created_asc">Creadas (viejas primero)</option>
+                        <option value="updated_desc">
+                          Actualizadas (nuevas primero)
+                        </option>
+                        <option value="updated_asc">
+                          Actualizadas (viejas primero)
+                        </option>
+                        <option value="created_desc">
+                          Creadas (nuevas primero)
+                        </option>
+                        <option value="created_asc">
+                          Creadas (viejas primero)
+                        </option>
                         <option value="quote_desc">Número mayor a menor</option>
                         <option value="quote_asc">Número menor a mayor</option>
                       </select>
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs opacity-75">Creada desde</label>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Creada desde
+                      </label>
                       <input
                         type="date"
                         className={INPUT}
@@ -2687,7 +3057,9 @@ export default function QuotesPage() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs opacity-75">Creada hasta</label>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Creada hasta
+                      </label>
                       <input
                         type="date"
                         className={INPUT}
@@ -2698,11 +3070,15 @@ export default function QuotesPage() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs opacity-75">Pax</label>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Pax
+                      </label>
                       <select
                         className={SELECT}
                         value={paxFilter}
-                        onChange={(e) => setPaxFilter(e.target.value as PresenceFilter)}
+                        onChange={(e) =>
+                          setPaxFilter(e.target.value as PresenceFilter)
+                        }
                       >
                         <option value="all">Todos</option>
                         <option value="with">Con pax</option>
@@ -2711,11 +3087,15 @@ export default function QuotesPage() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs opacity-75">Servicios</label>
+                      <label className="mb-1 block text-xs opacity-75">
+                        Servicios
+                      </label>
                       <select
                         className={SELECT}
                         value={serviceFilter}
-                        onChange={(e) => setServiceFilter(e.target.value as PresenceFilter)}
+                        onChange={(e) =>
+                          setServiceFilter(e.target.value as PresenceFilter)
+                        }
                       >
                         <option value="all">Todos</option>
                         <option value="with">Con servicios</option>
@@ -2725,7 +3105,11 @@ export default function QuotesPage() {
                   </div>
 
                   <div className="flex justify-end">
-                    <button type="button" className={SUBTLE_BTN} onClick={clearFilters}>
+                    <button
+                      type="button"
+                      className={SUBTLE_BTN}
+                      onClick={clearFilters}
+                    >
                       Limpiar filtros
                     </button>
                   </div>
@@ -2743,13 +3127,27 @@ export default function QuotesPage() {
                   <table className="min-w-full text-sm">
                     <thead className="sticky top-0 bg-sky-100/80 text-sky-900 dark:bg-sky-900/45 dark:text-sky-50">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold">Nº</th>
-                        <th className="px-3 py-2 text-left font-semibold">Cliente</th>
-                        <th className="px-3 py-2 text-left font-semibold">Responsable</th>
-                        <th className="px-3 py-2 text-left font-semibold">Creación</th>
-                        <th className="px-3 py-2 text-left font-semibold">Pax</th>
-                        <th className="px-3 py-2 text-left font-semibold">Servicios</th>
-                        <th className="px-3 py-2 text-left font-semibold">Acciones</th>
+                        <th className="px-3 py-2 text-left font-semibold">
+                          Nº
+                        </th>
+                        <th className="px-3 py-2 text-left font-semibold">
+                          Cliente
+                        </th>
+                        <th className="px-3 py-2 text-left font-semibold">
+                          Responsable
+                        </th>
+                        <th className="px-3 py-2 text-left font-semibold">
+                          Creación
+                        </th>
+                        <th className="px-3 py-2 text-left font-semibold">
+                          Pax
+                        </th>
+                        <th className="px-3 py-2 text-left font-semibold">
+                          Servicios
+                        </th>
+                        <th className="px-3 py-2 text-left font-semibold">
+                          Acciones
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2764,12 +3162,16 @@ export default function QuotesPage() {
                               className="cursor-pointer border-t border-sky-300/25 text-sky-950 transition hover:bg-sky-100/55 dark:border-sky-200/15 dark:text-sky-50 dark:hover:bg-sky-800/25"
                               onClick={() => toggleExpandedQuote(q.id_quote)}
                             >
-                              <td className="px-3 py-2 font-semibold">{row.displayId}</td>
+                              <td className="px-3 py-2 font-semibold">
+                                {row.displayId}
+                              </td>
                               <td className="px-3 py-2">
                                 <p className="font-semibold">
                                   {q.lead_name || "Cliente sin nombre"}
                                 </p>
-                                <p className="text-xs opacity-75">{q.lead_phone || "Sin teléfono"}</p>
+                                <p className="text-xs opacity-75">
+                                  {q.lead_phone || "Sin teléfono"}
+                                </p>
                                 {isConverted ? (
                                   <p className="mt-1 inline-flex w-max rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
                                     Convertida
@@ -2777,7 +3179,9 @@ export default function QuotesPage() {
                                 ) : null}
                               </td>
                               <td className="px-3 py-2">{row.ownerName}</td>
-                              <td className="px-3 py-2">{formatDate(q.creation_date)}</td>
+                              <td className="px-3 py-2">
+                                {formatDate(q.creation_date)}
+                              </td>
                               <td className="px-3 py-2">{row.paxCount}</td>
                               <td className="px-3 py-2">{row.serviceCount}</td>
                               <td className="px-3 py-2">
@@ -2815,27 +3219,39 @@ export default function QuotesPage() {
                               </td>
                             </tr>
                             {isExpanded && (
-                              <tr
-                                className="border-t border-sky-300/25 bg-sky-100/40 dark:border-sky-200/15 dark:bg-sky-900/20"
-                              >
+                              <tr className="border-t border-sky-300/25 bg-sky-100/40 dark:border-sky-200/15 dark:bg-sky-900/20">
                                 <td colSpan={7} className="p-3">
                                   <div className="grid gap-2 text-xs text-sky-900/90 dark:text-sky-100/85">
                                     <p>
-                                      <span className="font-semibold">Detalle:</span>{" "}
-                                      {row.bookingDraft.details || "Sin detalle"}
+                                      <span className="font-semibold">
+                                        Detalle:
+                                      </span>{" "}
+                                      {row.bookingDraft.details ||
+                                        "Sin detalle"}
                                     </p>
                                     <p>
-                                      <span className="font-semibold">Email:</span>{" "}
+                                      <span className="font-semibold">
+                                        Email:
+                                      </span>{" "}
                                       {q.lead_email || "Sin email"}
                                     </p>
                                     <p>
-                                      <span className="font-semibold">Salida/Regreso:</span>{" "}
-                                      {formatDate(row.bookingDraft.departure_date || "")} /{" "}
-                                      {formatDate(row.bookingDraft.return_date || "")}
+                                      <span className="font-semibold">
+                                        Salida/Regreso:
+                                      </span>{" "}
+                                      {formatDate(
+                                        row.bookingDraft.departure_date || "",
+                                      )}{" "}
+                                      /{" "}
+                                      {formatDate(
+                                        row.bookingDraft.return_date || "",
+                                      )}
                                     </p>
                                     {q.quote_status === "converted" ? (
                                       <p>
-                                        <span className="font-semibold">Estado:</span>{" "}
+                                        <span className="font-semibold">
+                                          Estado:
+                                        </span>{" "}
                                         Convertida
                                         {q.converted_at
                                           ? ` el ${formatDate(q.converted_at)}`
@@ -2866,7 +3282,7 @@ export default function QuotesPage() {
               <div
                 className={
                   listView === "grid"
-                    ? "grid gap-3 md:grid-cols-2"
+                    ? "grid gap-3 md:grid-cols-2 xl:grid-cols-3"
                     : "flex flex-col gap-3"
                 }
               >
@@ -2967,7 +3383,9 @@ export default function QuotesPage() {
                           tone="neutral"
                           onClick={() => toggleExpandedQuote(q.id_quote)}
                           label={isExpanded ? "Ocultar detalle" : "Ver detalle"}
-                          aria-label={isExpanded ? "Ocultar detalle" : "Ver detalle"}
+                          aria-label={
+                            isExpanded ? "Ocultar detalle" : "Ver detalle"
+                          }
                           title={isExpanded ? "Ocultar detalle" : "Ver detalle"}
                         >
                           {isExpanded ? (
@@ -3072,7 +3490,9 @@ export default function QuotesPage() {
                               </p>
                               <p>
                                 <span className="font-semibold">Salida:</span>{" "}
-                                {formatDate(row.bookingDraft.departure_date || "")}
+                                {formatDate(
+                                  row.bookingDraft.departure_date || "",
+                                )}
                               </p>
                               <p>
                                 <span className="font-semibold">Regreso:</span>{" "}
@@ -3122,7 +3542,9 @@ export default function QuotesPage() {
 
               <div className="space-y-4">
                 <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
-                  <h3 className="mb-2 text-sm font-semibold">Datos obligatorios de reserva</h3>
+                  <h3 className="mb-2 text-sm font-semibold">
+                    Datos obligatorios de reserva
+                  </h3>
                   <div className="grid gap-2 md:grid-cols-3">
                     {canAssignOwner && (
                       <select
@@ -3135,7 +3557,9 @@ export default function QuotesPage() {
                                   ...prev,
                                   booking: {
                                     ...prev.booking,
-                                    id_user: e.target.value ? Number(e.target.value) : null,
+                                    id_user: e.target.value
+                                      ? Number(e.target.value)
+                                      : null,
                                   },
                                 }
                               : prev,
@@ -3161,7 +3585,10 @@ export default function QuotesPage() {
                           prev
                             ? {
                                 ...prev,
-                                booking: { ...prev.booking, clientStatus: e.target.value },
+                                booking: {
+                                  ...prev.booking,
+                                  clientStatus: e.target.value,
+                                },
                               }
                             : prev,
                         )
@@ -3176,7 +3603,10 @@ export default function QuotesPage() {
                           prev
                             ? {
                                 ...prev,
-                                booking: { ...prev.booking, operatorStatus: e.target.value },
+                                booking: {
+                                  ...prev.booking,
+                                  operatorStatus: e.target.value,
+                                },
                               }
                             : prev,
                         )
@@ -3191,7 +3621,10 @@ export default function QuotesPage() {
                           prev
                             ? {
                                 ...prev,
-                                booking: { ...prev.booking, status: e.target.value },
+                                booking: {
+                                  ...prev.booking,
+                                  status: e.target.value,
+                                },
                               }
                             : prev,
                         )
@@ -3206,7 +3639,10 @@ export default function QuotesPage() {
                           prev
                             ? {
                                 ...prev,
-                                booking: { ...prev.booking, invoice_type: e.target.value },
+                                booking: {
+                                  ...prev.booking,
+                                  invoice_type: e.target.value,
+                                },
                               }
                             : prev,
                         )
@@ -3241,7 +3677,10 @@ export default function QuotesPage() {
                           prev
                             ? {
                                 ...prev,
-                                booking: { ...prev.booking, return_date: e.target.value },
+                                booking: {
+                                  ...prev.booking,
+                                  return_date: e.target.value,
+                                },
                               }
                             : prev,
                         )
@@ -3256,7 +3695,10 @@ export default function QuotesPage() {
                           prev
                             ? {
                                 ...prev,
-                                booking: { ...prev.booking, details: e.target.value },
+                                booking: {
+                                  ...prev.booking,
+                                  details: e.target.value,
+                                },
                               }
                             : prev,
                         )
@@ -3289,7 +3731,10 @@ export default function QuotesPage() {
                           prev
                             ? {
                                 ...prev,
-                                booking: { ...prev.booking, observation: e.target.value },
+                                booking: {
+                                  ...prev.booking,
+                                  observation: e.target.value,
+                                },
                               }
                             : prev,
                         )
@@ -3320,22 +3765,48 @@ export default function QuotesPage() {
                     </select>
 
                     {convertForm.titular.mode === "existing" ? (
-                      <select
-                        className={SELECT}
-                        value={convertForm.titular.client_id || ""}
-                        onChange={(e) =>
-                          updateConvertPassenger("titular", 0, {
-                            client_id: e.target.value ? Number(e.target.value) : null,
-                          })
-                        }
-                      >
-                        <option value="">Seleccionar pax</option>
-                        {passengers.map((p) => (
-                          <option key={p.id_client} value={p.id_client}>
-                            {p.first_name} {p.last_name}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="md:col-span-2">
+                        <ClientPicker
+                          token={token}
+                          valueId={convertForm.titular.client_id ?? null}
+                          placeholder="Buscar titular existente..."
+                          excludeIds={convertForm.companions
+                            .map((companion) =>
+                              companion.mode === "existing" &&
+                              typeof companion.client_id === "number"
+                                ? companion.client_id
+                                : null,
+                            )
+                            .filter(
+                              (id): id is number => typeof id === "number",
+                            )}
+                          onSelect={(client) =>
+                            updateConvertPassenger("titular", 0, {
+                              mode: "existing",
+                              client_id: client.id_client,
+                              first_name: client.first_name || "",
+                              last_name: client.last_name || "",
+                              phone: client.phone || "",
+                              email: client.email || "",
+                              birth_date: client.birth_date || "",
+                              nationality: client.nationality || "",
+                              gender: client.gender || "",
+                            })
+                          }
+                          onClear={() =>
+                            updateConvertPassenger("titular", 0, {
+                              client_id: null,
+                              first_name: "",
+                              last_name: "",
+                              phone: "",
+                              email: "",
+                              birth_date: "",
+                              nationality: "",
+                              gender: "",
+                            })
+                          }
+                        />
+                      </div>
                     ) : (
                       <>
                         {convertProfileOptions.length > 1 && (
@@ -3429,7 +3900,9 @@ export default function QuotesPage() {
                           <option value="Masculino">Masculino</option>
                           <option value="Femenino">Femenino</option>
                           <option value="Otro">Otro</option>
-                          <option value="Prefiere no decir">Prefiere no decir</option>
+                          <option value="Prefiere no decir">
+                            Prefiere no decir
+                          </option>
                         </select>
                         <input
                           className={INPUT}
@@ -3529,7 +4002,11 @@ export default function QuotesPage() {
                 <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
                   <div className="mb-2 flex items-center justify-between">
                     <h3 className="text-sm font-semibold">Acompañantes</h3>
-                    <button type="button" className={BTN} onClick={addConvertCompanion}>
+                    <button
+                      type="button"
+                      className={BTN}
+                      onClick={addConvertCompanion}
+                    >
                       Agregar
                     </button>
                   </div>
@@ -3554,7 +4031,9 @@ export default function QuotesPage() {
                                       ? "existing"
                                       : "new",
                                   client_id:
-                                    e.target.value === "existing" ? p.client_id : null,
+                                    e.target.value === "existing"
+                                      ? p.client_id
+                                      : null,
                                 })
                               }
                             >
@@ -3571,22 +4050,55 @@ export default function QuotesPage() {
                           </div>
 
                           {p.mode === "existing" ? (
-                            <select
-                              className={SELECT}
-                              value={p.client_id || ""}
-                              onChange={(e) =>
+                            <ClientPicker
+                              token={token}
+                              valueId={p.client_id ?? null}
+                              placeholder="Buscar acompañante existente..."
+                              excludeIds={[
+                                ...(convertForm.titular.mode === "existing" &&
+                                typeof convertForm.titular.client_id ===
+                                  "number"
+                                  ? [convertForm.titular.client_id]
+                                  : []),
+                                ...convertForm.companions
+                                  .map((companion, companionIdx) =>
+                                    companionIdx !== idx &&
+                                    companion.mode === "existing" &&
+                                    typeof companion.client_id === "number"
+                                      ? companion.client_id
+                                      : null,
+                                  )
+                                  .filter(
+                                    (id): id is number =>
+                                      typeof id === "number",
+                                  ),
+                              ]}
+                              onSelect={(client) =>
                                 updateConvertPassenger("companions", idx, {
-                                  client_id: e.target.value ? Number(e.target.value) : null,
+                                  mode: "existing",
+                                  client_id: client.id_client,
+                                  first_name: client.first_name || "",
+                                  last_name: client.last_name || "",
+                                  phone: client.phone || "",
+                                  email: client.email || "",
+                                  birth_date: client.birth_date || "",
+                                  nationality: client.nationality || "",
+                                  gender: client.gender || "",
                                 })
                               }
-                            >
-                              <option value="">Seleccionar pax</option>
-                              {passengers.map((opt) => (
-                                <option key={opt.id_client} value={opt.id_client}>
-                                  {opt.first_name} {opt.last_name}
-                                </option>
-                              ))}
-                            </select>
+                              onClear={() =>
+                                updateConvertPassenger("companions", idx, {
+                                  client_id: null,
+                                  first_name: "",
+                                  last_name: "",
+                                  phone: "",
+                                  email: "",
+                                  birth_date: "",
+                                  nationality: "",
+                                  gender: "",
+                                })
+                              }
+                            />
                           ) : (
                             <div className="grid gap-2 md:grid-cols-2">
                               {convertProfileOptions.length > 1 && (
@@ -3744,7 +4256,8 @@ export default function QuotesPage() {
                                   value={null}
                                   onChange={(value) =>
                                     updateConvertPassenger("companions", idx, {
-                                      nationality: destinationValueToLabel(value),
+                                      nationality:
+                                        destinationValueToLabel(value),
                                     })
                                   }
                                   placeholder="Nacionalidad"
@@ -3770,7 +4283,9 @@ export default function QuotesPage() {
                                 <option value="Masculino">Masculino</option>
                                 <option value="Femenino">Femenino</option>
                                 <option value="Otro">Otro</option>
-                                <option value="Prefiere no decir">Prefiere no decir</option>
+                                <option value="Prefiere no decir">
+                                  Prefiere no decir
+                                </option>
                               </select>
                             </div>
                           )}
@@ -3783,13 +4298,19 @@ export default function QuotesPage() {
                 <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
                   <div className="mb-2 flex items-center justify-between">
                     <h3 className="text-sm font-semibold">Servicios</h3>
-                    <button type="button" className={BTN} onClick={addConvertService}>
+                    <button
+                      type="button"
+                      className={BTN}
+                      onClick={addConvertService}
+                    >
                       Agregar
                     </button>
                   </div>
 
                   {convertForm.services.length === 0 ? (
-                    <p className="text-xs opacity-70">Sin servicios para convertir.</p>
+                    <p className="text-xs opacity-70">
+                      Sin servicios para convertir.
+                    </p>
                   ) : (
                     <div className="space-y-3">
                       {convertForm.services.map((s, idx) => (
@@ -3811,26 +4332,37 @@ export default function QuotesPage() {
                               className={SELECT}
                               value={s.type}
                               onChange={(e) =>
-                                updateConvertService(idx, { type: e.target.value })
+                                updateConvertService(idx, {
+                                  type: e.target.value,
+                                })
                               }
                               disabled={loadingServiceTypes}
                             >
                               <option value="">Tipo de servicio</option>
                               {serviceTypes.map((typeOption) => (
-                                <option key={typeOption.value} value={typeOption.value}>
+                                <option
+                                  key={typeOption.value}
+                                  value={typeOption.value}
+                                >
                                   {typeOption.label}
                                 </option>
                               ))}
                               {s.type &&
                                 !serviceTypes.some(
                                   (typeOption) => typeOption.value === s.type,
-                                ) && <option value={s.type}>{s.type} (no listado)</option>}
+                                ) && (
+                                  <option value={s.type}>
+                                    {s.type} (no listado)
+                                  </option>
+                                )}
                             </select>
                             <select
                               className={SELECT}
                               value={s.currency}
                               onChange={(e) => {
-                                updateConvertService(idx, { currency: e.target.value });
+                                updateConvertService(idx, {
+                                  currency: e.target.value,
+                                });
                                 clearMoneyInputsByIndex("convert", idx);
                               }}
                               disabled={loadingCurrencies}
@@ -3842,8 +4374,12 @@ export default function QuotesPage() {
                                 </option>
                               ))}
                               {s.currency &&
-                                !currencyOptions.includes(s.currency.toUpperCase()) && (
-                                  <option value={s.currency}>{s.currency} (no listado)</option>
+                                !currencyOptions.includes(
+                                  s.currency.toUpperCase(),
+                                ) && (
+                                  <option value={s.currency}>
+                                    {s.currency} (no listado)
+                                  </option>
                                 )}
                             </select>
                             <input
@@ -3852,8 +4388,13 @@ export default function QuotesPage() {
                               className={INPUT}
                               placeholder="Venta"
                               value={
-                                moneyInputs[moneyInputKey("convert", idx, "sale_price")] ??
-                                formatStoredMoneyInput(s.sale_price, s.currency || "ARS")
+                                moneyInputs[
+                                  moneyInputKey("convert", idx, "sale_price")
+                                ] ??
+                                formatStoredMoneyInput(
+                                  s.sale_price,
+                                  s.currency || "ARS",
+                                )
                               }
                               onChange={(e) => {
                                 const currency = s.currency || "ARS";
@@ -3865,7 +4406,8 @@ export default function QuotesPage() {
                                 const parsed = parseMoneyInputSafe(formatted);
                                 setMoneyInputs((prev) => ({
                                   ...prev,
-                                  [moneyInputKey("convert", idx, "sale_price")]: formatted,
+                                  [moneyInputKey("convert", idx, "sale_price")]:
+                                    formatted,
                                 }));
                                 updateConvertService(idx, {
                                   sale_price:
@@ -3876,17 +4418,25 @@ export default function QuotesPage() {
                               }}
                               onBlur={(e) => {
                                 const currency = s.currency || "ARS";
-                                const parsed = parseMoneyInputSafe(e.target.value);
+                                const parsed = parseMoneyInputSafe(
+                                  e.target.value,
+                                );
                                 const numeric =
-                                  parsed != null && Number.isFinite(parsed) ? parsed : null;
+                                  parsed != null && Number.isFinite(parsed)
+                                    ? parsed
+                                    : null;
                                 updateConvertService(idx, {
-                                  sale_price: numeric != null ? String(numeric) : "",
+                                  sale_price:
+                                    numeric != null ? String(numeric) : "",
                                 });
                                 setMoneyInputs((prev) => ({
                                   ...prev,
                                   [moneyInputKey("convert", idx, "sale_price")]:
                                     numeric != null
-                                      ? formatMoneyInputSafe(String(numeric), currency)
+                                      ? formatMoneyInputSafe(
+                                          String(numeric),
+                                          currency,
+                                        )
                                       : "",
                                 }));
                               }}
@@ -3897,8 +4447,13 @@ export default function QuotesPage() {
                               className={INPUT}
                               placeholder="Costo"
                               value={
-                                moneyInputs[moneyInputKey("convert", idx, "cost_price")] ??
-                                formatStoredMoneyInput(s.cost_price, s.currency || "ARS")
+                                moneyInputs[
+                                  moneyInputKey("convert", idx, "cost_price")
+                                ] ??
+                                formatStoredMoneyInput(
+                                  s.cost_price,
+                                  s.currency || "ARS",
+                                )
                               }
                               onChange={(e) => {
                                 const currency = s.currency || "ARS";
@@ -3910,7 +4465,8 @@ export default function QuotesPage() {
                                 const parsed = parseMoneyInputSafe(formatted);
                                 setMoneyInputs((prev) => ({
                                   ...prev,
-                                  [moneyInputKey("convert", idx, "cost_price")]: formatted,
+                                  [moneyInputKey("convert", idx, "cost_price")]:
+                                    formatted,
                                 }));
                                 updateConvertService(idx, {
                                   cost_price:
@@ -3921,37 +4477,29 @@ export default function QuotesPage() {
                               }}
                               onBlur={(e) => {
                                 const currency = s.currency || "ARS";
-                                const parsed = parseMoneyInputSafe(e.target.value);
+                                const parsed = parseMoneyInputSafe(
+                                  e.target.value,
+                                );
                                 const numeric =
-                                  parsed != null && Number.isFinite(parsed) ? parsed : null;
+                                  parsed != null && Number.isFinite(parsed)
+                                    ? parsed
+                                    : null;
                                 updateConvertService(idx, {
-                                  cost_price: numeric != null ? String(numeric) : "",
+                                  cost_price:
+                                    numeric != null ? String(numeric) : "",
                                 });
                                 setMoneyInputs((prev) => ({
                                   ...prev,
                                   [moneyInputKey("convert", idx, "cost_price")]:
                                     numeric != null
-                                      ? formatMoneyInputSafe(String(numeric), currency)
+                                      ? formatMoneyInputSafe(
+                                          String(numeric),
+                                          currency,
+                                        )
                                       : "",
                                 }));
                               }}
                             />
-                            <select
-                              className={SELECT}
-                              value={s.operator_id || ""}
-                              onChange={(e) =>
-                                updateConvertService(idx, {
-                                  operator_id: e.target.value ? Number(e.target.value) : null,
-                                })
-                              }
-                            >
-                              <option value="">Operador</option>
-                              {operators.map((op) => (
-                                <option key={op.id_operator} value={op.id_operator}>
-                                  {op.name}
-                                </option>
-                              ))}
-                            </select>
                             <div className="space-y-1">
                               <DestinationPicker
                                 type="destination"
@@ -3971,14 +4519,6 @@ export default function QuotesPage() {
                                 </p>
                               ) : null}
                             </div>
-                            <input
-                              className={INPUT}
-                              placeholder="Referencia / Nro File / Localizador"
-                              value={s.reference}
-                              onChange={(e) =>
-                                updateConvertService(idx, { reference: e.target.value })
-                              }
-                            />
                             <input
                               type="date"
                               className={INPUT}

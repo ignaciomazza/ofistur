@@ -30,11 +30,11 @@ type QuoteConfigDTO = {
 };
 
 type NewFieldState = {
-  key: string;
   label: string;
   type: QuoteCustomFieldType;
   required: boolean;
-  options: string;
+  options: string[];
+  optionDraft: string;
   placeholder: string;
   help: string;
 };
@@ -91,12 +91,16 @@ const GLASS =
   "rounded-3xl border border-sky-300/30 bg-gradient-to-br from-white/56 via-sky-100/40 to-sky-100/32 shadow-lg shadow-sky-950/10 backdrop-blur-xl dark:border-sky-200/18 dark:from-sky-950/30 dark:via-sky-900/24 dark:to-sky-900/18";
 const BTN =
   "rounded-full border border-sky-500/45 bg-sky-400/20 px-4 py-2 text-sm font-medium text-sky-950 shadow-sm shadow-sky-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-sky-400/30 active:translate-y-0 disabled:opacity-50 dark:border-sky-300/45 dark:bg-sky-400/20 dark:text-sky-100";
+const SUBTLE_BTN =
+  "rounded-full border border-sky-500/35 bg-white/55 px-4 py-2 text-sm text-sky-900 shadow-sm shadow-sky-950/10 transition duration-200 hover:-translate-y-0.5 hover:bg-sky-100/65 active:translate-y-0 disabled:opacity-50 dark:border-sky-300/35 dark:bg-sky-950/30 dark:text-sky-100";
 const DANGER_BTN =
   "rounded-full border border-rose-500/55 bg-rose-200/20 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm shadow-rose-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-rose-200/30 active:translate-y-0 disabled:opacity-50 dark:border-rose-300/55 dark:bg-rose-300/20 dark:text-rose-200";
 const INPUT =
   "w-full rounded-2xl border border-sky-300/40 bg-white/60 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:text-slate-500/80 focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/30 dark:bg-sky-950/20 dark:text-sky-50 dark:placeholder:text-sky-100/60";
 const SELECT =
   "w-full appearance-none rounded-2xl border border-sky-300/40 bg-white/60 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/30 dark:bg-sky-950/20 dark:text-sky-50";
+const CHIP =
+  "inline-flex items-center rounded-full border border-sky-400/40 bg-sky-300/20 px-2.5 py-1 text-[11px] font-semibold text-sky-900 dark:border-sky-300/40 dark:bg-sky-300/20 dark:text-sky-100";
 const SOFT_ROW =
   "rounded-2xl border border-sky-300/30 bg-white/34 px-3 py-2 text-sky-950 shadow-sm shadow-sky-950/10 dark:border-sky-200/18 dark:bg-sky-950/20 dark:text-sky-50";
 
@@ -129,12 +133,25 @@ function slugifyKey(input: string): string {
     .slice(0, 40);
 }
 
+function buildUniqueKey(label: string, existingKeys: string[]): string {
+  const base = slugifyKey(label) || "campo";
+  const used = new Set(existingKeys);
+  if (!used.has(base)) return base;
+  let suffix = 2;
+  while (suffix < 2000) {
+    const next = `${base.slice(0, 36)}_${suffix}`;
+    if (!used.has(next)) return next;
+    suffix += 1;
+  }
+  return `${base.slice(0, 35)}_${Date.now().toString().slice(-4)}`;
+}
+
 const defaultNewField = (): NewFieldState => ({
-  key: "",
   label: "",
   type: "text",
   required: false,
-  options: "",
+  options: [],
+  optionDraft: "",
   placeholder: "",
   help: "",
 });
@@ -264,21 +281,15 @@ export default function QuotesConfigPage() {
 
   const addCustomField = () => {
     const label = newField.label.trim();
-    const key = (newField.key.trim() || slugifyKey(label)).slice(0, 40);
-    if (!label || !key) {
-      toast.error("Definí al menos nombre y nombre interno del campo.");
+    if (!label) {
+      toast.error("Definí al menos el nombre del campo.");
       return;
     }
-    if (!/^[a-z0-9_]+$/.test(key)) {
-      toast.error(
-        "El nombre interno solo puede tener minúsculas, números y guiones bajos.",
-      );
+    if (newField.type === "select" && newField.options.length === 0) {
+      toast.error("Agregá al menos una opción para este campo de lista.");
       return;
     }
-    if (customFields.some((f) => f.key === key)) {
-      toast.error("Ya existe un campo con ese nombre interno.");
-      return;
-    }
+    const key = buildUniqueKey(label, customFields.map((field) => field.key));
 
     const field: QuoteCustomField = {
       key,
@@ -287,17 +298,35 @@ export default function QuotesConfigPage() {
       required: newField.required,
       placeholder: newField.placeholder.trim() || undefined,
       help: newField.help.trim() || undefined,
-      options:
-        newField.type === "select"
-          ? newField.options
-              .split(",")
-              .map((opt) => opt.trim())
-              .filter(Boolean)
-          : undefined,
+      options: newField.type === "select" ? newField.options : undefined,
     };
 
     setCustomFields((prev) => [...prev, field]);
     setNewField(defaultNewField());
+  };
+
+  const addNewFieldOption = () => {
+    const value = newField.optionDraft.trim();
+    if (!value) return;
+    const alreadyExists = newField.options.some(
+      (option) => option.toLowerCase() === value.toLowerCase(),
+    );
+    if (alreadyExists) {
+      toast.info("Esa opción ya está cargada.");
+      return;
+    }
+    setNewField((prev) => ({
+      ...prev,
+      options: [...prev.options, value],
+      optionDraft: "",
+    }));
+  };
+
+  const removeNewFieldOption = (option: string) => {
+    setNewField((prev) => ({
+      ...prev,
+      options: prev.options.filter((item) => item !== option),
+    }));
   };
 
   const removeCustomField = (key: string) => {
@@ -559,15 +588,6 @@ export default function QuotesConfigPage() {
                 }
                 disabled={!canEdit}
               />
-              <input
-                className={INPUT}
-                placeholder="Nombre interno (ej: forma_pago)"
-                value={newField.key}
-                onChange={(e) =>
-                  setNewField((prev) => ({ ...prev, key: e.target.value }))
-                }
-                disabled={!canEdit}
-              />
               <select
                 className={SELECT}
                 value={newField.type}
@@ -575,6 +595,9 @@ export default function QuotesConfigPage() {
                   setNewField((prev) => ({
                     ...prev,
                     type: e.target.value as QuoteCustomFieldType,
+                    options:
+                      e.target.value === "select" ? prev.options : [],
+                    optionDraft: "",
                   }))
                 }
                 disabled={!canEdit}
@@ -604,15 +627,50 @@ export default function QuotesConfigPage() {
                 }
                 disabled={!canEdit}
               />
-              <input
-                className={INPUT}
-                placeholder="Opciones de la lista, separadas por coma"
-                value={newField.options}
-                onChange={(e) =>
-                  setNewField((prev) => ({ ...prev, options: e.target.value }))
-                }
-                disabled={!canEdit || newField.type !== "select"}
-              />
+              {newField.type === "select" && (
+                <div className="space-y-2 md:col-span-3">
+                  <div className="flex gap-2">
+                    <input
+                      className={INPUT}
+                      placeholder="Agregar opción de la lista"
+                      value={newField.optionDraft}
+                      onChange={(e) =>
+                        setNewField((prev) => ({ ...prev, optionDraft: e.target.value }))
+                      }
+                      disabled={!canEdit}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        addNewFieldOption();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className={SUBTLE_BTN}
+                      onClick={addNewFieldOption}
+                      disabled={!canEdit}
+                    >
+                      Agregar opción
+                    </button>
+                  </div>
+                  {newField.options.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {newField.options.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          className={CHIP}
+                          onClick={() => removeNewFieldOption(option)}
+                          disabled={!canEdit}
+                          title="Quitar opción"
+                        >
+                          {option} ×
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className={`${SOFT_ROW} flex items-center justify-between gap-3 md:col-span-2`}>
                 <div>
                   <p className="text-sm font-medium">Obligatorio</p>
@@ -643,7 +701,7 @@ export default function QuotesConfigPage() {
             <div className="mb-3">
               <input
                 className={INPUT}
-                placeholder="Buscar campo personalizado por nombre o nombre interno"
+                placeholder="Buscar campo personalizado por nombre"
                 value={customSearch}
                 onChange={(e) => setCustomSearch(e.target.value)}
               />
@@ -660,9 +718,6 @@ export default function QuotesConfigPage() {
                   >
                     <div>
                       <p className="font-medium">{field.label}</p>
-                      <p className="text-xs opacity-70">
-                        Nombre interno: {field.key}
-                      </p>
                       <p className="text-xs opacity-70">
                         {FIELD_TYPE_LABELS[field.type]}
                         {field.required ? " · obligatorio" : ""}

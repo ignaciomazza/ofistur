@@ -3,7 +3,6 @@ import prisma, { Prisma } from "@/lib/prisma";
 import { decodePublicId, encodePublicId } from "@/lib/publicIds";
 import {
   canAccessQuoteOwner,
-  getLeaderScope,
   resolveQuoteAuth,
 } from "@/lib/quotesAuth";
 import {
@@ -16,6 +15,7 @@ import { normalizeRole } from "@/utils/permissions";
 
 type QuoteUpdateBody = {
   id_user?: number;
+  creation_date?: string | null;
   lead_name?: string | null;
   lead_phone?: string | null;
   lead_email?: string | null;
@@ -77,6 +77,18 @@ function parseDateOrNull(value: unknown): Date | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function canOverrideQuoteMetaByRole(role: string): boolean {
+  return [
+    "gerente",
+    "administrativo",
+    "admin",
+    "administrador",
+    "desarrollador",
+    "developer",
+    "dev",
+  ].includes(role);
 }
 
 async function resolveQuoteIdFromParam(
@@ -180,6 +192,8 @@ async function handlePut(req: NextApiRequest, res: NextApiResponse) {
   try {
     const body = (req.body ?? {}) as QuoteUpdateBody;
     const data: Prisma.QuoteUpdateInput = {};
+    const role = normalizeRole(auth.role);
+    const canAssignOthers = canOverrideQuoteMetaByRole(role);
 
     if (body.lead_name !== undefined) {
       data.lead_name = cleanString(body.lead_name, 120) ?? null;
@@ -223,25 +237,21 @@ async function handlePut(req: NextApiRequest, res: NextApiResponse) {
     if (body.pdf_last_file_name !== undefined) {
       data.pdf_last_file_name = cleanString(body.pdf_last_file_name, 180) ?? null;
     }
-
-    const role = normalizeRole(auth.role);
-    const canAssignOthers = [
-      "gerente",
-      "administrativo",
-      "desarrollador",
-      "lider",
-    ].includes(role);
+    if (body.creation_date !== undefined) {
+      if (!canAssignOthers) {
+        return res
+          .status(403)
+          .json({ error: "No tenés permisos para modificar fecha de creación." });
+      }
+      const creationDate = parseDateOrNull(body.creation_date);
+      if (!creationDate) {
+        return res.status(400).json({ error: "Fecha de creación inválida." });
+      }
+      data.creation_date = creationDate;
+    }
 
     if (canAssignOthers && toPositiveInt(body.id_user)) {
       const target = toPositiveInt(body.id_user)!;
-      if (role === "lider" && target !== auth.id_user) {
-        const scopeUsers = await getLeaderScope(auth.id_user, auth.id_agency);
-        if (!scopeUsers.userIds.includes(target)) {
-          return res
-            .status(403)
-            .json({ error: "No podés asignar fuera de tu equipo." });
-        }
-      }
       const targetUser = await prisma.user.findFirst({
         where: { id_user: target, id_agency: auth.id_agency },
         select: { id_user: true },

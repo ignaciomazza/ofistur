@@ -17,6 +17,7 @@ import { normalizeRole } from "@/utils/permissions";
 
 type QuoteCreateBody = {
   id_user?: number;
+  creation_date?: string | null;
   lead_name?: string;
   lead_phone?: string;
   lead_email?: string;
@@ -56,6 +57,18 @@ function normalizeStatusScope(value: unknown): QuoteStatusScope {
   if (normalized === "converted") return "converted";
   if (normalized === "all") return "all";
   return "active";
+}
+
+function canOverrideQuoteMetaByRole(role: string): boolean {
+  return [
+    "gerente",
+    "administrativo",
+    "admin",
+    "administrador",
+    "desarrollador",
+    "developer",
+    "dev",
+  ].includes(role);
 }
 
 function parseDateOrNull(value: unknown): Date | null {
@@ -293,25 +306,12 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   try {
     const body = (req.body ?? {}) as QuoteCreateBody;
     const role = normalizeRole(auth.role);
-    const canAssignOthers = [
-      "gerente",
-      "administrativo",
-      "desarrollador",
-      "lider",
-    ].includes(role);
+    const canAssignOthers = canOverrideQuoteMetaByRole(role);
     let usedUserId = auth.id_user;
+    let usedCreationDate: Date | null = null;
 
     if (canAssignOthers && toPositiveInt(body.id_user)) {
       const requestedUser = toPositiveInt(body.id_user)!;
-      if (role === "lider" && requestedUser !== auth.id_user) {
-        const scope = await getLeaderScope(auth.id_user, auth.id_agency);
-        if (!scope.userIds.includes(requestedUser)) {
-          return res
-            .status(403)
-            .json({ error: "No podés asignar fuera de tu equipo." });
-        }
-      }
-
       const targetUser = await prisma.user.findFirst({
         where: { id_user: requestedUser, id_agency: auth.id_agency },
         select: { id_user: true },
@@ -322,6 +322,18 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           .json({ error: "Usuario inválido para esta agencia." });
       }
       usedUserId = requestedUser;
+    }
+
+    if (body.creation_date !== undefined) {
+      if (!canAssignOthers) {
+        return res
+          .status(403)
+          .json({ error: "No tenés permisos para modificar fecha de creación." });
+      }
+      usedCreationDate = parseDateOrNull(body.creation_date);
+      if (!usedCreationDate) {
+        return res.status(400).json({ error: "Fecha de creación inválida." });
+      }
     }
 
     const bookingDraft = normalizeQuoteBookingDraft(body.booking_draft);
@@ -352,6 +364,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           service_drafts: serviceDrafts as Prisma.InputJsonValue,
           custom_values: customValues as Prisma.InputJsonValue,
           quote_status: "active",
+          creation_date: usedCreationDate ?? undefined,
           pdf_draft: pdfDraft ?? undefined,
           pdf_draft_saved_at: pdfDraftSavedAt,
           pdf_last_file_name: pdfLastFileName,
