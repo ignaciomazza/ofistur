@@ -90,7 +90,7 @@ export default function GroupReceiptHeader(props: {
               {title}
             </p>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 md:text-xs">
-              {mode === "booking" ? "Contexto de reserva" : "Contexto de agencia"}
+              {mode === "booking" ? "Reserva vinculada" : "Operación de agencia"}
             </p>
           </div>
         </div>

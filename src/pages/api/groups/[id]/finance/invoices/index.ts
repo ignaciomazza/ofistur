@@ -326,7 +326,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         "exchange_rate",
         "tipo_factura",
         "service_refs",
-        "payload_afip"
+        "payload_afip",
+        "updated_at"
       ) VALUES (
         ${agencyInvoiceId},
         ${ctx.auth.id_agency},
@@ -344,7 +345,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         ${exchangeRate},
         ${Number.isFinite(tipoFactura) ? tipoFactura : null},
         ${serviceIds},
-        ${payloadAfip}::jsonb
+        ${payloadAfip}::jsonb,
+        NOW()
       )
       RETURNING
         "id_travel_group_invoice",
@@ -371,12 +373,14 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
             "travel_group_invoice_id",
             "description",
             "tax_category",
-            "amount"
+            "amount",
+            "updated_at"
           ) VALUES (
             ${createdInvoice.id_travel_group_invoice},
             ${item.description},
             ${item.taxCategory},
-            ${item.amount == null ? null : toDecimal(item.amount).toDecimalPlaces(2)}
+            ${item.amount == null ? null : toDecimal(item.amount).toDecimalPlaces(2)},
+            NOW()
           )
         `);
       }

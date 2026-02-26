@@ -317,7 +317,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           "amount",
           "currency",
           "due_date",
-          "status"
+          "status",
+          "updated_at"
         ) VALUES (
           ${agencyPaymentId},
           ${ctx.auth.id_agency},
@@ -330,7 +331,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           ${amountsPerInstallment[idx]},
           ${currency},
           ${parsedDueDates[idx]},
-          ${"PENDIENTE"}
+          ${"PENDIENTE"},
+          NOW()
         )
         RETURNING
           "id_travel_group_client_payment",

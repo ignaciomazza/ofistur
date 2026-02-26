@@ -303,7 +303,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         "counter_currency",
         "service_refs",
         "payload",
-        "created_by"
+        "created_by",
+        "updated_at"
       ) VALUES (
         ${agencyPaymentId},
         ${ctx.auth.id_agency},
@@ -324,7 +325,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         ${counterCurrency},
         ${serviceRefs},
         ${payload}::jsonb,
-        ${ctx.auth.id_user}
+        ${ctx.auth.id_user},
+        NOW()
       )
     `);
   });

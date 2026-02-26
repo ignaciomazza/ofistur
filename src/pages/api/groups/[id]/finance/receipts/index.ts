@@ -393,7 +393,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         "counter_amount",
         "counter_currency",
         "client_ids",
-        "service_refs"
+        "service_refs",
+        "updated_at"
       ) VALUES (
         ${agencyReceiptId},
         ${ctx.auth.id_agency},
@@ -415,7 +416,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         ${counterAmount},
         ${counterCurrency},
         ${finalClientIds},
-        ${finalServiceIds}
+        ${finalServiceIds},
+        NOW()
       )
       RETURNING
         "id_travel_group_receipt",

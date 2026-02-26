@@ -222,7 +222,7 @@ export default function GroupOperatorPaymentList({
         ) : items.length === 0 ? (
           <div className="rounded-2xl border border-sky-200/80 bg-white/75 p-5 text-center text-[13px] text-slate-700 shadow-sm shadow-sky-100/40 backdrop-blur-sm dark:border-sky-900/40 dark:bg-slate-900/55 dark:text-slate-300 md:text-sm">
             {groupId
-              ? "No hay pagos cargados para este contexto."
+              ? "No hay pagos cargados para esta salida."
               : `No hay pagos cargados ${bookingId ? "para esta reserva." : "."}`}
           </div>
         ) : (

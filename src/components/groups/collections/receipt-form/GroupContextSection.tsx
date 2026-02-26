@@ -13,6 +13,7 @@ export default function GroupContextSection(props: {
   attachEnabled: boolean;
   action: Action;
   setAction: (a: Action) => void;
+  hideContext?: boolean;
   requireServiceSelection: boolean;
 
   canToggleAgency: boolean;
@@ -34,6 +35,7 @@ export default function GroupContextSection(props: {
   services: ServiceLite[];
   loadingServices: boolean;
   selectedServiceIds: number[];
+  effectiveServiceIds: number[];
   toggleService: (svc: ServiceLite) => void;
   serviceDisabledReasons: Record<number, string>;
 
@@ -47,6 +49,7 @@ export default function GroupContextSection(props: {
     attachEnabled,
     action,
     setAction,
+    hideContext = false,
     requireServiceSelection,
 
     canToggleAgency,
@@ -68,6 +71,7 @@ export default function GroupContextSection(props: {
     services,
     loadingServices,
     selectedServiceIds,
+    effectiveServiceIds,
     toggleService,
     serviceDisabledReasons,
 
@@ -116,18 +120,19 @@ export default function GroupContextSection(props: {
         </Section>
       )}
 
-      <Section
-        title="Contexto"
-        desc={
-          action === "attach"
-            ? requireServiceSelection
-              ? "Elegí la reserva y los servicios a los que querés asociar el recibo."
-              : "Elegí la reserva y, si aplica, los servicios a los que querés asociar el recibo."
-            : requireServiceSelection
-              ? "Podés asociarlo a una reserva y elegir servicios, o crearlo como recibo de agencia."
-              : "Podés asociarlo a una reserva y elegir servicios de forma opcional, o crearlo como recibo de agencia."
-        }
-      >
+      {!hideContext && (
+        <Section
+          title="Contexto"
+          desc={
+            action === "attach"
+              ? requireServiceSelection
+                ? "Elegí la reserva y los servicios a los que querés asociar el recibo."
+                : "Elegí la reserva y, si aplica, los servicios a los que querés asociar el recibo."
+              : requireServiceSelection
+                ? "Podés asociarlo a una reserva y elegir servicios, o crearlo como recibo de agencia."
+                : "Podés asociarlo a una reserva y elegir servicios de forma opcional, o crearlo como recibo de agencia."
+          }
+        >
         {canToggleAgency && (
           <div className="md:col-span-2">
             <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-slate-700 dark:text-slate-200 md:text-sm">
@@ -289,6 +294,9 @@ export default function GroupContextSection(props: {
                 )}
 
                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className={`${pillBase} ${pillNeutral}`}>
+                    Servicios aplicados: {effectiveServiceIds.length}
+                  </span>
                   <span className={`${pillBase} ${lockedCurrency ? pillOk : pillNeutral}`}>
                     Moneda {lockedCurrency ? `${lockedCurrency} (lock)` : "libre"}
                   </span>
@@ -304,7 +312,8 @@ export default function GroupContextSection(props: {
             )}
           </>
         )}
-      </Section>
+        </Section>
+      )}
     </>
   );
 }

@@ -5799,8 +5799,8 @@ export default function GroupDetailPage() {
                   Plan de pago, cobro y recibo del pasajero
                 </h2>
                 <p className="text-xs text-slate-700 dark:text-slate-300">
-                  Cobros y recibos se gestionan por pasajero. La reserva grupal
-                  es el contexto operativo.
+                  Cobros y recibos se gestionan por pasajero sobre la reserva
+                  grupal.
                 </p>
               </div>
               <ToggleIconButton
@@ -5829,7 +5829,7 @@ export default function GroupDetailPage() {
                   <p className={FLAT_NOTE_CLASS}>
                     {collectLoading
                       ? "Cargando datos de cobro..."
-                      : "Contexto operativo del pasajero no disponible."}
+                      : "No encontramos la reserva financiera del pasajero."}
                   </p>
                 ) : (
                   <div className="space-y-4">
@@ -5860,7 +5860,7 @@ export default function GroupDetailPage() {
 
                     <section className="space-y-4 border-t border-slate-200/70 pt-4 dark:border-slate-700/70">
                       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        Plan de pago y vencimientos
+                        Plan de pagos del pax (Opcional)
                       </p>
                       {!token ? (
                         <p className={FLAT_WARN_CLASS}>
@@ -6166,8 +6166,8 @@ export default function GroupDetailPage() {
                   Pagos y vencimientos con operador
                 </h2>
                 <p className="text-xs text-slate-700 dark:text-slate-300">
-                  Gestión consolidada de deudas y pagos operativos por salida
-                  de la grupal.
+                  Gestión de vencimientos y pagos operativos sobre la reserva
+                  grupal.
                 </p>
               </div>
               <button
@@ -6183,7 +6183,7 @@ export default function GroupDetailPage() {
             <div className="mt-5 space-y-5">
               {financeReservationOptions.length > 1 ? (
                 <div className="space-y-2">
-                  <p className="text-sm">Salida / contexto operativo</p>
+                  <p className="text-sm">Salida de la reserva</p>
                   <div className="flex flex-wrap gap-2">
                     {financeReservationOptions.map((option) => {
                       const active = option.key === paymentsReservationKey;
@@ -6203,7 +6203,7 @@ export default function GroupDetailPage() {
                 </div>
               ) : financeReservationOptions.length === 1 ? (
                 <p className={FLAT_NOTE_CLASS}>
-                  Contexto operativo:{" "}
+                  Salida activa:{" "}
                   <span className="font-semibold">
                     {financeReservationOptions[0].label}
                   </span>
@@ -6212,7 +6212,7 @@ export default function GroupDetailPage() {
 
               {financeReservationOptions.length === 0 ? (
                 <p className={FLAT_NOTE_CLASS}>
-                  Todavía no hay contextos de salida para operar pagos a
+                  Todavía no hay salidas disponibles para operar pagos a
                   operador.
                 </p>
               ) : !selectedPaymentsReservation ? (
@@ -6223,13 +6223,13 @@ export default function GroupDetailPage() {
                 <p className={FLAT_NOTE_CLASS}>
                   {paymentsLoading
                     ? "Cargando datos de pagos..."
-                    : "Contexto operativo no disponible."}
+                    : "No encontramos la reserva financiera."}
                 </p>
               ) : (
                 <div className="space-y-6">
                   <div className="text-xs text-slate-700 dark:text-slate-300">
                     <p>
-                      <span className="font-semibold">Contexto:</span>{" "}
+                      <span className="font-semibold">Salida:</span>{" "}
                       <span className="font-semibold">
                         {selectedPaymentsReservation.label}
                       </span>
@@ -6255,7 +6255,7 @@ export default function GroupDetailPage() {
 
                   <section className="space-y-6 border-t border-slate-200/70 pt-6 dark:border-slate-700/70">
                     <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      Vencimientos y deudas con operador
+                      Plan de pagos y vencimientos del operador
                     </p>
                     {!token ? (
                       <p className={FLAT_WARN_CLASS}>

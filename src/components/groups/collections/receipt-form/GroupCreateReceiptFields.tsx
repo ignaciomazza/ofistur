@@ -1,4 +1,4 @@
-// src/components/receipts/receipt-form/CreateReceiptFields.tsx
+// src/components/groups/collections/receipt-form/GroupCreateReceiptFields.tsx
 "use client";
 
 import React from "react";
@@ -8,6 +8,7 @@ import type {
   FinanceAccount,
   FinanceCurrency,
   FinancePaymentMethod,
+  ReceiptPaymentFeeMode,
 } from "@/types/receipts";
 import type { Client } from "@/types";
 import Spinner from "@/components/Spinner";
@@ -27,21 +28,21 @@ type PaymentDraft = {
   amount: string;
   payment_method_id: number | null;
   account_id: number | null;
+  payment_currency: string;
+  fee_mode: "NONE" | ReceiptPaymentFeeMode;
+  fee_value: string;
 
   operator_id: number | null;
-
   credit_account_id: number | null;
 };
 
 export default function GroupCreateReceiptFields(props: {
   token: string | null;
 
-  // ✅ id del método crédito (real si existe, o virtual 0)
   creditMethodId: number;
   issueDate: string;
   setIssueDate: (v: string) => void;
 
-  // pasajeros
   clientsCount: number;
   clientIds: (number | null)[];
   onIncClient: () => void;
@@ -49,23 +50,16 @@ export default function GroupCreateReceiptFields(props: {
   setClientAt: (index: number, client: Client | null) => void;
   excludeForIndex: (idx: number) => number[];
 
-  // monto/moneda (total, readOnly)
   amountReceived: string;
   feeAmount: string;
-  setFeeAmount: (v: string) => void;
   clientTotal: string;
 
   lockedCurrency: string | null;
   loadingPicks: boolean;
 
   currencies: FinanceCurrency[];
-  freeCurrency: CurrencyCode;
-  setFreeCurrency: (v: CurrencyCode) => void;
   effectiveCurrency: CurrencyCode;
   currencyOverride: boolean;
-  conversionEnabled: boolean;
-  conversionRequired: boolean;
-  setConversionEnabled: (next: boolean) => void;
 
   suggestions: {
     base: number | null;
@@ -75,27 +69,30 @@ export default function GroupCreateReceiptFields(props: {
   applySuggestedAmounts: () => void;
   formatNum: (n: number, cur?: string) => string;
 
-  // palabras
   amountWords: string;
   setAmountWords: (v: string) => void;
-  amountWordsISO: string;
-  setAmountWordsISO: (v: string) => void;
 
-  // picks
   paymentMethods: FinancePaymentMethod[];
   accounts: FinanceAccount[];
-  filteredAccounts: FinanceAccount[];
+  getFilteredAccountsByCurrency: (currencyCode: string) => FinanceAccount[];
+  hasMixedPaymentCurrencies: boolean;
 
-  // pagos múltiples
   paymentLines: PaymentDraft[];
   addPaymentLine: () => void;
   removePaymentLine: (key: string) => void;
   setPaymentLineAmount: (key: string, v: string) => void;
   setPaymentLineMethod: (key: string, methodId: number | null) => void;
   setPaymentLineAccount: (key: string, accountId: number | null) => void;
+  setPaymentLineCurrency: (key: string, currencyCode: string) => void;
+  setPaymentLineFeeMode: (
+    key: string,
+    mode: "NONE" | ReceiptPaymentFeeMode,
+  ) => void;
+  setPaymentLineFeeValue: (key: string, value: string) => void;
+  getPaymentLineFee: (key: string) => number;
+  getPaymentLineImpact: (key: string) => number;
 
   setPaymentLineOperator: (key: string, operatorId: number | null) => void;
-
   setPaymentLineCreditAccount: (
     key: string,
     creditAccountId: number | null,
@@ -105,11 +102,9 @@ export default function GroupCreateReceiptFields(props: {
 
   operators: { id_operator: number; name: string }[];
 
-  // detalle PDF
   paymentDescription: string;
   setPaymentDescription: (v: string) => void;
 
-  // concepto / conversión
   concept: string;
   setConcept: (v: string) => void;
 
@@ -123,7 +118,6 @@ export default function GroupCreateReceiptFields(props: {
   counterCurrency: string;
   setCounterCurrency: (v: string) => void;
 
-  // errors
   errors: Record<string, string>;
 }) {
   const {
@@ -141,20 +135,14 @@ export default function GroupCreateReceiptFields(props: {
 
     amountReceived,
     feeAmount,
-    setFeeAmount,
     clientTotal,
 
     lockedCurrency,
     loadingPicks,
 
     currencies,
-    freeCurrency,
-    setFreeCurrency,
     effectiveCurrency,
     currencyOverride,
-    conversionEnabled,
-    conversionRequired,
-    setConversionEnabled,
 
     suggestions,
     applySuggestedAmounts,
@@ -162,11 +150,10 @@ export default function GroupCreateReceiptFields(props: {
 
     amountWords,
     setAmountWords,
-    amountWordsISO,
-    setAmountWordsISO,
 
     paymentMethods,
-    filteredAccounts,
+    getFilteredAccountsByCurrency,
+    hasMixedPaymentCurrencies,
 
     paymentLines,
     addPaymentLine,
@@ -174,8 +161,13 @@ export default function GroupCreateReceiptFields(props: {
     setPaymentLineAmount,
     setPaymentLineMethod,
     setPaymentLineAccount,
-    setPaymentLineOperator,
+    setPaymentLineCurrency,
+    setPaymentLineFeeMode,
+    setPaymentLineFeeValue,
+    getPaymentLineFee,
+    getPaymentLineImpact,
 
+    setPaymentLineOperator,
     setPaymentLineCreditAccount,
     creditAccountsByOperator,
     loadingCreditAccountsByOperator,
@@ -203,7 +195,6 @@ export default function GroupCreateReceiptFields(props: {
 
   const baseNum = parseAmountInput(baseAmount);
   const counterNum = parseAmountInput(counterAmount);
-  const paymentsNum = parseAmountInput(amountReceived);
 
   const fmtMaybe = (raw: string, num: number | null, cur: string | null) => {
     if (num != null && cur) return formatNum(num, cur);
@@ -276,21 +267,47 @@ export default function GroupCreateReceiptFields(props: {
 
       <Section
         title="Totales del cobro"
-        desc="Se calcula desde las líneas de pago. Esta moneda es la del cobro."
+        desc="Resumen automático a partir de las líneas cargadas."
       >
-        <Field
-          id="amount_received"
-          label="Total cobrado (entra al banco/caja)"
-          hint="Suma de los importes cargados abajo."
-          required
-        >
-          <input
-            id="amount_received"
-            value={amountReceived}
-            readOnly
-            disabled
-            className="w-full rounded-xl border border-sky-200/70 bg-sky-50/45 p-2 px-3 text-[13px] text-slate-700 dark:border-sky-900/40 dark:bg-slate-900/55 dark:text-slate-300 md:text-sm"
-          />
+        <div className="grid gap-3 md:col-span-2 md:grid-cols-3">
+          <article className="rounded-2xl border border-sky-200/70 bg-sky-50/45 px-4 py-3 dark:border-sky-900/40 dark:bg-slate-900/55">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+              Total cobrado
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {amountReceived || "—"}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+              Neto que entra a caja/banco.
+            </p>
+          </article>
+
+          <article className="rounded-2xl border border-sky-200/70 bg-sky-50/45 px-4 py-3 dark:border-sky-900/40 dark:bg-slate-900/55">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+              Costo financiero
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {feeAmount || "—"}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+              Sumatoria de costos por pago.
+            </p>
+          </article>
+
+          <article className="rounded-2xl border border-sky-200/70 bg-sky-50/45 px-4 py-3 dark:border-sky-900/40 dark:bg-slate-900/55">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+              Total cliente
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {clientTotal || "—"}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+              Cobro + costo financiero.
+            </p>
+          </article>
+        </div>
+
+        <div className="md:col-span-2">
           {errors.amount && (
             <p className="mt-1 text-xs text-red-600">{errors.amount}</p>
           )}
@@ -306,82 +323,12 @@ export default function GroupCreateReceiptFields(props: {
               {formatNum(suggestions.base, lockedCurrency || effectiveCurrency)}
             </button>
           )}
-        </Field>
-
-        <Field
-          id="fee_amount"
-          label="Costo financiero (retención del medio. Ej: Intereses de tarjeta)"
-          hint="Solo si el medio retiene parte del cobro."
-        >
-          <input
-            id="fee_amount"
-            value={feeAmount}
-            onChange={(e) => setFeeAmount(e.target.value)}
-            placeholder="0,00"
-            className={inputBase}
-          />
-          {!currencyOverride && suggestions?.fee != null && (
-            <button
-              type="button"
-              onClick={applySuggestedAmounts}
-              className="mt-2 text-xs underline underline-offset-2"
-            >
-              Usar costo financiero sugerido:{" "}
-              {formatNum(suggestions.fee, lockedCurrency || effectiveCurrency)}
-            </button>
-          )}
-        </Field>
-
-        <Field
-          id="client_total"
-          label="Total con costo financiero"
-          hint="Pagos + retención del medio."
-        >
-          <input
-            id="client_total"
-            value={clientTotal ? `${clientTotal} ${effectiveCurrency}` : ""}
-            readOnly
-            disabled
-            className="w-full rounded-xl border border-sky-200/70 bg-sky-50/45 p-2 px-3 text-[13px] text-slate-700 dark:border-sky-900/40 dark:bg-slate-900/55 dark:text-slate-300 md:text-sm"
-          />
-        </Field>
-
-        <Field id="currency" label="Moneda del cobro" required>
-          {loadingPicks ? (
-            <div className="flex h-[42px] items-center">
-              <Spinner />
-            </div>
-          ) : (
-            <select
-              id="currency"
-              value={freeCurrency}
-              onChange={(e) => setFreeCurrency(e.target.value as CurrencyCode)}
-              className={`${inputBase} cursor-pointer appearance-none`}
-            >
-              {currencies
-                .filter((c) => c.enabled)
-                .map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.code} {c.name ? `— ${c.name}` : ""}
-                  </option>
-                ))}
-            </select>
-          )}
-          {lockedCurrency && (
-            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-              Servicios en {lockedCurrency}. Si cobrás en otra moneda, completá
-              Valor base y Contravalor.
-            </p>
-          )}
-          {errors.currency && (
-            <p className="mt-1 text-xs text-red-600">{errors.currency}</p>
-          )}
-        </Field>
+        </div>
       </Section>
 
       <Section
         title="Pagos"
-        desc={`Acá cargás varios métodos. Importes en ${effectiveCurrency}.`}
+        desc="Por cada método cargá importe, cuenta, moneda y costo financiero."
       >
         <div className="space-y-3 md:col-span-2">
           {errors.payments && (
@@ -407,6 +354,12 @@ export default function GroupCreateReceiptFields(props: {
               line.operator_id != null
                 ? !!loadingCreditAccountsByOperator[line.operator_id]
                 : false;
+            const filteredAccountsForLine = getFilteredAccountsByCurrency(
+              line.payment_currency || effectiveCurrency,
+            );
+            const lineCurrencyForCredit = (
+              line.payment_currency || effectiveCurrency
+            ).toUpperCase();
 
             const selectedCreditAccount = creditAccounts.find(
               (a) => a.id_credit_account === line.credit_account_id,
@@ -420,9 +373,23 @@ export default function GroupCreateReceiptFields(props: {
                 key={line.key}
                 className="rounded-2xl border border-sky-200/70 bg-sky-50/45 p-4 dark:border-sky-900/40 dark:bg-slate-900/55"
               >
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+                    Pago #{idx + 1}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => removePaymentLine(line.key)}
+                    className="rounded-full border border-slate-300/80 bg-white/85 px-3 py-1 text-xs text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800/70"
+                    title="Quitar línea"
+                  >
+                    Quitar
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
-                  <div className="md:col-span-3">
-                    <label className="ml-1 block text-[13px] font-medium text-slate-900 dark:text-slate-100 md:text-sm">
+                  <div className="md:col-span-4">
+                    <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
                       Importe
                     </label>
                     <input
@@ -430,7 +397,10 @@ export default function GroupCreateReceiptFields(props: {
                       onChange={(e) =>
                         setPaymentLineAmount(line.key, e.target.value)
                       }
-                      placeholder="0,00"
+                      placeholder={formatNum(
+                        0,
+                        line.payment_currency || effectiveCurrency,
+                      )}
                       className={inputBase}
                     />
                     {errors[`payment_amount_${idx}`] && (
@@ -441,7 +411,7 @@ export default function GroupCreateReceiptFields(props: {
                   </div>
 
                   <div className="md:col-span-4">
-                    <label className="ml-1 block text-[13px] font-medium text-slate-900 dark:text-slate-100 md:text-sm">
+                    <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
                       Método
                     </label>
                     {loadingPicks ? (
@@ -477,9 +447,8 @@ export default function GroupCreateReceiptFields(props: {
                   <div className="md:col-span-4">
                     {isCredit ? (
                       <div className="space-y-3">
-                        {/* Operador */}
                         <div>
-                          <label className="ml-1 block text-[13px] font-medium text-slate-900 dark:text-slate-100 md:text-sm">
+                          <label className="ml-1 block text-sm font-medium text-slate-900 dark:text-slate-100">
                             Operador <span className="text-rose-600">*</span>
                           </label>
                           <select
@@ -511,11 +480,9 @@ export default function GroupCreateReceiptFields(props: {
                           )}
                         </div>
 
-                        {/* Cuenta crédito */}
                         <div>
-                          <label className="ml-1 block text-[13px] font-medium text-slate-900 dark:text-slate-100 md:text-sm">
-                            Cuenta crédito{" "}
-                            <span className="text-rose-600">*</span>
+                          <label className="ml-1 block text-sm font-medium text-slate-900 dark:text-slate-100">
+                            Cuenta crédito <span className="text-rose-600">*</span>
                           </label>
 
                           {loadingCredit ? (
@@ -523,16 +490,16 @@ export default function GroupCreateReceiptFields(props: {
                               <Spinner />
                             </div>
                           ) : !line.operator_id ? (
-                            <p className="text-[13px] text-slate-600 dark:text-slate-400 md:text-sm">
+                            <p className="text-sm text-slate-600 dark:text-slate-400">
                               Elegí un operador para ver sus cuentas.
                             </p>
                           ) : creditAccounts.length === 0 ? (
-                            <p className="text-[13px] text-slate-600 dark:text-slate-400 md:text-sm">
+                            <p className="text-sm text-slate-600 dark:text-slate-400">
                               No hay cuentas crédito para este operador en{" "}
-                              {effectiveCurrency}.
+                              {lineCurrencyForCredit}.
                             </p>
                           ) : creditAccounts.length === 1 ? (
-                            <div className="rounded-xl border border-sky-200/70 bg-white/80 px-3 py-2 text-[13px] dark:border-sky-900/40 dark:bg-slate-900/60 md:text-sm">
+                            <div className="rounded-2xl border border-sky-200/70 bg-white/85 px-3 py-2 text-sm dark:border-sky-900/40 dark:bg-slate-900/60">
                               <div className="font-semibold">
                                 {fallbackCreditAccount?.name}
                               </div>
@@ -540,7 +507,7 @@ export default function GroupCreateReceiptFields(props: {
                                 Se impactará en esta cuenta crédito{" "}
                                 {(
                                   fallbackCreditAccount?.currency ||
-                                  effectiveCurrency
+                                  lineCurrencyForCredit
                                 )?.toUpperCase()}
                                 .
                               </div>
@@ -584,26 +551,11 @@ export default function GroupCreateReceiptFields(props: {
                               {errors[`payment_credit_account_${idx}`]}
                             </p>
                           )}
-
-                          {!!line.operator_id &&
-                            !loadingCredit &&
-                            creditAccounts.length === 0 && (
-                              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                                No hay cuentas crédito para este operador en{" "}
-                                {effectiveCurrency}.
-                              </p>
-                            )}
                         </div>
-
-                        {creditAccounts.length > 1 && (
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Elegí en qué cuenta crédito registrar este cobro.
-                          </p>
-                        )}
                       </div>
                     ) : requiresAcc ? (
                       <>
-                        <label className="ml-1 block text-[13px] font-medium text-slate-900 dark:text-slate-100 md:text-sm">
+                        <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
                           Cuenta
                         </label>
                         <select
@@ -617,7 +569,7 @@ export default function GroupCreateReceiptFields(props: {
                           }
                         >
                           <option value="">— Elegir —</option>
-                          {filteredAccounts.map((a) => (
+                          {filteredAccountsForLine.map((a) => (
                             <option key={a.id_account} value={a.id_account}>
                               {a.display_name || a.name}
                             </option>
@@ -630,21 +582,100 @@ export default function GroupCreateReceiptFields(props: {
                         )}
                       </>
                     ) : (
-                      <div className="text-[13px] text-slate-600 dark:text-slate-400 md:pt-7 md:text-sm">
+                      <div className="text-sm text-slate-600 dark:text-slate-400 md:pt-7">
                         (No requiere cuenta)
                       </div>
                     )}
                   </div>
+                </div>
 
-                  <div className="flex justify-end md:col-span-1">
-                    <button
-                      type="button"
-                      onClick={() => removePaymentLine(line.key)}
-                      className="rounded-full border border-slate-300/80 bg-white/85 px-3 py-2 text-[13px] text-slate-700 shadow-sm shadow-slate-900/10 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800/70 md:text-sm"
-                      title="Quitar línea"
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
+                  <div className="md:col-span-4">
+                    <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
+                      Moneda del cobro
+                    </label>
+                    {loadingPicks ? (
+                      <div className="flex h-[42px] items-center">
+                        <Spinner />
+                      </div>
+                    ) : (
+                      <select
+                        value={line.payment_currency || effectiveCurrency}
+                        onChange={(e) =>
+                          setPaymentLineCurrency(line.key, e.target.value)
+                        }
+                        className={`${inputBase} cursor-pointer appearance-none`}
+                      >
+                        {currencies
+                          .filter((c) => c.enabled)
+                          .map((c) => (
+                            <option key={`${line.key}-${c.code}`} value={c.code}>
+                              {c.code} {c.name ? `— ${c.name}` : ""}
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                    {errors[`payment_currency_${idx}`] && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors[`payment_currency_${idx}`]}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="md:col-span-4">
+                    <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
+                      Costo financiero
+                    </label>
+                    <select
+                      value={line.fee_mode}
+                      onChange={(e) =>
+                        setPaymentLineFeeMode(
+                          line.key,
+                          e.target.value as "NONE" | ReceiptPaymentFeeMode,
+                        )
+                      }
+                      className={`${inputBase} cursor-pointer appearance-none`}
                     >
-                      ✕
-                    </button>
+                      <option value="NONE">Sin costo</option>
+                      <option value="PERCENT">Porcentaje (%)</option>
+                      <option value="FIXED">Monto fijo</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-4">
+                    <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">
+                      Valor del costo
+                    </label>
+                    <input
+                      value={line.fee_value}
+                      onChange={(e) =>
+                        setPaymentLineFeeValue(line.key, e.target.value)
+                      }
+                      placeholder={line.fee_mode === "PERCENT" ? "Ej: 5" : "0,00"}
+                      className={inputBase}
+                      disabled={line.fee_mode === "NONE"}
+                    />
+                    {errors[`payment_fee_value_${idx}`] && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors[`payment_fee_value_${idx}`]}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="md:col-span-12">
+                    <p className="ml-1 text-xs text-slate-600 dark:text-slate-400">
+                      Impacta en deuda:{" "}
+                      {formatNum(
+                        getPaymentLineImpact(line.key),
+                        line.payment_currency || effectiveCurrency,
+                      )}
+                      {line.fee_mode !== "NONE"
+                        ? ` (CF: ${formatNum(
+                            getPaymentLineFee(line.key),
+                            line.payment_currency || effectiveCurrency,
+                          )})`
+                        : ""}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -663,9 +694,123 @@ export default function GroupCreateReceiptFields(props: {
         </div>
       </Section>
 
+      {currencyOverride && (
+        <Section
+          title="Conversión (opcional)"
+          desc="Usalo si cobrás en una moneda distinta al servicio."
+        >
+          <div className="rounded-2xl border border-sky-200/70 bg-sky-50/45 p-4 text-xs text-slate-700 dark:border-sky-900/40 dark:bg-slate-900/55 dark:text-slate-300 md:col-span-2">
+            <p>
+              Servicio en {lockedCurrency}.{" "}
+              {hasMixedPaymentCurrencies
+                ? "Cobro en múltiples monedas."
+                : `Cobro en ${effectiveCurrency}.`}{" "}
+              El PDF mostrará el valor base.
+            </p>
+            <div className="mt-2 grid gap-1 text-[11px]">
+              <div>
+                <span className="font-medium">Recibo (PDF):</span>{" "}
+                {fmtMaybe(baseAmount, baseNum, baseCurrency || lockedCurrency)}
+              </div>
+              <div>
+                <span className="font-medium">
+                  Administración (entra al banco/caja):
+                </span>{" "}
+                {amountReceived || "—"}
+              </div>
+              <div>
+                <span className="font-medium">Contravalor:</span>{" "}
+                {counterAmount.trim()
+                  ? fmtMaybe(
+                      counterAmount,
+                      counterNum,
+                      counterCurrency || effectiveCurrency,
+                    )
+                  : hasMixedPaymentCurrencies
+                    ? "—"
+                    : amountReceived || "—"}
+              </div>
+            </div>
+            {hasMixedPaymentCurrencies ? (
+              <p className="mt-2 text-[10px] opacity-70">
+                Con cobro en múltiples monedas, cargá el contravalor manualmente.
+              </p>
+            ) : (
+              <p className="mt-2 text-[10px] opacity-70">
+                Si dejás contravalor vacío, se toma el total cobrado.
+              </p>
+            )}
+          </div>
+
+          <Field
+            id="base"
+            label="Valor base (moneda del servicio)"
+            hint="Ej.: 1500 USD (si es pago parcial, ingresá el parcial)."
+          >
+            <div className="flex gap-2">
+              <input
+                value={baseAmount}
+                onChange={(e) => setBaseAmount(e.target.value)}
+                placeholder="1500"
+                className={inputBase}
+              />
+              <select
+                value={baseCurrency}
+                onChange={(e) => setBaseCurrency(e.target.value)}
+                className={`${inputBase} cursor-pointer appearance-none`}
+              >
+                <option value="">Moneda</option>
+                {currencies
+                  .filter((c) => c.enabled)
+                  .map((c) => (
+                    <option key={`bc-${c.code}`} value={c.code}>
+                      {c.code}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            {errors.base && (
+              <p className="mt-1 text-xs text-red-600">{errors.base}</p>
+            )}
+          </Field>
+
+          <Field
+            id="counter"
+            label="Contravalor (moneda del cobro)"
+            hint="Ej.: 2.000.000 ARS"
+          >
+            <div className="flex gap-2">
+              <input
+                value={counterAmount}
+                onChange={(e) => setCounterAmount(e.target.value)}
+                placeholder="2000000"
+                className={inputBase}
+              />
+              <select
+                value={counterCurrency}
+                onChange={(e) => setCounterCurrency(e.target.value)}
+                className={`${inputBase} cursor-pointer appearance-none`}
+              >
+                <option value="">Moneda</option>
+                {currencies
+                  .filter((c) => c.enabled)
+                  .map((c) => (
+                    <option key={`cc-${c.code}`} value={c.code}>
+                      {c.code}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            {errors.counter && (
+              <p className="mt-1 text-xs text-red-600">{errors.counter}</p>
+            )}
+          </Field>
+        </Section>
+      )}
+
       <Section
-        title="Importe en palabras (PDF)"
-        desc='Debe coincidir con el valor aplicado (ej.: "UN MILLÓN CIEN MIL" + Moneda).'
+        title="Importe en palabras"
+        desc='Debe coincidir con el valor aplicado (ej.: "UN MILLÓN CIEN MIL").'
       >
         <Field id="amount_words" label="Equivalente en palabras" required>
           <input
@@ -677,27 +822,6 @@ export default function GroupCreateReceiptFields(props: {
           />
           {errors.amountWords && (
             <p className="mt-1 text-xs text-red-600">{errors.amountWords}</p>
-          )}
-        </Field>
-
-        <Field id="amount_words_iso" label="Moneda del texto" required>
-          <select
-            id="amount_words_iso"
-            value={amountWordsISO}
-            onChange={(e) => setAmountWordsISO(e.target.value)}
-            className={`${inputBase} cursor-pointer appearance-none`}
-          >
-            <option value="">— Elegir —</option>
-            {currencies
-              .filter((c) => c.enabled)
-              .map((c) => (
-                <option key={`w-${c.code}`} value={c.code}>
-                  {c.code}
-                </option>
-              ))}
-          </select>
-          {errors.amountWordsISO && (
-            <p className="mt-1 text-xs text-red-600">{errors.amountWordsISO}</p>
           )}
         </Field>
       </Section>
@@ -716,7 +840,7 @@ export default function GroupCreateReceiptFields(props: {
               id="payment_desc"
               value={paymentDescription}
               onChange={(e) => setPaymentDescription(e.target.value)}
-              placeholder="Ej.: Efectivo: 100 USD + Transferencia: 200 USD (si querés, agregá detalle entre paréntesis)"
+              placeholder="Ej.: Efectivo: 100 USD + Transferencia: 200 USD"
               className={inputBase}
             />
             {errors.paymentDescription && (
@@ -725,149 +849,19 @@ export default function GroupCreateReceiptFields(props: {
               </p>
             )}
           </Field>
-        </div>
-      </Section>
 
-      <Section title="Concepto" desc="Opcional — visible en el recibo.">
-        <div className="md:col-span-2">
-          <Field id="concept" label="Detalle / Concepto">
-            <input
-              id="concept"
-              value={concept}
-              onChange={(e) => setConcept(e.target.value)}
-              placeholder="Ej.: Pago parcial reserva N° 1024"
-              className={inputBase}
-            />
-          </Field>
-        </div>
-      </Section>
-
-      <Section
-        title="Conversión (opcional)"
-        desc="Usalo si cobrás en una moneda distinta al servicio."
-      >
-        <div className="md:col-span-2">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-slate-700 dark:text-slate-200 md:text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5 size-4 rounded border-slate-300 bg-white text-sky-600 shadow-sm shadow-slate-900/10 focus:ring-sky-300 dark:border-slate-600 dark:bg-slate-900"
-              checked={conversionEnabled}
-              onChange={(e) => setConversionEnabled(e.target.checked)}
-              disabled={conversionRequired}
-            />
-            Registrar valor / contravalor
-          </label>
-          {conversionRequired && (
-            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-              Obligatorio cuando cobrás en una moneda distinta al servicio.
-            </p>
-          )}
-        </div>
-
-        {conversionEnabled && (
-          <>
-            {currencyOverride && (
-              <div className="rounded-2xl border border-sky-200/70 bg-sky-50/45 p-4 text-xs text-slate-700 dark:border-sky-900/40 dark:bg-slate-900/55 dark:text-slate-300 md:col-span-2">
-                <p>
-                  Servicio en {lockedCurrency}. Cobro en {effectiveCurrency}. El
-                  PDF mostrará el valor base.
-                </p>
-                <div className="mt-2 grid gap-1 text-[11px]">
-                  <div>
-                    <span className="font-medium">Recibo (PDF):</span>{" "}
-                    {fmtMaybe(baseAmount, baseNum, baseCurrency || lockedCurrency)}
-                  </div>
-                  <div>
-                    <span className="font-medium">
-                      Administración (entra al banco/caja):
-                    </span>{" "}
-                    {fmtMaybe(amountReceived, paymentsNum, effectiveCurrency)}
-                  </div>
-                  <div>
-                    <span className="font-medium">Contravalor:</span>{" "}
-                    {fmtMaybe(
-                      counterAmount || amountReceived,
-                      counterNum ?? paymentsNum,
-                      counterCurrency || effectiveCurrency,
-                    )}
-                  </div>
-                </div>
-                <p className="mt-2 text-[10px] opacity-70">
-                  Si dejás contravalor vacío, se toma el total cobrado.
-                </p>
-              </div>
-            )}
-
-            <Field
-              id="base"
-              label="Valor base (moneda del servicio)"
-              hint="Ej.: 1500 USD (si es pago parcial, ingresá el parcial)."
-              required={conversionRequired}
-            >
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  step="0.01"
-                  value={baseAmount}
-                  onChange={(e) => setBaseAmount(e.target.value)}
-                  placeholder="1500"
-                  className={inputBase}
-                />
-                <select
-                  value={baseCurrency}
-                  onChange={(e) => setBaseCurrency(e.target.value)}
-                  className={`${inputBase} cursor-pointer appearance-none`}
-                >
-                  <option value="">Moneda</option>
-                  {currencies
-                    .filter((c) => c.enabled)
-                    .map((c) => (
-                      <option key={`bc-${c.code}`} value={c.code}>
-                        {c.code}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              {errors.base && (
-                <p className="mt-1 text-xs text-red-600">{errors.base}</p>
-              )}
+          <div className="mt-3">
+            <Field id="concept" label="Concepto">
+              <input
+                id="concept"
+                value={concept}
+                onChange={(e) => setConcept(e.target.value)}
+                placeholder="Ej.: Pago parcial reserva N° 1024"
+                className={inputBase}
+              />
             </Field>
-
-            <Field
-              id="counter"
-              label="Contravalor (moneda del cobro)"
-              hint="Ej.: 2.000.000 ARS"
-            >
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  step="0.01"
-                  value={counterAmount}
-                  onChange={(e) => setCounterAmount(e.target.value)}
-                  placeholder="2000000"
-                  className={inputBase}
-                />
-                <select
-                  value={counterCurrency}
-                  onChange={(e) => setCounterCurrency(e.target.value)}
-                  className={`${inputBase} cursor-pointer appearance-none`}
-                >
-                  <option value="">Moneda</option>
-                  {currencies
-                    .filter((c) => c.enabled)
-                    .map((c) => (
-                      <option key={`cc-${c.code}`} value={c.code}>
-                        {c.code}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              {errors.counter && (
-                <p className="mt-1 text-xs text-red-600">{errors.counter}</p>
-              )}
-            </Field>
-          </>
-        )}
+          </div>
+        </div>
       </Section>
     </>
   );
