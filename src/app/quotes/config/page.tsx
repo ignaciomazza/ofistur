@@ -39,16 +39,66 @@ type NewFieldState = {
   help: string;
 };
 
+type ConfigStack =
+  | "diseno_pdf"
+  | "obligatorios"
+  | "ocultos"
+  | "personalizados"
+  | "permisos";
+
+const STACK_OPTIONS: Array<{
+  key: ConfigStack;
+  label: string;
+  desc: string;
+}> = [
+  {
+    key: "diseno_pdf",
+    label: "Diseño de documento",
+    desc: "Atajos para ajustar la apariencia de los documentos de cotización.",
+  },
+  {
+    key: "obligatorios",
+    label: "Obligatorios",
+    desc: "Datos que siempre se piden al cargar una cotización.",
+  },
+  {
+    key: "ocultos",
+    label: "Ocultos",
+    desc: "Datos base que no querés mostrar en el formulario.",
+  },
+  {
+    key: "personalizados",
+    label: "Personalizados",
+    desc: "Campos propios para adaptar el formulario a tu forma de venta.",
+  },
+  {
+    key: "permisos",
+    label: "Permisos",
+    desc: "Quién puede editar y cómo aplica el alcance por rol.",
+  },
+];
+
+const FIELD_TYPE_LABELS: Record<QuoteCustomFieldType, string> = {
+  text: "Texto",
+  number: "Número",
+  date: "Fecha",
+  select: "Lista desplegable",
+  boolean: "Sí / No",
+  textarea: "Texto largo",
+};
+
 const GLASS =
-  "rounded-3xl border border-sky-300/35 bg-gradient-to-br from-white/70 via-sky-100/55 to-sky-100/45 shadow-lg shadow-sky-950/10 backdrop-blur-xl dark:border-sky-200/20 dark:from-sky-950/40 dark:via-sky-900/35 dark:to-sky-900/25";
+  "rounded-3xl border border-sky-300/30 bg-gradient-to-br from-white/56 via-sky-100/40 to-sky-100/32 shadow-lg shadow-sky-950/10 backdrop-blur-xl dark:border-sky-200/18 dark:from-sky-950/30 dark:via-sky-900/24 dark:to-sky-900/18";
 const BTN =
   "rounded-full border border-sky-500/45 bg-sky-400/20 px-4 py-2 text-sm font-medium text-sky-950 shadow-sm shadow-sky-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-sky-400/30 active:translate-y-0 disabled:opacity-50 dark:border-sky-300/45 dark:bg-sky-400/20 dark:text-sky-100";
 const DANGER_BTN =
   "rounded-full border border-rose-500/55 bg-rose-200/20 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm shadow-rose-950/20 transition duration-200 hover:-translate-y-0.5 hover:bg-rose-200/30 active:translate-y-0 disabled:opacity-50 dark:border-rose-300/55 dark:bg-rose-300/20 dark:text-rose-200";
 const INPUT =
-  "w-full rounded-2xl border border-sky-300/45 bg-white/75 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:text-slate-500/80 focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/35 dark:bg-sky-950/25 dark:text-sky-50 dark:placeholder:text-sky-100/60";
+  "w-full rounded-2xl border border-sky-300/40 bg-white/60 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:text-slate-500/80 focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/30 dark:bg-sky-950/20 dark:text-sky-50 dark:placeholder:text-sky-100/60";
 const SELECT =
-  "w-full appearance-none rounded-2xl border border-sky-300/45 bg-white/75 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/35 dark:bg-sky-950/25 dark:text-sky-50";
+  "w-full appearance-none rounded-2xl border border-sky-300/40 bg-white/60 px-3 py-2 text-sm text-slate-900 outline-none shadow-sm shadow-sky-950/10 backdrop-blur focus:border-sky-500/65 focus:ring-2 focus:ring-sky-400/35 dark:border-sky-200/30 dark:bg-sky-950/20 dark:text-sky-50";
+const SOFT_ROW =
+  "rounded-2xl border border-sky-300/30 bg-white/34 px-3 py-2 text-sky-950 shadow-sm shadow-sky-950/10 dark:border-sky-200/18 dark:bg-sky-950/20 dark:text-sky-50";
 
 function normalizeRole(role?: string | null): string {
   return String(role || "").trim().toLowerCase();
@@ -89,6 +139,37 @@ const defaultNewField = (): NewFieldState => ({
   help: "",
 });
 
+function ToggleSwitch({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={onChange}
+      disabled={disabled}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full border transition-colors ${
+        checked
+          ? "border-sky-500/70 bg-sky-500"
+          : "border-sky-200/70 bg-sky-100/80 dark:border-white/25 dark:bg-white/10"
+      } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+    >
+      <span
+        className={`inline-block size-5 rounded-full border border-slate-200 bg-white shadow-sm transition-transform ${
+          checked ? "translate-x-5" : "translate-x-0.5"
+        }`}
+      />
+    </button>
+  );
+}
+
 export default function QuotesConfigPage() {
   const { token } = useAuth();
 
@@ -100,6 +181,7 @@ export default function QuotesConfigPage() {
   const [customFields, setCustomFields] = useState<QuoteCustomField[]>([]);
   const [newField, setNewField] = useState<NewFieldState>(defaultNewField());
   const [customSearch, setCustomSearch] = useState("");
+  const [activeStack, setActiveStack] = useState<ConfigStack>("obligatorios");
 
   const canEdit = useMemo(() => canEditByRole(profile?.role), [profile]);
   const filteredCustomFields = useMemo(() => {
@@ -109,6 +191,21 @@ export default function QuotesConfigPage() {
       `${field.label} ${field.key}`.toLowerCase().includes(query),
     );
   }, [customFields, customSearch]);
+  const stackStatus = useMemo<Record<ConfigStack, string>>(
+    () => ({
+      diseno_pdf: "Listo",
+      obligatorios:
+        requiredFields.length > 0
+          ? `${requiredFields.length} activos`
+          : "Sin definir",
+      ocultos:
+        hiddenFields.length > 0 ? `${hiddenFields.length} activos` : "Sin definir",
+      personalizados:
+        customFields.length > 0 ? `${customFields.length} creados` : "Sin campos",
+      permisos: canEdit ? "Editable" : "Solo lectura",
+    }),
+    [requiredFields.length, hiddenFields.length, customFields.length, canEdit],
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -169,15 +266,17 @@ export default function QuotesConfigPage() {
     const label = newField.label.trim();
     const key = (newField.key.trim() || slugifyKey(label)).slice(0, 40);
     if (!label || !key) {
-      toast.error("Definí al menos etiqueta y key para el campo.");
+      toast.error("Definí al menos nombre y nombre interno del campo.");
       return;
     }
     if (!/^[a-z0-9_]+$/.test(key)) {
-      toast.error("La key solo puede tener minúsculas, números y guiones bajos.");
+      toast.error(
+        "El nombre interno solo puede tener minúsculas, números y guiones bajos.",
+      );
       return;
     }
     if (customFields.some((f) => f.key === key)) {
-      toast.error("Ya existe un campo con esa key.");
+      toast.error("Ya existe un campo con ese nombre interno.");
       return;
     }
 
@@ -223,9 +322,9 @@ export default function QuotesConfigPage() {
       );
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) throw new Error(data?.error || "No se pudo guardar");
-      toast.success("Configuración guardada");
+      toast.success("Configuración guardada.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Error guardando");
+      toast.error(error instanceof Error ? error.message : "Error al guardar.");
     } finally {
       setSaving(false);
     }
@@ -252,16 +351,21 @@ export default function QuotesConfigPage() {
               Configuración de Cotizaciones
             </h1>
             <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
-              Definí campos visibles, obligatorios y personalizados para el formulario de cotizaciones.
+              Organizá la configuración en pilas con estado para separar cada bloque de trabajo.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {!canEdit && (
+              <span className="rounded-full border border-sky-300/35 bg-white/35 px-3 py-1 text-xs text-sky-900 dark:border-sky-200/20 dark:bg-sky-950/25 dark:text-sky-100">
+                Solo lectura
+              </span>
+            )}
             <Link href="/quotes" className={BTN}>
               Volver a cotizaciones
             </Link>
             {canEdit && (
               <button type="button" className={BTN} onClick={saveConfig} disabled={saving}>
-                {saving ? "Guardando..." : "Guardar"}
+                {saving ? "Guardando..." : "Guardar cambios"}
               </button>
             )}
           </div>
@@ -269,145 +373,186 @@ export default function QuotesConfigPage() {
 
         <div className={`${GLASS} mb-5 p-4`}>
           <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-            Estudios PDF
+            Pilas de configuración
           </p>
-          <p className="mt-1 text-base font-semibold text-sky-950 dark:text-sky-50">
-            Accesos directos a configuración de PDF
-          </p>
-          <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
-            Abrí el estudio correspondiente sin salir de configuración comercial.
-          </p>
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {[
-              {
-                href: "/template-config/quote_budget",
-                title: "Presupuesto (quote_budget)",
-                desc: "Estilo principal del PDF de cotización.",
-              },
-              {
-                href: "/template-config/quote",
-                title: "Cotización comercial (quote)",
-                desc: "Base alternativa para propuestas de venta.",
-              },
-            ].map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="group rounded-2xl border border-sky-300/45 bg-white/65 p-3 shadow-sm shadow-sky-950/10 transition hover:-translate-y-0.5 hover:bg-white/85 dark:border-sky-200/25 dark:bg-sky-950/25 dark:hover:bg-sky-950/35"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-sky-950 dark:text-sky-50">
-                      {item.title}
-                    </p>
-                    <p className="mt-1 text-xs text-sky-900/75 dark:text-sky-100/70">
-                      {item.desc}
-                    </p>
-                  </div>
-                  <span className="inline-flex size-8 items-center justify-center rounded-xl border border-sky-300/55 bg-sky-500/10 text-sky-900 transition group-hover:scale-[0.98] dark:border-sky-200/25 dark:text-sky-100">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      className="size-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.8}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M13.5 4.5H19.5V10.5M10.5 19.5H4.5V13.5M19.5 4.5L12 12M12 12L4.5 19.5"
-                      />
-                    </svg>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {STACK_OPTIONS.map((stack) => {
+              const active = activeStack === stack.key;
+              return (
+                <button
+                  key={stack.key}
+                  type="button"
+                  onClick={() => setActiveStack(stack.key)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                    active
+                      ? "border-sky-500/60 bg-sky-500/20 text-sky-950 dark:text-sky-100"
+                      : "border-sky-300/35 bg-white/30 text-sky-900 hover:bg-white/45 dark:border-sky-200/20 dark:bg-sky-950/20 dark:text-sky-100"
+                  }`}
+                >
+                  <span>{stack.label}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      active
+                        ? "bg-sky-500/25 text-sky-900 dark:text-sky-100"
+                        : "bg-sky-500/15 text-sky-900/90 dark:text-sky-100/90"
+                    }`}
+                  >
+                    {stackStatus[stack.key]}
                   </span>
-                </div>
-              </Link>
-            ))}
+                </button>
+              );
+            })}
           </div>
-        </div>
-
-        <div className="mb-5 grid gap-3 sm:grid-cols-3">
-          <div className={`${GLASS} p-3`}>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-              Obligatorios
-            </p>
-            <p className="mt-1 text-xl font-semibold text-sky-950 dark:text-sky-50">
-              {requiredFields.length}
-            </p>
-          </div>
-          <div className={`${GLASS} p-3`}>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-              Ocultos
-            </p>
-            <p className="mt-1 text-xl font-semibold text-sky-950 dark:text-sky-50">
-              {hiddenFields.length}
-            </p>
-          </div>
-          <div className={`${GLASS} p-3`}>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-              Personalizados
-            </p>
-            <p className="mt-1 text-xl font-semibold text-sky-950 dark:text-sky-50">
-              {customFields.length}
-            </p>
-          </div>
+          <p className="mt-2 text-xs text-sky-900/70 dark:text-sky-100/70">
+            {STACK_OPTIONS.find((stack) => stack.key === activeStack)?.desc}
+          </p>
         </div>
 
         {!canEdit && (
-          <div className={`${GLASS} mb-4 p-4 text-sm text-sky-900 dark:text-sky-100`}>
-            Solo gerencia/administración puede editar esta configuración.
+          <div className={`${GLASS} mb-5 p-4 text-sm text-sky-900 dark:text-sky-100`}>
+            Solo gerencia y administración pueden editar esta configuración.
           </div>
         )}
 
-        <div className="grid gap-5 lg:grid-cols-2">
+        {activeStack === "diseno_pdf" && (
           <div className={`${GLASS} p-4`}>
-            <h2 className="mb-3 text-sm font-semibold">Campos base obligatorios</h2>
-            <div className="grid gap-2">
-              {QUOTE_REQUIRED_FIELD_OPTIONS.map((opt) => (
-                <label
-                  key={`req-${opt.key}`}
-                  className="flex items-center gap-2 rounded-2xl border border-sky-300/35 bg-white/45 px-3 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/10 dark:border-sky-200/20 dark:bg-sky-950/25 dark:text-sky-50"
+            <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
+              Diseño de documento
+            </p>
+            <p className="mt-1 text-base font-semibold text-sky-950 dark:text-sky-50">
+              Atajos al diseño de documentos
+            </p>
+            <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
+              Entrá directo al diseño que quieras ajustar, sin salir de esta pantalla.
+            </p>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {[
+                {
+                  href: "/template-config/quote_budget",
+                  title: "Presupuesto de cotización",
+                  desc: "Modelo principal del documento para enviar al cliente.",
+                },
+                {
+                  href: "/template-config/quote",
+                  title: "Propuesta comercial",
+                  desc: "Modelo alternativo para distintas presentaciones.",
+                },
+              ].map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="hover:bg-white/62 group rounded-2xl border border-sky-300/35 bg-white/50 p-3 shadow-sm shadow-sky-950/10 transition hover:-translate-y-0.5 dark:border-sky-200/20 dark:bg-sky-950/20 dark:hover:bg-sky-950/30"
                 >
-                  <input
-                    type="checkbox"
-                    checked={requiredFields.includes(opt.key)}
-                    onChange={() => toggleRequired(opt.key)}
-                    disabled={!canEdit}
-                  />
-                  <span>{opt.label}</span>
-                </label>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-sky-950 dark:text-sky-50">
+                        {item.title}
+                      </p>
+                      <p className="mt-1 text-xs text-sky-900/75 dark:text-sky-100/70">
+                        {item.desc}
+                      </p>
+                    </div>
+                    <span className="inline-flex size-8 items-center justify-center rounded-xl border border-sky-300/45 bg-sky-500/10 text-sky-900 transition group-hover:scale-[0.98] dark:border-sky-200/25 dark:text-sky-100">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        className="size-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.8}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M13.5 4.5H19.5V10.5M10.5 19.5H4.5V13.5M19.5 4.5L12 12M12 12L4.5 19.5"
+                        />
+                      </svg>
+                    </span>
+                  </div>
+                </Link>
               ))}
             </div>
           </div>
+        )}
 
+        {activeStack === "obligatorios" && (
           <div className={`${GLASS} p-4`}>
-            <h2 className="mb-3 text-sm font-semibold">Campos base ocultos</h2>
+            <h2 className="mb-1 text-lg font-semibold text-sky-950 dark:text-sky-50">
+              Campos obligatorios
+            </h2>
+            <p className="mb-3 text-sm text-sky-900/75 dark:text-sky-100/70">
+              Activá los datos que querés pedir siempre en cada cotización.
+            </p>
+
             <div className="grid gap-2">
-              {QUOTE_HIDDEN_FIELD_OPTIONS.map((opt) => (
-                <label
-                  key={`hid-${opt.key}`}
-                  className="flex items-center gap-2 rounded-2xl border border-sky-300/35 bg-white/45 px-3 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/10 dark:border-sky-200/20 dark:bg-sky-950/25 dark:text-sky-50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={hiddenFields.includes(opt.key)}
-                    onChange={() => toggleHidden(opt.key)}
-                    disabled={!canEdit}
-                  />
-                  <span>{opt.label}</span>
-                </label>
-              ))}
+              {QUOTE_REQUIRED_FIELD_OPTIONS.map((opt) => {
+                const active = requiredFields.includes(opt.key);
+                return (
+                  <div key={`req-${opt.key}`} className={`${SOFT_ROW} flex items-center justify-between gap-3`}>
+                    <div>
+                      <p className="text-sm font-medium">{opt.label}</p>
+                      <p className="text-xs opacity-70">
+                        {active ? "Se pide siempre." : "Se puede dejar opcional."}
+                      </p>
+                    </div>
+                    <ToggleSwitch
+                      checked={active}
+                      onChange={() => toggleRequired(opt.key)}
+                      disabled={!canEdit}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
+        )}
 
-          <div className={`${GLASS} p-4 lg:col-span-2`}>
-            <h2 className="mb-3 text-sm font-semibold">Campos personalizados</h2>
+        {activeStack === "ocultos" && (
+          <div className={`${GLASS} p-4`}>
+            <h2 className="mb-1 text-lg font-semibold text-sky-950 dark:text-sky-50">
+              Campos ocultos
+            </h2>
+            <p className="mb-3 text-sm text-sky-900/75 dark:text-sky-100/70">
+              Marcá los datos base que no querés mostrar en el formulario.
+            </p>
+
+            <div className="grid gap-2">
+              {QUOTE_HIDDEN_FIELD_OPTIONS.map((opt) => {
+                const active = hiddenFields.includes(opt.key);
+                return (
+                  <div key={`hid-${opt.key}`} className={`${SOFT_ROW} flex items-center justify-between gap-3`}>
+                    <div>
+                      <p className="text-sm font-medium">{opt.label}</p>
+                      <p className="text-xs opacity-70">
+                        {active ? "No se muestra en pantalla." : "Se muestra normalmente."}
+                      </p>
+                    </div>
+                    <ToggleSwitch
+                      checked={active}
+                      onChange={() => toggleHidden(opt.key)}
+                      disabled={!canEdit}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {activeStack === "personalizados" && (
+          <div className={`${GLASS} p-4`}>
+            <h2 className="mb-1 text-lg font-semibold text-sky-950 dark:text-sky-50">
+              Campos personalizados
+            </h2>
+            <p className="mb-3 text-sm text-sky-900/75 dark:text-sky-100/70">
+              Creá campos a medida y administralos desde un solo bloque.
+            </p>
 
             <div className="mb-4 grid gap-2 md:grid-cols-3">
               <input
                 className={INPUT}
-                placeholder="Etiqueta"
+                placeholder="Nombre del campo"
                 value={newField.label}
                 onChange={(e) =>
                   setNewField((prev) => ({ ...prev, label: e.target.value }))
@@ -416,7 +561,7 @@ export default function QuotesConfigPage() {
               />
               <input
                 className={INPUT}
-                placeholder="Key (ej: forma_pago)"
+                placeholder="Nombre interno (ej: forma_pago)"
                 value={newField.key}
                 onChange={(e) =>
                   setNewField((prev) => ({ ...prev, key: e.target.value }))
@@ -437,13 +582,13 @@ export default function QuotesConfigPage() {
                 <option value="text">Texto</option>
                 <option value="number">Número</option>
                 <option value="date">Fecha</option>
-                <option value="select">Select</option>
-                <option value="boolean">Boolean</option>
-                <option value="textarea">Textarea</option>
+                <option value="select">Lista desplegable</option>
+                <option value="boolean">Sí / No</option>
+                <option value="textarea">Texto largo</option>
               </select>
               <input
                 className={INPUT}
-                placeholder="Placeholder (opcional)"
+                placeholder="Texto de ejemplo (opcional)"
                 value={newField.placeholder}
                 onChange={(e) =>
                   setNewField((prev) => ({ ...prev, placeholder: e.target.value }))
@@ -452,7 +597,7 @@ export default function QuotesConfigPage() {
               />
               <input
                 className={INPUT}
-                placeholder="Help text (opcional)"
+                placeholder="Mensaje de ayuda (opcional)"
                 value={newField.help}
                 onChange={(e) =>
                   setNewField((prev) => ({ ...prev, help: e.target.value }))
@@ -461,24 +606,28 @@ export default function QuotesConfigPage() {
               />
               <input
                 className={INPUT}
-                placeholder="Opciones select separadas por coma"
+                placeholder="Opciones de la lista, separadas por coma"
                 value={newField.options}
                 onChange={(e) =>
                   setNewField((prev) => ({ ...prev, options: e.target.value }))
                 }
                 disabled={!canEdit || newField.type !== "select"}
               />
-              <label className="inline-flex items-center gap-2 text-sm md:col-span-2">
-                <input
-                  type="checkbox"
+              <div className={`${SOFT_ROW} flex items-center justify-between gap-3 md:col-span-2`}>
+                <div>
+                  <p className="text-sm font-medium">Obligatorio</p>
+                  <p className="text-xs opacity-70">
+                    Activalo si querés que este dato se pida siempre.
+                  </p>
+                </div>
+                <ToggleSwitch
                   checked={newField.required}
-                  onChange={(e) =>
-                    setNewField((prev) => ({ ...prev, required: e.target.checked }))
+                  onChange={() =>
+                    setNewField((prev) => ({ ...prev, required: !prev.required }))
                   }
                   disabled={!canEdit}
                 />
-                Obligatorio
-              </label>
+              </div>
               <div className="md:col-span-3">
                 <button
                   type="button"
@@ -494,7 +643,7 @@ export default function QuotesConfigPage() {
             <div className="mb-3">
               <input
                 className={INPUT}
-                placeholder="Buscar campo personalizado por nombre o key"
+                placeholder="Buscar campo personalizado por nombre o nombre interno"
                 value={customSearch}
                 onChange={(e) => setCustomSearch(e.target.value)}
               />
@@ -507,14 +656,15 @@ export default function QuotesConfigPage() {
                 {filteredCustomFields.map((field) => (
                   <div
                     key={field.key}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-sky-300/35 bg-white/45 px-3 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/10 dark:border-sky-200/20 dark:bg-sky-950/25 dark:text-sky-50"
+                    className={`${SOFT_ROW} flex flex-wrap items-center justify-between gap-2`}
                   >
                     <div>
-                      <p className="font-medium">
-                        {field.label} <span className="opacity-70">({field.key})</span>
+                      <p className="font-medium">{field.label}</p>
+                      <p className="text-xs opacity-70">
+                        Nombre interno: {field.key}
                       </p>
                       <p className="text-xs opacity-70">
-                        {field.type}
+                        {FIELD_TYPE_LABELS[field.type]}
                         {field.required ? " · obligatorio" : ""}
                         {field.options?.length ? ` · ${field.options.join(", ")}` : ""}
                       </p>
@@ -525,21 +675,24 @@ export default function QuotesConfigPage() {
                       onClick={() => removeCustomField(field.key)}
                       disabled={!canEdit}
                     >
-                      Quitar
+                      Eliminar
                     </button>
                   </div>
                 ))}
               </div>
             )}
           </div>
-        </div>
+        )}
 
-        <div className={`${GLASS} mt-5 p-4 text-sm text-sky-900 dark:text-sky-100`}>
-          <p className="font-medium">Permisos de cotizaciones</p>
-          <p className="mt-1 opacity-80">
-            Se aplican los mismos criterios de alcance que reservas: vendedor (propias), líder (equipo), gerencia/admin/dev (agencia).
-          </p>
-        </div>
+        {activeStack === "permisos" && (
+          <div className={`${GLASS} p-4 text-sm text-sky-900 dark:text-sky-100`}>
+            <p className="font-medium">Permisos de cotizaciones</p>
+            <p className="mt-1 opacity-80">
+              Se aplican los mismos criterios de alcance que en reservas: vendedor
+              (propias), líder (equipo) y gerencia o administración (agencia).
+            </p>
+          </div>
+        )}
       </section>
     </ProtectedRoute>
   );
