@@ -503,6 +503,18 @@ const BlockItem: React.FC<BlockItemProps> = ({
     backgroundColor: controlsOnDarkSurface ? "#0F172A" : "#FFFFFF",
     color: controlsOnDarkSurface ? "#F8FAFC" : "#334155",
   };
+  const isMultilinePdfSensitiveBlock =
+    block.type === "paragraph" ||
+    block.type === "list" ||
+    block.type === "twoColumns" ||
+    block.type === "threeColumns";
+  const showPdfDoubleLineBreakWarning =
+    canStyle &&
+    isMultilinePdfSensitiveBlock &&
+    (textSize !== "base" || textWeight !== "normal");
+  const pdfDoubleLineBreakWarningClass = controlsOnDarkSurface
+    ? "text-rose-200/95"
+    : "text-rose-700";
   const isInteractiveTarget = (target: EventTarget | null) => {
     if (!(target instanceof HTMLElement)) return false;
     return Boolean(
@@ -905,6 +917,17 @@ const BlockItem: React.FC<BlockItemProps> = ({
               </select>
             </label>
           </div>
+          {showPdfDoubleLineBreakWarning && (
+            <p
+              className={cx(
+                "mb-2 text-[11px] leading-snug",
+                pdfDoubleLineBreakWarningClass,
+              )}
+            >
+              Aviso: al usar tamano o peso distinto de Base/Normal, el motor PDF
+              puede no respetar los dobles saltos de linea.
+            </p>
+          )}
 
           {children}
         </div>

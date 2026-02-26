@@ -1,7 +1,7 @@
 // src/app/investments/InvestmentsList.tsx
 "use client";
 
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { toast } from "react-toastify";
 import Spinner from "@/components/Spinner";
@@ -69,6 +69,7 @@ type InvestmentsListProps = {
   token?: string | null;
   showOperatorPaymentPdf?: boolean;
   canDownloadOperatorPaymentPdf?: (it: Investment) => boolean;
+  showServiceBreakdown?: boolean;
 };
 
 const slugify = (s: string) =>
@@ -78,6 +79,45 @@ const slugify = (s: string) =>
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
+
+const normalizeCurrency = (value?: string | null, fallback = "ARS") => {
+  const code = String(value || "").trim().toUpperCase();
+  return code || fallback;
+};
+
+const formatMoney = (amount: number, currency: string) => {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return "-";
+  try {
+    return new Intl.NumberFormat("es-AR", {
+      style: "currency",
+      currency,
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${currency}`;
+  }
+};
+
+const formatFxRate = (fxRate: number) => {
+  const value = Number(fxRate);
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  return new Intl.NumberFormat("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  }).format(value);
+};
+
+type InvestmentAllocationCard = {
+  service_id: number;
+  booking_id: number | null;
+  booking_agency_id: number | null;
+  booking_public_id: string | null;
+  payment_currency: string;
+  service_currency: string;
+  amount_payment: number;
+  amount_service: number;
+  fx_rate: number | null;
+};
 
 function PaymentPdfButton({
   token,
@@ -171,6 +211,7 @@ function InvestmentCard({
   token,
   showOperatorPaymentPdf,
   canDownloadOperatorPaymentPdf,
+  showServiceBreakdown = false,
 }: {
   item: Investment;
   onEdit: (it: Investment) => void;
@@ -179,12 +220,68 @@ function InvestmentCard({
   token?: string | null;
   showOperatorPaymentPdf?: boolean;
   canDownloadOperatorPaymentPdf?: (it: Investment) => boolean;
+  showServiceBreakdown?: boolean;
 }) {
+  const [servicesOpen, setServicesOpen] = useState(false);
   const bookingNumber = item.booking?.agency_booking_id ?? item.booking_id;
   const showPdf =
     typeof canDownloadOperatorPaymentPdf === "function"
       ? canDownloadOperatorPaymentPdf(item)
       : !!showOperatorPaymentPdf;
+  const itemCurrency = normalizeCurrency(item.currency, "ARS");
+
+  const normalizedAllocations = useMemo<InvestmentAllocationCard[]>(() => {
+    if (!Array.isArray(item.allocations)) return [];
+    const out: InvestmentAllocationCard[] = [];
+    for (const raw of item.allocations) {
+      if (!raw) continue;
+      const serviceId = Number(raw.service_id);
+      if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+      const bookingId = Number(raw.booking_id);
+      const amountPayment = Number(raw.amount_payment);
+      const amountService = Number(raw.amount_service);
+      const fxRate = Number(raw.fx_rate);
+      const bookingAgencyId = Number(raw.booking_agency_id);
+      const bookingPublicId =
+        typeof raw.booking_public_id === "string" &&
+        raw.booking_public_id.trim()
+          ? raw.booking_public_id.trim()
+          : null;
+      out.push({
+        service_id: Math.trunc(serviceId),
+        booking_id:
+          Number.isFinite(bookingId) && bookingId > 0
+            ? Math.trunc(bookingId)
+            : null,
+        booking_agency_id:
+          Number.isFinite(bookingAgencyId) && bookingAgencyId > 0
+            ? Math.trunc(bookingAgencyId)
+            : null,
+        booking_public_id: bookingPublicId,
+        payment_currency: normalizeCurrency(raw.payment_currency, itemCurrency),
+        service_currency: normalizeCurrency(raw.service_currency, itemCurrency),
+        amount_payment: Number.isFinite(amountPayment) ? amountPayment : 0,
+        amount_service: Number.isFinite(amountService) ? amountService : 0,
+        fx_rate: Number.isFinite(fxRate) && fxRate > 0 ? fxRate : null,
+      });
+    }
+    return out;
+  }, [item.allocations, itemCurrency]);
+
+  const fallbackServiceIds = useMemo(() => {
+    if (!Array.isArray(item.serviceIds)) return [];
+    const ids = item.serviceIds
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0)
+      .map((id) => Math.trunc(id));
+    return Array.from(new Set(ids));
+  }, [item.serviceIds]);
+
+  const serviceCount =
+    normalizedAllocations.length > 0
+      ? normalizedAllocations.length
+      : fallbackServiceIds.length;
+  const hasServiceBreakdown = showServiceBreakdown && serviceCount > 0;
   return (
     <div className="rounded-3xl border border-white/10 bg-white/10 p-4 text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur dark:text-white">
       <div className="flex items-center justify-between gap-3">
@@ -198,7 +295,7 @@ function InvestmentCard({
         </div>
         <div className="flex items-center gap-2">
           <div className="text-sm opacity-70">
-            N° {item.agency_investment_id ?? item.id_investment}
+            Nº. {item.agency_investment_id ?? item.id_investment}
           </div>
           {showPdf && (
             <PaymentPdfButton token={token} item={item} />
@@ -296,7 +393,7 @@ function InvestmentCard({
         )}
         {item.booking_id && (
           <span className="flex w-fit items-center gap-2">
-            <b>Reserva N° </b> {bookingNumber}
+            <b>Reserva Nº. </b> {bookingNumber}
             <Link
               href={`/bookings/services/${item.booking?.public_id ?? item.booking_id}`}
               target="_blank"
@@ -321,6 +418,101 @@ function InvestmentCard({
           </span>
         )}
       </div>
+
+      {hasServiceBreakdown && (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/40 p-3 text-xs shadow-sm shadow-sky-950/10 dark:bg-white/5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold">
+              Servicios asociados ({serviceCount})
+            </span>
+            <button
+              type="button"
+              onClick={() => setServicesOpen((prev) => !prev)}
+              className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-900 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
+            >
+              {servicesOpen ? "Ver menos" : "Ver más"}
+            </button>
+          </div>
+          {servicesOpen && (
+            <div className="mt-2 space-y-2">
+              {normalizedAllocations.length > 0
+                ? normalizedAllocations.map((alloc) => (
+                    <div
+                      key={`alloc-${item.id_investment}-${alloc.service_id}`}
+                      className="rounded-xl border border-white/10 bg-white/60 p-2 dark:bg-white/5"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">
+                          Servicio Nº. {alloc.service_id}
+                        </span>
+                        {alloc.booking_id ? (
+                          <Link
+                            href={`/bookings/services/${alloc.booking_public_id ?? alloc.booking_id}`}
+                            target="_blank"
+                            className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-900 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
+                          >
+                            Ir a reserva Nº.{" "}
+                            {alloc.booking_agency_id ?? alloc.booking_id}
+                          </Link>
+                        ) : (
+                          <span className="opacity-60">Sin reserva vinculada</span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-3 opacity-90">
+                        <span>
+                          <b>Aplicado:</b>{" "}
+                          {formatMoney(
+                            alloc.amount_payment,
+                            alloc.payment_currency,
+                          )}
+                        </span>
+                        {alloc.service_currency !== alloc.payment_currency && (
+                          <span>
+                            <b>Monto servicio:</b>{" "}
+                            {formatMoney(
+                              alloc.amount_service,
+                              alloc.service_currency,
+                            )}
+                          </span>
+                        )}
+                        {alloc.fx_rate && (
+                          <span>
+                            <b>TC:</b> {formatFxRate(alloc.fx_rate)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                : fallbackServiceIds.map((serviceId) => (
+                    <div
+                      key={`svc-${item.id_investment}-${serviceId}`}
+                      className="rounded-xl border border-white/10 bg-white/60 p-2 dark:bg-white/5"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">Servicio Nº. {serviceId}</span>
+                        {item.booking_id ? (
+                          <Link
+                            href={`/bookings/services/${item.booking?.public_id ?? item.booking_id}`}
+                            target="_blank"
+                            className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-900 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
+                          >
+                            Ir a reserva Nº. {bookingNumber}
+                          </Link>
+                        ) : (
+                          <span className="opacity-60">Sin reserva vinculada</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              {normalizedAllocations.length === 0 && (
+                <p className="opacity-70">
+                  Este pago no tiene montos desglosados por servicio.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -333,6 +525,7 @@ function InvestmentsCardsList({
   token,
   showOperatorPaymentPdf,
   canDownloadOperatorPaymentPdf,
+  showServiceBreakdown = false,
 }: {
   items: Investment[];
   onEdit: (it: Investment) => void;
@@ -341,6 +534,7 @@ function InvestmentsCardsList({
   token?: string | null;
   showOperatorPaymentPdf?: boolean;
   canDownloadOperatorPaymentPdf?: (it: Investment) => boolean;
+  showServiceBreakdown?: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -354,6 +548,7 @@ function InvestmentsCardsList({
           token={token}
           showOperatorPaymentPdf={showOperatorPaymentPdf}
           canDownloadOperatorPaymentPdf={canDownloadOperatorPaymentPdf}
+          showServiceBreakdown={showServiceBreakdown}
         />
       ))}
     </div>
@@ -407,8 +602,10 @@ export default function InvestmentsList({
   token,
   showOperatorPaymentPdf,
   canDownloadOperatorPaymentPdf,
+  showServiceBreakdown = false,
 }: InvestmentsListProps) {
   const itemLabelPlural = itemLabel.endsWith("s") ? itemLabel : `${itemLabel}s`;
+  const compactFilterControlClass = `${filterControlClass} text-[11px] sm:text-xs`;
   return (
     <>
       {/* FILTROS */}
@@ -451,7 +648,7 @@ export default function InvestmentsList({
 
           {showCategoryFilter && (
             <select
-              className={filterControlClass}
+              className={compactFilterControlClass}
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               disabled={categoryOptions.length === 0}
@@ -471,7 +668,7 @@ export default function InvestmentsList({
           )}
 
           <select
-            className={filterControlClass}
+            className={compactFilterControlClass}
             value={currency}
             onChange={(e) => setCurrency(e.target.value)}
             disabled={currencyOptions.length === 0}
@@ -488,7 +685,7 @@ export default function InvestmentsList({
           </select>
 
           <select
-            className={filterControlClass}
+            className={compactFilterControlClass}
             value={paymentMethodFilter}
             onChange={(e) => setPaymentMethodFilter(e.target.value)}
             disabled={paymentMethodOptions.length === 0}
@@ -505,7 +702,7 @@ export default function InvestmentsList({
           </select>
 
           <select
-            className={filterControlClass}
+            className={compactFilterControlClass}
             value={accountFilter}
             onChange={(e) => setAccountFilter(e.target.value)}
             disabled={accountOptions.length === 0}
@@ -523,7 +720,7 @@ export default function InvestmentsList({
 
           {showOperatorFilter && (
             <select
-              className={filterControlClass}
+              className={compactFilterControlClass}
               value={operatorFilter}
               onChange={(e) => setOperatorFilter(Number(e.target.value))}
               disabled={operators.length === 0}
@@ -577,7 +774,7 @@ export default function InvestmentsList({
           <button
             type="button"
             onClick={resetFilters}
-            className={filterControlClass}
+            className={compactFilterControlClass}
             title="Limpiar filtros"
           >
             <svg
@@ -586,7 +783,7 @@ export default function InvestmentsList({
               viewBox="0 0 24 24"
               strokeWidth={1.5}
               stroke="currentColor"
-              className="size-6"
+              className="size-4"
             >
               <path
                 strokeLinecap="round"
@@ -600,7 +797,7 @@ export default function InvestmentsList({
             type="button"
             onClick={onExportCSV}
             disabled={exportingCsv}
-            className={filterControlClass}
+            className={compactFilterControlClass}
             title="Exportar CSV"
           >
             {exportingCsv ? "Exportando..." : "Exportar CSV"}
@@ -727,7 +924,7 @@ export default function InvestmentsList({
                             )}
                           </div>
                           <div className="text-[11px] opacity-60">
-                            N° {it.agency_investment_id ?? it.id_investment}
+                            Nº. {it.agency_investment_id ?? it.id_investment}
                           </div>
                         </td>
                         <td className="px-4 py-3">{it.description}</td>
@@ -854,6 +1051,7 @@ export default function InvestmentsList({
               token={token}
               showOperatorPaymentPdf={showOperatorPaymentPdf}
               canDownloadOperatorPaymentPdf={canDownloadOperatorPaymentPdf}
+              showServiceBreakdown={showServiceBreakdown}
             />
           )}
 

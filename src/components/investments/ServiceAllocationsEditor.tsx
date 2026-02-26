@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
+import { parseAmountInput } from "@/utils/receipts/receiptForm";
 
 export type AllocationService = {
   id_service: number;
@@ -48,13 +49,11 @@ const pillOk = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
 const ASSIGNMENT_TOLERANCE = 0.01;
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-const parseNumber = (v: string) => {
-  const n = Number(String(v).replace(/,/g, ".").trim());
-  return Number.isFinite(n) ? n : null;
-};
-const formatAmountInput = (n: number) => {
-  const fixed = n.toFixed(2);
-  return fixed.replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+const formatAmountInput = (n: number, decimals = 2) => {
+  const fixed = n.toFixed(decimals);
+  return fixed
+    .replace(/(\.\d*?[1-9])0+$/g, "$1")
+    .replace(/\.0+$/, "");
 };
 
 function formatMoney(n: number, cur = "ARS") {
@@ -69,7 +68,7 @@ function formatMoney(n: number, cur = "ARS") {
   }
 }
 
-type Draft = { amount_service: string; fx_rate: string };
+type Draft = { amount_service: string; counter_amount: string };
 
 type Props = {
   services: AllocationService[];
@@ -100,6 +99,7 @@ export default function ServiceAllocationsEditor({
 }: Props) {
   const [drafts, setDrafts] = useState<Record<number, Draft>>({});
   const lastReset = useRef<number | undefined>(undefined);
+  const paymentCur = (paymentCurrency || "").toUpperCase();
 
   const initialMap = useMemo(() => {
     const map = new Map<number, AllocationPayload>();
@@ -124,38 +124,68 @@ export default function ServiceAllocationsEditor({
         }
         const initial = initialMap.get(svc.id_service);
         if (initial) {
+          const serviceCur = (svc.currency || "").toUpperCase();
+          const initialAmountService = Number(initial.amount_service);
+          const initialAmountPayment = Number(initial.amount_payment);
+          const initialFx = Number(initial.fx_rate);
+          const derivedCounter =
+            Number.isFinite(initialAmountPayment) && initialAmountPayment >= 0
+              ? initialAmountPayment
+              : Number.isFinite(initialAmountService) &&
+                  Number.isFinite(initialFx) &&
+                  initialAmountService >= 0 &&
+                  initialFx > 0
+                ? round2(initialAmountService * initialFx)
+                : NaN;
           next[svc.id_service] = {
             amount_service:
-              initial.amount_service != null
-                ? formatAmountInput(Number(initial.amount_service))
+              Number.isFinite(initialAmountService) && initialAmountService >= 0
+                ? formatAmountInput(initialAmountService, 2)
                 : "",
-            fx_rate:
-              initial.fx_rate != null
-                ? formatAmountInput(Number(initial.fx_rate))
+            counter_amount:
+              serviceCur !== paymentCur &&
+              Number.isFinite(derivedCounter) &&
+              derivedCounter >= 0
+                ? formatAmountInput(derivedCounter, 2)
                 : "",
           };
           return;
         }
-        next[svc.id_service] = { amount_service: "", fx_rate: "" };
+        next[svc.id_service] = { amount_service: "", counter_amount: "" };
       });
       return next;
     });
-  }, [services, initialMap, resetKey]);
-
-  const paymentCur = (paymentCurrency || "").toUpperCase();
+  }, [services, initialMap, resetKey, paymentCur]);
 
   const rows = useMemo(() => {
     return services.map((svc) => {
-      const draft = drafts[svc.id_service] || { amount_service: "", fx_rate: "" };
+      const draft = drafts[svc.id_service] || {
+        amount_service: "",
+        counter_amount: "",
+      };
       const serviceCur = (svc.currency || "").toUpperCase();
-      const amountService = parseNumber(draft.amount_service);
-      const fxRate = serviceCur === paymentCur ? 1 : parseNumber(draft.fx_rate);
+      const amountService = parseAmountInput(draft.amount_service);
+      const counterAmount = parseAmountInput(draft.counter_amount);
+      const sameCurrency = serviceCur === paymentCur;
       const missingAmount = amountService == null || amountService < 0;
-      const missingFx = serviceCur !== paymentCur && (fxRate == null || fxRate <= 0);
+      const missingCounter =
+        !sameCurrency && (counterAmount == null || counterAmount < 0);
+      const missingFx = missingCounter;
       const amountPayment =
-        !missingAmount && !missingFx
-          ? round2(Number(amountService) * Number(fxRate))
+        !missingAmount && !missingCounter
+          ? round2(
+              sameCurrency
+                ? Number(amountService)
+                : Number(counterAmount || 0),
+            )
           : 0;
+      const fxRate =
+        !sameCurrency &&
+        !missingAmount &&
+        !missingCounter &&
+        Number(amountService) > 0
+          ? Number(amountPayment) / Number(amountService)
+          : null;
       const diffCost =
         amountService != null && svc.cost_price != null
           ? round2(amountService - Number(svc.cost_price))
@@ -165,6 +195,7 @@ export default function ServiceAllocationsEditor({
         service: svc,
         serviceCur,
         amountService,
+        counterAmount,
         fxRate,
         amountPayment,
         missingAmount,
@@ -211,14 +242,20 @@ export default function ServiceAllocationsEditor({
   const setAmountService = useCallback((id: number, value: string) => {
     setDrafts((prev) => ({
       ...prev,
-      [id]: { ...(prev[id] || { amount_service: "", fx_rate: "" }), amount_service: value },
+      [id]: {
+        ...(prev[id] || { amount_service: "", counter_amount: "" }),
+        amount_service: value,
+      },
     }));
   }, []);
 
-  const setFxRate = useCallback((id: number, value: string) => {
+  const setCounterAmount = useCallback((id: number, value: string) => {
     setDrafts((prev) => ({
       ...prev,
-      [id]: { ...(prev[id] || { amount_service: "", fx_rate: "" }), fx_rate: value },
+      [id]: {
+        ...(prev[id] || { amount_service: "", counter_amount: "" }),
+        counter_amount: value,
+      },
     }));
   }, []);
 
@@ -235,7 +272,9 @@ export default function ServiceAllocationsEditor({
       (r) => r.serviceCur !== paymentCur && (!r.fx || r.fx <= 0),
     );
     if (missingFx) {
-      toast.error("Falta tipo de cambio para prorratear por costo.");
+      toast.error(
+        "Completá monto y contravalor en servicios de otra moneda para prorratear por costo.",
+      );
       return;
     }
     const weights = rowsWithFx.map((r) => {
@@ -263,8 +302,11 @@ export default function ServiceAllocationsEditor({
             ? amountPayment
             : round2(amountPayment / Number(r.fx || 1));
         next[r.service.id_service] = {
-          amount_service: formatAmountInput(amountService),
-          fx_rate: r.serviceCur === paymentCur ? "" : formatAmountInput(Number(r.fx || 0)),
+          amount_service: formatAmountInput(amountService, 2),
+          counter_amount:
+            r.serviceCur === paymentCur
+              ? ""
+              : formatAmountInput(amountPayment, 2),
         };
       });
       return next;
@@ -284,7 +326,9 @@ export default function ServiceAllocationsEditor({
       (r) => r.serviceCur !== paymentCur && (!r.fx || r.fx <= 0),
     );
     if (missingFx) {
-      toast.error("Falta tipo de cambio para repartir en partes iguales.");
+      toast.error(
+        "Completá monto y contravalor en servicios de otra moneda para repartir en partes iguales.",
+      );
       return;
     }
     const count = rowsWithFx.length || 1;
@@ -302,8 +346,11 @@ export default function ServiceAllocationsEditor({
             ? amountPayment
             : round2(amountPayment / Number(r.fx || 1));
         next[r.service.id_service] = {
-          amount_service: formatAmountInput(amountService),
-          fx_rate: r.serviceCur === paymentCur ? "" : formatAmountInput(Number(r.fx || 0)),
+          amount_service: formatAmountInput(amountService, 2),
+          counter_amount:
+            r.serviceCur === paymentCur
+              ? ""
+              : formatAmountInput(amountPayment, 2),
         };
       });
       return next;
@@ -316,8 +363,11 @@ export default function ServiceAllocationsEditor({
       rows.forEach((r) => {
         const base = Number(r.service.cost_price || 0);
         next[r.service.id_service] = {
-          amount_service: formatAmountInput(base),
-          fx_rate: r.serviceCur === paymentCur ? "" : prev[r.service.id_service]?.fx_rate || "",
+          amount_service: formatAmountInput(base, 2),
+          counter_amount:
+            r.serviceCur === paymentCur
+              ? ""
+              : prev[r.service.id_service]?.counter_amount || "",
         };
       });
       return next;
@@ -328,7 +378,7 @@ export default function ServiceAllocationsEditor({
     setDrafts((prev) => {
       const next = { ...prev };
       rows.forEach((r) => {
-        next[r.service.id_service] = { amount_service: "", fx_rate: "" };
+        next[r.service.id_service] = { amount_service: "", counter_amount: "" };
       });
       return next;
     });
@@ -380,7 +430,7 @@ export default function ServiceAllocationsEditor({
         <button
           type="button"
           onClick={clearAll}
-          title="Limpia los montos y tipos de cambio cargados."
+          title="Limpia los montos y contravalores cargados."
           className="rounded-full border border-white/10 bg-white/30 px-3 py-1 text-xs font-semibold transition hover:bg-white/50 dark:bg-white/10"
         >
           Borrar montos
@@ -416,7 +466,7 @@ export default function ServiceAllocationsEditor({
           )}
           {summary.missingFxCount > 0 && (
             <div>
-              Faltan tipos de cambio en {summary.missingFxCount} servicio(s).
+              Faltan contravalores en {summary.missingFxCount} servicio(s).
             </div>
           )}
         </div>
@@ -466,19 +516,21 @@ export default function ServiceAllocationsEditor({
                       {row.serviceCur !== paymentCur ? (
                         <>
                           <label className="text-xs text-sky-950/70 dark:text-white/70">
-                            Tipo de cambio ({row.serviceCur} a {paymentCur || ""})
+                            Contravalor ({paymentCur || ""})
                           </label>
                           <input
                             className={inputBase}
                             inputMode="decimal"
-                            value={drafts[svc.id_service]?.fx_rate || ""}
-                            onChange={(e) => setFxRate(svc.id_service, e.target.value)}
+                            value={drafts[svc.id_service]?.counter_amount || ""}
+                            onChange={(e) =>
+                              setCounterAmount(svc.id_service, e.target.value)
+                            }
                             placeholder="0"
                           />
                         </>
                       ) : (
                         <div className="text-xs text-sky-950/70 dark:text-white/70">
-                          Misma moneda
+                          Misma moneda (mismo valor)
                         </div>
                       )}
                     </div>

@@ -267,8 +267,14 @@ const INVESTMENT_PAYMENT_LINE_SELECT = {
 } satisfies Prisma.InvestmentPaymentSelect;
 
 const INVESTMENT_ALLOCATION_LIST_SELECT = {
+  service_id: true,
   booking_id: true,
+  booking: { select: { id_booking: true, agency_booking_id: true } },
+  payment_currency: true,
+  service_currency: true,
   amount_payment: true,
+  amount_service: true,
+  fx_rate: true,
 } satisfies Prisma.InvestmentServiceAllocationSelect;
 
 type InvestmentSchemaFlags = {
@@ -1046,6 +1052,13 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
     const includeCounts =
       typeof includeCountsRaw === "string" &&
       (includeCountsRaw === "1" || includeCountsRaw.toLowerCase() === "true");
+    const includeAllocationsRaw = Array.isArray(req.query.includeAllocations)
+      ? req.query.includeAllocations[0]
+      : req.query.includeAllocations;
+    const includeAllocationsParam =
+      typeof includeAllocationsRaw === "string" &&
+      (includeAllocationsRaw === "1" ||
+        includeAllocationsRaw.toLowerCase() === "true");
 
     if (operatorOnly && excludeOperator) {
       return res
@@ -1182,11 +1195,13 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
 
     const schemaFlags = await getInvestmentSchemaFlags();
     const includeBookingAllocations = Boolean(bookingId);
+    const includeAllocations =
+      includeBookingAllocations || includeAllocationsParam;
     const items = (await prisma.investment.findMany({
       where,
       select: buildInvestmentListSelect(
         schemaFlags,
-        includeBookingAllocations,
+        includeAllocations,
       ),
       orderBy: { id_investment: "desc" },
       take: take + 1,
@@ -1197,7 +1212,16 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
     const sliced = hasMore ? items.slice(0, take) : items;
     const normalized = sliced.map((item) => {
       const itemWithAllocations = item as Record<string, unknown> & {
-        allocations?: Array<{ booking_id?: unknown; amount_payment?: unknown }>;
+        allocations?: Array<{
+          service_id?: unknown;
+          booking_id?: unknown;
+          booking?: unknown;
+          payment_currency?: unknown;
+          service_currency?: unknown;
+          amount_payment?: unknown;
+          amount_service?: unknown;
+          fx_rate?: unknown;
+        }>;
       };
       const { allocations, ...itemData } = itemWithAllocations;
       const booking = item.booking as
@@ -1205,11 +1229,92 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         | null
         | undefined;
       const idAgency = Number(item.id_agency);
+      const normalizedAllocations = includeAllocations
+        ? (allocations || [])
+            .map((a) => {
+              const service_id = Number(a.service_id);
+              if (!Number.isFinite(service_id) || service_id <= 0) return null;
+              const allocationBooking =
+                typeof a.booking === "object" && a.booking !== null
+                  ? (a.booking as {
+                      id_booking?: unknown;
+                      agency_booking_id?: unknown;
+                    })
+                  : null;
+              const booking_id = Number(
+                allocationBooking?.id_booking ?? a.booking_id,
+              );
+              const booking_agency_id = Number(
+                allocationBooking?.agency_booking_id,
+              );
+              const amount_payment = Number(a.amount_payment);
+              const amount_service = Number(a.amount_service);
+              const fx_rate = Number(a.fx_rate);
+              const payment_currency = String(
+                a.payment_currency ?? item.currency ?? "ARS",
+              )
+                .trim()
+                .toUpperCase();
+              const service_currency = String(
+                a.service_currency ?? item.currency ?? "ARS",
+              )
+                .trim()
+                .toUpperCase();
+              const normalizedBookingId =
+                Number.isFinite(booking_id) && booking_id > 0
+                  ? Math.trunc(booking_id)
+                  : null;
+              const normalizedBookingAgencyId =
+                Number.isFinite(booking_agency_id) && booking_agency_id > 0
+                  ? Math.trunc(booking_agency_id)
+                  : null;
+              return {
+                service_id: Math.trunc(service_id),
+                booking_id: normalizedBookingId,
+                booking_agency_id: normalizedBookingAgencyId,
+                booking_public_id:
+                  normalizedBookingAgencyId != null
+                    ? encodePublicId({
+                        t: "booking",
+                        a: idAgency,
+                        i: normalizedBookingAgencyId,
+                      })
+                    : null,
+                payment_currency:
+                  payment_currency || String(item.currency || "ARS"),
+                service_currency:
+                  service_currency || String(item.currency || "ARS"),
+                amount_payment: Number.isFinite(amount_payment)
+                  ? amount_payment
+                  : 0,
+                amount_service: Number.isFinite(amount_service)
+                  ? amount_service
+                  : 0,
+                fx_rate:
+                  Number.isFinite(fx_rate) && fx_rate > 0 ? fx_rate : null,
+              };
+            })
+            .filter(
+              (
+                a,
+              ): a is {
+                service_id: number;
+                booking_id: number | null;
+                booking_agency_id: number | null;
+                booking_public_id: string | null;
+                payment_currency: string;
+                service_currency: string;
+                amount_payment: number;
+                amount_service: number;
+                fx_rate: number | null;
+              } => a !== null,
+            )
+        : undefined;
       const bookingAmount =
         bookingId != null
           ? (() => {
               const allocatedAmount = round2(
-                (allocations || [])
+                (normalizedAllocations || allocations || [])
                   .filter((a) => Number(a.booking_id) === bookingId)
                   .reduce((sum, a) => sum + Number(a.amount_payment || 0), 0),
               );
@@ -1235,6 +1340,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
           ? {}
           : { payment_fee_amount: null }),
         ...(schemaFlags.hasPaymentLines ? {} : { payments: [] }),
+        ...(includeAllocations
+          ? { allocations: normalizedAllocations || [] }
+          : {}),
         ...(bookingId != null ? { booking_amount: bookingAmount } : {}),
         booking: booking
           ? {

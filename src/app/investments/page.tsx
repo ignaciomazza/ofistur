@@ -1002,7 +1002,10 @@ export default function Page() {
   const reqIdRef = useRef(0);
 
   const buildQuery = useCallback(
-    (cursor?: number | null, opts?: { includeCounts?: boolean }) => {
+    (
+      cursor?: number | null,
+      opts?: { includeCounts?: boolean; includeAllocations?: boolean },
+    ) => {
       const qs = new URLSearchParams();
       if (debouncedQ.trim()) qs.append("q", debouncedQ.trim());
       if (category) qs.append("category", category);
@@ -1010,8 +1013,11 @@ export default function Page() {
       if (paymentMethodFilter) qs.append("payment_method", paymentMethodFilter);
       if (accountFilter) qs.append("account", accountFilter);
       if (operatorFilter) qs.append("operatorId", String(operatorFilter));
-      if (operatorOnly) qs.append("operatorOnly", "1");
-      else qs.append("excludeOperator", "1");
+      const shouldIncludeAllocations = opts?.includeAllocations ?? operatorOnly;
+      if (operatorOnly) {
+        qs.append("operatorOnly", "1");
+        if (shouldIncludeAllocations) qs.append("includeAllocations", "1");
+      } else qs.append("excludeOperator", "1");
       qs.append("take", "24");
       if (opts?.includeCounts) qs.append("includeCounts", "1");
       if (cursor != null) qs.append("cursor", String(cursor));
@@ -1162,7 +1168,7 @@ export default function Page() {
     try {
       const headers = [
         "Fecha",
-        "N°",
+        "Nº",
         "Categoría",
         "Descripción",
         "A quién se le paga",
@@ -1180,7 +1186,9 @@ export default function Page() {
       const rows: string[] = [];
 
       for (let i = 0; i < 300; i += 1) {
-        const qs = new URLSearchParams(buildQuery(next));
+        const qs = new URLSearchParams(
+          buildQuery(next, { includeAllocations: false }),
+        );
         qs.set("take", "200");
 
         const res = await authFetch(
@@ -1359,7 +1367,7 @@ export default function Page() {
     if (!operatorOnly || !associateServices) return;
     if (
       serviceSelection.currency &&
-      form.currency !== serviceSelection.currency
+      !form.currency
     ) {
       setForm((f) => ({ ...f, currency: serviceSelection.currency || "" }));
     }
@@ -1973,7 +1981,7 @@ export default function Page() {
     if (editingId) {
       pills.push(
         <span key="edit" className={`${pillBase} ${pillOk}`}>
-          Editando N° {editingId}
+          Editando Nº {editingId}
         </span>,
       );
     }
@@ -2499,6 +2507,7 @@ export default function Page() {
           onEdit={beginEdit}
           token={token ?? null}
           showOperatorPaymentPdf
+          showServiceBreakdown={operatorOnly}
         />
 
         <ToastContainer />

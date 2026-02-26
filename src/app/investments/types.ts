@@ -48,6 +48,8 @@ export type InvestmentServiceAllocation = {
   id_allocation?: number;
   service_id: number;
   booking_id?: number | null;
+  booking_agency_id?: number | null;
+  booking_public_id?: string | null;
   payment_currency: string;
   service_currency: string;
   amount_payment: number;
