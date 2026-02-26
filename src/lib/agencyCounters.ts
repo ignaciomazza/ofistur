@@ -52,19 +52,32 @@ export const COUNTER_KEYS = [
 
 export type AgencyCounterKey = (typeof COUNTER_KEYS)[number];
 
+export async function getNextAgencyCounterByKey(
+  tx: Prisma.TransactionClient,
+  id_agency: number,
+  key: string,
+): Promise<number> {
+  const normalizedKey = String(key || "").trim();
+  if (!normalizedKey) {
+    throw new Error("Agency counter key inválida.");
+  }
+
+  const counter = await tx.agencyCounter.upsert({
+    where: { id_agency_key: { id_agency, key: normalizedKey } },
+    update: { next_value: { increment: 1 } },
+    create: { id_agency, key: normalizedKey, next_value: 2 },
+    select: { next_value: true },
+  });
+
+  return counter.next_value - 1;
+}
+
 export async function getNextAgencyCounter(
   tx: Prisma.TransactionClient,
   id_agency: number,
   key: AgencyCounterKey,
 ): Promise<number> {
-  const counter = await tx.agencyCounter.upsert({
-    where: { id_agency_key: { id_agency, key } },
-    update: { next_value: { increment: 1 } },
-    create: { id_agency, key, next_value: 2 },
-    select: { next_value: true },
-  });
-
-  return counter.next_value - 1;
+  return getNextAgencyCounterByKey(tx, id_agency, key);
 }
 
 export async function setAgencyCounterNextValue(

@@ -638,6 +638,7 @@ model TravelGroupInvoiceItem {
 
 model Quote {
   id_quote        Int      @id @default(autoincrement())
+  user_quote_id   Int
   agency_quote_id Int?
   id_agency       Int
   agency          Agency   @relation(fields: [id_agency], references: [id_agency], onDelete: Cascade)
@@ -660,6 +661,7 @@ model Quote {
   creation_date   DateTime @default(now())
   updated_at      DateTime @updatedAt
 
+  @@unique([id_agency, id_user, user_quote_id], name: "agency_user_quote_id_unique")
   @@unique([id_agency, agency_quote_id], name: "agency_quote_id_unique")
   @@index([id_agency, id_quote], name: "agency_quote_idx")
   @@index([id_agency, id_user], name: "agency_quote_owner_idx")

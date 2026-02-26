@@ -513,18 +513,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
     backgroundColor: controlsOnDarkSurface ? "#0F172A" : "#FFFFFF",
     color: controlsOnDarkSurface ? "#F8FAFC" : "#334155",
   };
-  const isMultilinePdfSensitiveBlock =
-    block.type === "paragraph" ||
-    block.type === "list" ||
-    block.type === "twoColumns" ||
-    block.type === "threeColumns";
-  const showPdfDoubleLineBreakWarning =
-    canStyle &&
-    isMultilinePdfSensitiveBlock &&
-    (textSize !== "base" || textWeight !== "normal");
-  const pdfDoubleLineBreakWarningClass = controlsOnDarkSurface
-    ? "text-rose-200/95"
-    : "text-rose-700";
+
   const isInteractiveTarget = (target: EventTarget | null) => {
     if (!(target instanceof HTMLElement)) return false;
     return Boolean(
@@ -628,8 +617,12 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   onToggleMode(block.id, mode === "fixed" ? "form" : "fixed")
                 }
                 className={cx(controlChipClass, "px-2 py-1")}
-                title={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
-                aria-label={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
+                title={
+                  mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"
+                }
+                aria-label={
+                  mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"
+                }
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -766,11 +759,22 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   <button
                     type="button"
                     onClick={() =>
-                      onToggleMode(block.id, mode === "fixed" ? "form" : "fixed")
+                      onToggleMode(
+                        block.id,
+                        mode === "fixed" ? "form" : "fixed",
+                      )
                     }
                     className={cx(controlChipClass, "px-2 py-1")}
-                    title={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
-                    aria-label={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
+                    title={
+                      mode === "fixed"
+                        ? "Desbloquear bloque"
+                        : "Bloquear bloque"
+                    }
+                    aria-label={
+                      mode === "fixed"
+                        ? "Desbloquear bloque"
+                        : "Bloquear bloque"
+                    }
                   >
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -900,9 +904,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
               </select>
             </label>
             <label className={cx(controlChipClass, "gap-1 pr-0.5")}>
-              <span className={controlWeightBadgeClass}>
-                B
-              </span>
+              <span className={controlWeightBadgeClass}>B</span>
               <select
                 value={textWeight}
                 onChange={(e) =>
@@ -1338,11 +1340,7 @@ function KeyValueEditor({
       ))}
       {!readOnly && (
         <div className="flex items-center gap-2">
-          <button
-            className={addRowClass}
-            onClick={addEnd}
-            title="Agregar fila"
-          >
+          <button className={addRowClass} onClick={addEnd} title="Agregar fila">
             + Agregar fila
           </button>
           <span className="text-[11px] opacity-60">

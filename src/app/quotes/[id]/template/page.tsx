@@ -40,6 +40,7 @@ type QuoteTemplateUser = {
 
 type QuoteTemplateItem = {
   id_quote: number;
+  user_quote_id?: number | null;
   agency_quote_id?: number | null;
   public_id?: string | null;
   id_user: number;
@@ -628,6 +629,7 @@ export default function QuoteTemplatePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [quote, setQuote] = useState<QuoteTemplateItem | null>(null);
+  const [viewerUserId, setViewerUserId] = useState<number | null>(null);
   const [cfg, setCfg] = useState<TemplateConfig>(EMPTY_CFG);
   const [formValue, setFormValue] = useState<TemplateFormValues>(EMPTY_VALUE);
   const [baseFormValue, setBaseFormValue] = useState<TemplateFormValues>(EMPTY_VALUE);
@@ -648,17 +650,21 @@ export default function QuoteTemplatePage() {
     setError(null);
     setDraftReady(false);
     try {
-      const [quoteRes, cfgRes] = await Promise.all([
+      const [quoteRes, cfgRes, profileRes] = await Promise.all([
         authFetch(`/api/quotes/${quoteId}`, { cache: "no-store" }, token),
         authFetch(
           `/api/template-config/${QUOTE_PDF_DOC_TYPE}?resolved=1`,
           { cache: "no-store" },
           token,
         ),
+        authFetch("/api/user/profile", { cache: "no-store" }, token),
       ]);
 
       const quoteJson = (await quoteRes.json()) as QuoteTemplateItem & { error?: string };
       const cfgJson = (await cfgRes.json()) as TemplateConfigGetResponse;
+      const profileJson = (await profileRes.json().catch(() => null)) as
+        | { id_user?: unknown }
+        | null;
 
       if (!quoteRes.ok) {
         throw new Error(quoteJson.error || "No se pudo cargar la cotización.");
@@ -687,6 +693,9 @@ export default function QuoteTemplatePage() {
         : serverSavedAt || localDraft?.saved_at || null;
 
       setQuote(quoteJson);
+      setViewerUserId(
+        profileRes.ok ? Number(profileJson?.id_user || 0) || null : null,
+      );
       setCfg(resolvedCfg);
       setBaseFormValue(baseValue);
       setFormValue(selectedDraft ?? baseValue);
@@ -698,6 +707,7 @@ export default function QuoteTemplatePage() {
       const msg = err instanceof Error ? err.message : "Error al cargar la cotización.";
       setError(msg);
       setQuote(null);
+      setViewerUserId(null);
       setCfg(EMPTY_CFG);
       setFormValue(EMPTY_VALUE);
       setBaseFormValue(EMPTY_VALUE);
@@ -891,7 +901,14 @@ export default function QuoteTemplatePage() {
     }
   }, [formValue.blocks, token]);
 
-  const quoteDisplayId = quote?.agency_quote_id ?? quote?.id_quote ?? "cotizacion";
+  const quoteDisplayId = useMemo(() => {
+    if (!quote) return "cotizacion";
+    const isOtherOwner = viewerUserId != null && quote.id_user !== viewerUserId;
+    if (isOtherOwner) {
+      return quote.agency_quote_id ?? quote.id_quote;
+    }
+    return quote.user_quote_id ?? quote.agency_quote_id ?? quote.id_quote;
+  }, [quote, viewerUserId]);
   const quoteSummary = useMemo(() => {
     if (!quote) {
       return {

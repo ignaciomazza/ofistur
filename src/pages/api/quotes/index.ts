@@ -1,6 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import prisma, { Prisma } from "@/lib/prisma";
-import { getNextAgencyCounter } from "@/lib/agencyCounters";
+import {
+  getNextAgencyCounter,
+  getNextAgencyCounterByKey,
+} from "@/lib/agencyCounters";
 import { encodePublicId } from "@/lib/publicIds";
 import {
   getLeaderScope,
@@ -212,7 +215,17 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       const or: Prisma.QuoteWhereInput[] = [];
       if (Number.isFinite(numeric)) {
         const qNum = Math.trunc(numeric);
+        const userFilter = where.id_user;
+        const hasSingleOwnerFilter =
+          typeof userFilter === "number" ||
+          (typeof userFilter === "object" &&
+            userFilter !== null &&
+            "equals" in userFilter &&
+            typeof (userFilter as Prisma.IntFilter).equals === "number");
         or.push({ id_quote: qNum }, { agency_quote_id: qNum });
+        if (hasSingleOwnerFilter) {
+          or.push({ user_quote_id: qNum });
+        }
       }
       or.push(
         { lead_name: { contains: q, mode: "insensitive" } },
@@ -350,8 +363,14 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         auth.id_agency,
         "quote",
       );
+      const userQuoteId = await getNextAgencyCounterByKey(
+        tx,
+        auth.id_agency,
+        `quote_user_${usedUserId}`,
+      );
       return tx.quote.create({
         data: {
+          user_quote_id: userQuoteId,
           agency_quote_id: agencyQuoteId,
           id_agency: auth.id_agency,
           id_user: usedUserId,

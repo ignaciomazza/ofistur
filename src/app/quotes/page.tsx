@@ -60,6 +60,7 @@ type QuoteUser = {
 
 type QuoteItem = {
   id_quote: number;
+  user_quote_id?: number | null;
   agency_quote_id?: number | null;
   public_id?: string | null;
   id_user: number;
@@ -172,6 +173,7 @@ type FormMode = "create" | "edit";
 type QuoteWorkspaceView = "form" | "list";
 type QuoteListView = "card" | "grid" | "table";
 type QuoteStatusScope = "active" | "converted" | "all";
+type QuoteListScope = "mine" | "team" | "agency";
 type PresenceFilter = "all" | "with" | "without";
 type MoneyFieldName = "sale_price" | "cost_price";
 type ServiceTypeOption = {
@@ -386,6 +388,7 @@ function normalizeQuoteItem(input: unknown): QuoteItem | null {
   return {
     id_quote,
     id_user,
+    user_quote_id: rec.user_quote_id == null ? null : Number(rec.user_quote_id),
     agency_quote_id:
       rec.agency_quote_id == null ? null : Number(rec.agency_quote_id),
     quote_status:
@@ -587,6 +590,14 @@ function formatUserName(
   if (user.email) return user.email;
   if (typeof user.id_user === "number") return `Usuario ${user.id_user}`;
   return "Sin responsable";
+}
+
+function getQuoteUserNumber(quote: QuoteItem): number {
+  return quote.user_quote_id ?? quote.agency_quote_id ?? quote.id_quote;
+}
+
+function getQuoteAgencyNumber(quote: QuoteItem): number {
+  return quote.agency_quote_id ?? quote.id_quote;
 }
 
 function startOfDayMs(dateValue: string): number | null {
@@ -799,6 +810,7 @@ export default function QuotesPage() {
   const [listView, setListView] = useState<QuoteListView>("grid");
   const [expandedQuoteId, setExpandedQuoteId] = useState<number | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [listScope, setListScope] = useState<QuoteListScope>("mine");
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
   const [statusScope, setStatusScope] = useState<QuoteStatusScope>("active");
   const [createdFrom, setCreatedFrom] = useState("");
@@ -851,6 +863,15 @@ export default function QuotesPage() {
     () => canOverrideQuoteMetaByRole(profile?.role),
     [profile],
   );
+  const canSeeTeamQuotes = useMemo(
+    () => isLeaderRole(profile?.role),
+    [profile],
+  );
+  const canSeeAgencyQuotes = useMemo(
+    () => isManagerRole(profile?.role),
+    [profile],
+  );
+  const showsAgencyCounter = listScope === "team" || listScope === "agency";
   const canAssignOwner = useMemo(
     () => isManagerRole(profile?.role) || isLeaderRole(profile?.role),
     [profile],
@@ -908,7 +929,10 @@ export default function QuotesPage() {
         const serviceCount = normalizeQuoteServiceDrafts(
           q.service_drafts,
         ).length;
-        const displayId = q.agency_quote_id ?? q.id_quote;
+        const userDisplayId = getQuoteUserNumber(q);
+        const agencyDisplayId = getQuoteAgencyNumber(q);
+        const dbDisplayId = q.id_quote;
+        const displayId = showsAgencyCounter ? agencyDisplayId : userDisplayId;
         const ownerName = formatUserName(
           q.user
             ? {
@@ -922,6 +946,9 @@ export default function QuotesPage() {
         const updatedAtMs = toDateMs(q.updated_at);
         const localSearchBlob = [
           displayId,
+          userDisplayId,
+          agencyDisplayId,
+          dbDisplayId,
           q.public_id || "",
           q.lead_name || "",
           q.lead_phone || "",
@@ -937,13 +964,28 @@ export default function QuotesPage() {
           paxCount,
           serviceCount,
           displayId,
+          userDisplayId,
+          agencyDisplayId,
+          dbDisplayId,
           ownerName,
           createdAtMs,
           updatedAtMs,
           localSearchBlob,
         };
       }),
-    [quotes],
+    [quotes, showsAgencyCounter],
+  );
+
+  const ownerOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          quoteRows.map((row) => [row.quote.id_user, row.ownerName] as const),
+        ).entries(),
+      )
+        .map(([id_user, label]) => ({ id_user, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, "es")),
+    [quoteRows],
   );
 
   const filteredQuotes = useMemo(() => {
@@ -1021,10 +1063,15 @@ export default function QuotesPage() {
 
   const loadQuotes = useCallback(async () => {
     if (!token) return;
+    if (listScope === "team" && !canSeeTeamQuotes) return;
+    if (listScope === "agency" && !canSeeAgencyQuotes) return;
     try {
       setLoading(true);
       const qs = new URLSearchParams({ take: "50" });
       qs.set("status_scope", statusScope);
+      if (listScope === "mine" && profile?.id_user) {
+        qs.set("userId", String(profile.id_user));
+      }
       if (search.trim()) qs.set("q", search.trim());
       const res = await authFetch(
         `/api/quotes?${qs.toString()}`,
@@ -1052,7 +1099,15 @@ export default function QuotesPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, statusScope, token]);
+  }, [
+    canSeeAgencyQuotes,
+    canSeeTeamQuotes,
+    listScope,
+    profile?.id_user,
+    search,
+    statusScope,
+    token,
+  ]);
 
   useEffect(() => {
     if (!token) return;
@@ -1184,6 +1239,25 @@ export default function QuotesPage() {
       alive = false;
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!profile) return;
+    if (isManagerRole(profile.role)) return;
+    if (isLeaderRole(profile.role)) {
+      if (listScope === "agency") {
+        setListScope("team");
+      }
+      return;
+    }
+    if (listScope !== "mine") {
+      setListScope("mine");
+    }
+  }, [listScope, profile]);
+
+  useEffect(() => {
+    setOwnerFilter("all");
+    setExpandedQuoteId(null);
+  }, [listScope]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1408,9 +1482,10 @@ export default function QuotesPage() {
 
   const deleteQuote = async (quote: QuoteItem) => {
     if (!token) return;
-    const ok = window.confirm(
-      `¿Eliminar cotización ${quote.agency_quote_id ?? quote.id_quote}?`,
-    );
+    const quoteLabel = showsAgencyCounter
+      ? getQuoteAgencyNumber(quote)
+      : getQuoteUserNumber(quote);
+    const ok = window.confirm(`¿Eliminar cotización ${quoteLabel}?`);
     if (!ok) return;
     try {
       const res = await authFetch(
@@ -2772,29 +2847,71 @@ export default function QuotesPage() {
                 <p className="text-xs text-sky-900/75 dark:text-sky-100/70">
                   Vistas: grilla, card y tabla.
                 </p>
-                <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/55 p-1 text-xs shadow-sm shadow-sky-950/10 dark:border-sky-200/25 dark:bg-sky-950/25">
-                  {(
-                    [
-                      ["active", "Activas"],
-                      ["converted", "Convertidas"],
-                      ["all", "Todas"],
-                    ] as Array<[QuoteStatusScope, string]>
-                  ).map(([scope, label]) => (
-                    <button
-                      key={scope}
-                      type="button"
-                      onClick={() => setStatusScope(scope)}
-                      className={`rounded-full px-3 py-1 transition ${
-                        statusScope === scope
-                          ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
-                          : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
-                      }`}
-                      aria-pressed={statusScope === scope}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                <div className="flex gap-1">
+                  <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/55 p-1 text-xs shadow-sm shadow-sky-950/10 dark:border-sky-200/25 dark:bg-sky-950/25">
+                    {(
+                      [
+                        ["active", "Activas"],
+                        ["converted", "Convertidas"],
+                        ["all", "Todas"],
+                      ] as Array<[QuoteStatusScope, string]>
+                    ).map(([scope, label]) => (
+                      <button
+                        key={scope}
+                        type="button"
+                        onClick={() => setStatusScope(scope)}
+                        className={`rounded-full px-3 py-1 transition ${
+                          statusScope === scope
+                            ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                            : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                        }`}
+                        aria-pressed={statusScope === scope}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {(canSeeTeamQuotes || canSeeAgencyQuotes) && (
+                    <>
+                      <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/55 p-1 text-xs shadow-sm shadow-sky-950/10 dark:border-sky-200/25 dark:bg-sky-950/25">
+                        {(
+                          [
+                            ["mine", "Mis cotizaciones"],
+                            ...(canSeeTeamQuotes
+                              ? ([["team", "Equipo"]] as Array<
+                                  [QuoteListScope, string]
+                                >)
+                              : []),
+                            ...(canSeeAgencyQuotes
+                              ? ([["agency", "Agencia"]] as Array<
+                                  [QuoteListScope, string]
+                                >)
+                              : []),
+                          ] as Array<[QuoteListScope, string]>
+                        ).map(([scope, label]) => (
+                          <button
+                            key={scope}
+                            type="button"
+                            onClick={() => setListScope(scope)}
+                            className={`rounded-full px-3 py-1 transition ${
+                              listScope === scope
+                                ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                                : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                            }`}
+                            aria-pressed={listScope === scope}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
+                <p className="mt-2 text-[11px] text-sky-900/70 dark:text-sky-100/65">
+                  {showsAgencyCounter
+                    ? "Vista de gestión: numeración interna de agencia."
+                    : "Vista normal: numeración interna por vendedor."}
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {canConfigure && (
@@ -2842,7 +2959,6 @@ export default function QuotesPage() {
                         d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"
                       />
                     </svg>
-
                   </span>
                 </button>
               </div>
@@ -2997,11 +3113,9 @@ export default function QuotesPage() {
                         onChange={(e) => setOwnerFilter(e.target.value)}
                       >
                         <option value="all">Todos</option>
-                        {users.map((u) => (
-                          <option key={u.id_user} value={u.id_user}>
-                            {`${u.first_name || ""} ${u.last_name || ""}`.trim() ||
-                              u.email ||
-                              `Usuario ${u.id_user}`}
+                        {ownerOptions.map((owner) => (
+                          <option key={owner.id_user} value={owner.id_user}>
+                            {owner.label || `Usuario ${owner.id_user}`}
                           </option>
                         ))}
                       </select>
@@ -3222,6 +3336,23 @@ export default function QuotesPage() {
                               <tr className="border-t border-sky-300/25 bg-sky-100/40 dark:border-sky-200/15 dark:bg-sky-900/20">
                                 <td colSpan={7} className="p-3">
                                   <div className="grid gap-2 text-xs text-sky-900/90 dark:text-sky-100/85">
+                                    {showsAgencyCounter ? (
+                                      <p>
+                                        <span className="font-semibold">
+                                          Correlativos:
+                                        </span>{" "}
+                                        Usuario Nº {row.userDisplayId} · Agencia
+                                        Nº {row.agencyDisplayId} · DB #
+                                        {row.dbDisplayId}
+                                      </p>
+                                    ) : (
+                                      <p>
+                                        <span className="font-semibold">
+                                          Correlativo:
+                                        </span>{" "}
+                                        Usuario Nº {row.userDisplayId}
+                                      </p>
+                                    )}
                                     <p>
                                       <span className="font-semibold">
                                         Detalle:
@@ -3302,7 +3433,10 @@ export default function QuotesPage() {
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <p className="text-xs uppercase tracking-[0.16em] text-sky-800/75 dark:text-sky-100/70">
-                            Cotización Nº {row.displayId}
+                            {showsAgencyCounter
+                              ? "Cotización agencia Nº"
+                              : "Cotización Nº"}{" "}
+                            {row.displayId}
                           </p>
                           <h3 className="text-sm font-semibold text-sky-950 dark:text-sky-50">
                             {q.lead_name || "Cliente sin nombre"}
@@ -3484,6 +3618,22 @@ export default function QuotesPage() {
                             className="overflow-hidden"
                           >
                             <div className="mt-3 grid gap-2 rounded-2xl border border-amber-300/35 bg-gradient-to-br from-amber-100/35 via-amber-100/20 to-emerald-100/35 p-3 text-xs text-amber-900 dark:border-amber-200/30 dark:from-amber-900/25 dark:via-amber-900/15 dark:to-emerald-900/25 dark:text-amber-100">
+                              {showsAgencyCounter ? (
+                                <p>
+                                  <span className="font-semibold">
+                                    Correlativos:
+                                  </span>{" "}
+                                  Usuario Nº {row.userDisplayId} · Agencia Nº{" "}
+                                  {row.agencyDisplayId} · DB #{row.dbDisplayId}
+                                </p>
+                              ) : (
+                                <p>
+                                  <span className="font-semibold">
+                                    Correlativo:
+                                  </span>{" "}
+                                  Usuario Nº {row.userDisplayId}
+                                </p>
+                              )}
                               <p>
                                 <span className="font-semibold">Detalle:</span>{" "}
                                 {row.bookingDraft.details || "Sin detalle"}
@@ -3533,7 +3683,9 @@ export default function QuotesPage() {
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-lg font-semibold">
                   Convertir cotización Nº{" "}
-                  {convertQuote.agency_quote_id ?? convertQuote.id_quote}
+                  {showsAgencyCounter
+                    ? getQuoteAgencyNumber(convertQuote)
+                    : getQuoteUserNumber(convertQuote)}
                 </h2>
                 <button type="button" className={BTN} onClick={closeConvert}>
                   Cerrar
