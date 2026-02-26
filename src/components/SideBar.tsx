@@ -340,7 +340,7 @@ export default function SideBar({
         items: [
           { href: "/quotes", label: "Cotizaciones" },
           hasAccess("/templates")
-            ? { href: "/templates", label: "PDFs" }
+            ? { href: "/templates", label: "Estudio PDF" }
             : null,
           hasAccess("/quotes/config")
             ? { href: "/quotes/config", label: "Configuración" }
@@ -411,9 +411,6 @@ export default function SideBar({
             : null,
           hasAccess("/calendar")
             ? { href: "/calendar", label: "Calendario" }
-            : null,
-          hasAccess("/templates")
-            ? { href: "/templates", label: "Templates" }
             : null,
         ].filter(Boolean) as { href: string; label: string }[],
       },

@@ -252,10 +252,6 @@ const ContentBuilderSection: React.FC<Props> = ({ cfg, disabled, onChange }) => 
         </p>
       ) : (
         <div className="space-y-3">
-          <p className="text-xs text-slate-500 dark:text-slate-300">
-            Bloques activos en la vista previa: {blocks.length}
-          </p>
-
           <div className="grid gap-2">
             {blocks.map((b, idx) => {
               const headingLevel = b.type === "heading" ? b.level ?? 1 : undefined;

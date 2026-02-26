@@ -180,6 +180,61 @@ const BLOCK_LABELS: Record<BlockType, string> = {
   threeColumns: "Tres columnas",
 };
 
+function makeDraftBlock(type: BlockType, count: number): OrderedBlock {
+  const id = `cfg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const label = `${BLOCK_LABELS[type]} ${count}`;
+  const base = {
+    id,
+    origin: "fixed" as const,
+    type,
+    label,
+  };
+
+  switch (type) {
+    case "heading":
+      return {
+        ...base,
+        value: { type: "heading", text: "", level: 1 },
+      };
+    case "subtitle":
+      return {
+        ...base,
+        value: { type: "subtitle", text: "" },
+      };
+    case "paragraph":
+      return {
+        ...base,
+        value: { type: "paragraph", text: "" },
+      };
+    case "list":
+      return {
+        ...base,
+        value: { type: "list", items: [] },
+      };
+    case "keyValue":
+      return {
+        ...base,
+        value: { type: "keyValue", pairs: [] },
+      };
+    case "twoColumns":
+      return {
+        ...base,
+        value: { type: "twoColumns", left: "", right: "" },
+      };
+    case "threeColumns":
+      return {
+        ...base,
+        value: { type: "threeColumns", left: "", center: "", right: "" },
+      };
+    default:
+      return {
+        ...base,
+        type: "paragraph",
+        value: { type: "paragraph", text: "" },
+      };
+  }
+}
+
 function isBlock(v: unknown): v is ContentBlock {
   if (!isObject(v)) return false;
   const t = (v as AnyObj)["type"];
@@ -855,6 +910,23 @@ const TemplateConfigPreview: React.FC<Props> = ({
     );
   };
 
+  const quickAddItems: Array<{ type: BlockType; label: string }> = [
+    { type: "heading", label: "Título" },
+    { type: "subtitle", label: "Subtítulo" },
+    { type: "paragraph", label: "Párrafo" },
+    { type: "list", label: "Lista" },
+    { type: "keyValue", label: "Clave/Valor" },
+    { type: "twoColumns", label: "Dos columnas" },
+    { type: "threeColumns", label: "Tres columnas" },
+  ];
+
+  const addDraftBlock = useCallback((type: BlockType) => {
+    setEditableBlocks((prev) => {
+      const count = prev.filter((block) => block.type === type).length + 1;
+      return [...prev, makeDraftBlock(type, count)];
+    });
+  }, []);
+
   // Derivados de agencia/usuario
   const agencyName = agency.name || "Nombre de la agencia";
   const legalName = agency.legal_name || agency.name || "Razón social";
@@ -1025,6 +1097,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                     accentColor: accent,
                     headingFont,
                     headingWeight,
+                    controlsOnDarkSurface: !isLightBg,
                   }}
                 />
               )}
@@ -1267,6 +1340,49 @@ const TemplateConfigPreview: React.FC<Props> = ({
     );
   };
 
+  const renderContentToolbar = () =>
+    !canEditContent ? null : (
+      <div className="pointer-events-none sticky top-2 z-[118] md:top-3">
+        <div className="pointer-events-auto flex flex-nowrap items-center gap-2 overflow-x-auto rounded-2xl border border-sky-300/35 bg-white/90 p-2 shadow-lg shadow-sky-900/15 backdrop-blur dark:border-sky-200/20 dark:bg-slate-950/85">
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-sky-300/45 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-sky-900 dark:border-sky-200/25 dark:bg-sky-500/20 dark:text-sky-100">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              className="size-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.6}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12m-12 6h12m-12 6h12M3.75 6.75h.008v.008H3.75V6.75Zm0 6h.008v.008H3.75V12.75Zm0 6h.008v.008H3.75V18.75Z" />
+            </svg>
+            Contenido
+          </span>
+
+          {quickAddItems.map((item) => (
+            <button
+              key={item.type}
+              type="button"
+              onClick={() => addDraftBlock(item.type)}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-sky-300/50 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-900 shadow-sm transition hover:scale-[0.98] dark:border-sky-300/30 dark:bg-sky-500/20 dark:text-sky-100"
+              title={`Agregar ${item.label}`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                className="size-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.7}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+
   // Footer
   const renderFooter = () => (
     <div
@@ -1316,154 +1432,157 @@ const TemplateConfigPreview: React.FC<Props> = ({
    * ======================================================================== */
 
   return (
-    <div
-      className={cx("col-span-2 h-fit border", radiusClass)}
-      style={{
-        backgroundColor: bg,
-        color: text,
-        fontFamily: bodyFont,
-        borderColor: borderColor,
-      }}
-    >
-      {layout === "layoutA" && (
-        <>
-          <CoverImage
-            mode={coverMode}
-            url={coverUrl}
-            innerRadiusClass={innerRadiusClass}
-            density={density}
-            logoUrl={agencyLogo}
-            isLightBg={isLightBg}
-          />
-          {renderHeader()}
-          {renderContentBlocks()}
-          {renderPaymentPreview()}
-          {renderFooter()}
-        </>
-      )}
-
-      {layout === "layoutB" && (
-        <>
-          {renderHeader()}
-          {coverMode === "url" && coverUrl ? (
-            <div className={cx(padX, "mt-4")}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={coverUrl}
-                alt="cover"
-                className={cx("w-full object-cover", innerRadiusClass)}
-                style={{
-                  height:
-                    density === "compact"
-                      ? 160
-                      : density === "relaxed"
-                        ? 240
-                        : 200,
-                }}
-              />
-            </div>
-          ) : null}
-          {renderContentBlocks()}
-          {renderPaymentPreview()}
-          {renderFooter()}
-        </>
-      )}
-
-      {layout === "layoutC" && (
-        <div className={cx("grid gap-0 md:grid-cols-[280px_1fr]", radiusClass)}>
-          {/* Sidebar */}
-          <aside
-            className={cx("p-6", innerRadiusClass)}
-            style={{ backgroundColor: panelBgSoft }}
-          >
-            {hasLogo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={agencyLogo}
-                alt="logo"
-                className={cx(
-                  "mb-4 h-10 w-auto object-contain opacity-90",
-                  innerRadiusClass,
-                )}
-              />
-            ) : (
-              <div
-                className={cx("mb-4 h-10 w-24", innerRadiusClass)}
-                style={{
-                  backgroundColor: isLightBg
-                    ? "rgba(0,0,0,0.08)"
-                    : "rgba(255,255,255,0.10)",
-                }}
-              />
-            )}
-
-            <h2
-              className="text-lg"
-              style={{
-                fontFamily: headingFont,
-                fontWeight: headingWeight,
-              }}
-            >
-              {agencyName}
-            </h2>
-            <div
-              className="mt-1 h-[2px] w-2/3 rounded-full"
-              style={{ backgroundColor: accent }}
+    <section className="space-y-3">
+      {renderContentToolbar()}
+      <div
+        className={cx("col-span-2 h-fit border", radiusClass)}
+        style={{
+          backgroundColor: bg,
+          color: text,
+          fontFamily: bodyFont,
+          borderColor: borderColor,
+        }}
+      >
+        {layout === "layoutA" && (
+          <>
+            <CoverImage
+              mode={coverMode}
+              url={coverUrl}
+              innerRadiusClass={innerRadiusClass}
+              density={density}
+              logoUrl={agencyLogo}
+              isLightBg={isLightBg}
             />
-
-            <div className="mt-3 text-xs opacity-80">
-              {corporateLine.map((it, i) => (
-                <div key={i} className="mb-1">
-                  <b style={{ color: accent }}>{it.label}:</b>{" "}
-                  <span style={{ color: text }}>{it.value}</span>
-                </div>
-              ))}
-              {corporateLine.length === 0 && (
-                <div className="opacity-60">Sin datos de contacto</div>
-              )}
-            </div>
-
-            <span
-              className={cx(
-                "mt-4 inline-flex w-max items-center px-2 py-1 text-[11px] uppercase tracking-wide",
-                innerRadiusClass,
-              )}
-              style={{
-                border: panelBorder,
-                backgroundColor: chipBg,
-                color: accent,
-              }}
-            >
-              {docTypeLabel}
-            </span>
-          </aside>
-
-          {/* Main */}
-          <main className={cx("rounded-r-2xl p-2")}>
-            {coverMode === "url" && coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={coverUrl}
-                alt="cover"
-                className={cx("w-full object-cover", innerRadiusClass)}
-                style={{
-                  height:
-                    density === "compact"
-                      ? 144
-                      : density === "relaxed"
-                        ? 220
-                        : 184,
-                }}
-              />
-            ) : null}
-
+            {renderHeader()}
             {renderContentBlocks()}
             {renderPaymentPreview()}
             {renderFooter()}
-          </main>
-        </div>
-      )}
-    </div>
+          </>
+        )}
+
+        {layout === "layoutB" && (
+          <>
+            {renderHeader()}
+            {coverMode === "url" && coverUrl ? (
+              <div className={cx(padX, "mt-4")}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={coverUrl}
+                  alt="cover"
+                  className={cx("w-full object-cover", innerRadiusClass)}
+                  style={{
+                    height:
+                      density === "compact"
+                        ? 160
+                        : density === "relaxed"
+                          ? 240
+                          : 200,
+                  }}
+                />
+              </div>
+            ) : null}
+            {renderContentBlocks()}
+            {renderPaymentPreview()}
+            {renderFooter()}
+          </>
+        )}
+
+        {layout === "layoutC" && (
+          <div className={cx("grid gap-0 md:grid-cols-[280px_1fr]", radiusClass)}>
+            {/* Sidebar */}
+            <aside
+              className={cx("p-6", innerRadiusClass)}
+              style={{ backgroundColor: panelBgSoft }}
+            >
+              {hasLogo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={agencyLogo}
+                  alt="logo"
+                  className={cx(
+                    "mb-4 h-10 w-auto object-contain opacity-90",
+                    innerRadiusClass,
+                  )}
+                />
+              ) : (
+                <div
+                  className={cx("mb-4 h-10 w-24", innerRadiusClass)}
+                  style={{
+                    backgroundColor: isLightBg
+                      ? "rgba(0,0,0,0.08)"
+                      : "rgba(255,255,255,0.10)",
+                  }}
+                />
+              )}
+
+              <h2
+                className="text-lg"
+                style={{
+                  fontFamily: headingFont,
+                  fontWeight: headingWeight,
+                }}
+              >
+                {agencyName}
+              </h2>
+              <div
+                className="mt-1 h-[2px] w-2/3 rounded-full"
+                style={{ backgroundColor: accent }}
+              />
+
+              <div className="mt-3 text-xs opacity-80">
+                {corporateLine.map((it, i) => (
+                  <div key={i} className="mb-1">
+                    <b style={{ color: accent }}>{it.label}:</b>{" "}
+                    <span style={{ color: text }}>{it.value}</span>
+                  </div>
+                ))}
+                {corporateLine.length === 0 && (
+                  <div className="opacity-60">Sin datos de contacto</div>
+                )}
+              </div>
+
+              <span
+                className={cx(
+                  "mt-4 inline-flex w-max items-center px-2 py-1 text-[11px] uppercase tracking-wide",
+                  innerRadiusClass,
+                )}
+                style={{
+                  border: panelBorder,
+                  backgroundColor: chipBg,
+                  color: accent,
+                }}
+              >
+                {docTypeLabel}
+              </span>
+            </aside>
+
+            {/* Main */}
+            <main className={cx("rounded-r-2xl p-2")}>
+              {coverMode === "url" && coverUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={coverUrl}
+                  alt="cover"
+                  className={cx("w-full object-cover", innerRadiusClass)}
+                  style={{
+                    height:
+                      density === "compact"
+                        ? 144
+                        : density === "relaxed"
+                          ? 220
+                          : 184,
+                  }}
+                />
+              ) : null}
+
+              {renderContentBlocks()}
+              {renderPaymentPreview()}
+              {renderFooter()}
+            </main>
+          </div>
+        )}
+      </div>
+    </section>
   );
 };
 

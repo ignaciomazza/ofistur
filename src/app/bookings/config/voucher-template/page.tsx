@@ -10,7 +10,31 @@ import TemplateConfigContainer from "@/components/template-config/TemplateConfig
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
-type Role = "gerente" | "desarrollador" | "administrativo" | "equipo" | "vendedor" | "lider" | "marketing";
+type Role =
+  | "gerente"
+  | "desarrollador"
+  | "administrativo"
+  | "equipo"
+  | "vendedor"
+  | "lider"
+  | "marketing"
+  | "admin"
+  | "administrador"
+  | "dev"
+  | string;
+
+function canManageTemplateConfig(role: string | null | undefined): boolean {
+  const normalized = String(role || "").trim().toLowerCase();
+  return [
+    "gerente",
+    "administrativo",
+    "admin",
+    "administrador",
+    "desarrollador",
+    "dev",
+    "developer",
+  ].includes(normalized);
+}
 
 export default function BookingVoucherTemplatePage() {
   const { token } = useAuth();
@@ -46,7 +70,7 @@ export default function BookingVoucherTemplatePage() {
     return () => controller.abort();
   }, [token]);
 
-  const canAccess = role === "gerente" || role === "desarrollador";
+  const canAccess = canManageTemplateConfig(role);
 
   return (
     <ProtectedRoute>

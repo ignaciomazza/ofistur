@@ -643,6 +643,7 @@ model Quote {
   agency          Agency   @relation(fields: [id_agency], references: [id_agency], onDelete: Cascade)
   id_user         Int
   user            User     @relation(fields: [id_user], references: [id_user], onDelete: Cascade)
+  quote_status    String   @default("active")
   lead_name       String?
   lead_phone      String?
   lead_email      String?
@@ -651,12 +652,18 @@ model Quote {
   pax_drafts      Json?
   service_drafts  Json?
   custom_values   Json?
+  converted_at    DateTime?
+  converted_booking_id Int?
+  pdf_draft       Json?
+  pdf_draft_saved_at DateTime?
+  pdf_last_file_name String?
   creation_date   DateTime @default(now())
   updated_at      DateTime @updatedAt
 
   @@unique([id_agency, agency_quote_id], name: "agency_quote_id_unique")
   @@index([id_agency, id_quote], name: "agency_quote_idx")
   @@index([id_agency, id_user], name: "agency_quote_owner_idx")
+  @@index([id_agency, quote_status], name: "agency_quote_status_idx")
 }
 
 model Service {

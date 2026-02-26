@@ -2,7 +2,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid/non-secure";
 import { useAuth } from "@/context/AuthContext";
 import { useAgencyAndUser } from "@/lib/agencyUser";
@@ -125,25 +125,29 @@ function useUiTokens(cfg: TemplateConfig) {
       ? densityRaw
       : "comfortable";
 
-  const padX =
-    density === "compact" ? "px-4" : density === "relaxed" ? "px-7" : "px-6";
+  const padX = "px-6";
   const padY =
     density === "compact" ? "py-3" : density === "relaxed" ? "py-6" : "py-5";
 
   const gapBlocks =
     density === "compact"
-      ? "space-y-2"
+      ? "space-y-1.5"
       : density === "relaxed"
-        ? "space-y-5"
-        : "space-y-3";
-  const gapGrid =
-    density === "compact" ? "gap-2" : density === "relaxed" ? "gap-4" : "gap-3";
+        ? "space-y-6"
+        : "space-y-3.5";
+  const gapGrid = "gap-3";
   const listSpace =
     density === "compact"
       ? "space-y-0.5"
       : density === "relaxed"
         ? "space-y-2"
         : "space-y-1";
+  const blockPaddingYClass =
+    density === "compact"
+      ? "py-1.5"
+      : density === "relaxed"
+        ? "py-4"
+        : "py-2.5";
 
   const contentWidth = getAt<string>(
     rcfg,
@@ -167,6 +171,7 @@ function useUiTokens(cfg: TemplateConfig) {
     gapBlocks,
     gapGrid,
     listSpace,
+    blockPaddingYClass,
     contentMaxW,
     density,
     dividers,
@@ -350,6 +355,8 @@ type Props = {
   className?: string;
   token?: string | null;
   filename?: string;
+  onPdfDownloaded?: (fileName: string) => void | Promise<void>;
+  toolbarMode?: "full" | "compact" | "hidden" | "studio";
 };
 
 /* =============================================================================
@@ -479,6 +486,8 @@ const TemplateEditor: React.FC<Props> = ({
   className,
   token: propToken,
   filename,
+  onPdfDownloaded,
+  toolbarMode = "full",
 }) => {
   useEnsureBlocksInitialized(cfg, value, onChange);
 
@@ -490,6 +499,16 @@ const TemplateEditor: React.FC<Props> = ({
   const [unlockFixed, setUnlockFixed] = useState(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [focusSeq, setFocusSeq] = useState(0);
+  const [toolbarOpen, setToolbarOpen] = useState(
+    toolbarMode === "full" || toolbarMode === "compact",
+  );
+
+  useEffect(() => {
+    if (toolbarMode === "full") setToolbarOpen(true);
+    if (toolbarMode === "compact") setToolbarOpen(true);
+    if (toolbarMode === "hidden") setToolbarOpen(false);
+    if (toolbarMode === "studio") setToolbarOpen(false);
+  }, [toolbarMode]);
 
   // Normalizamos config y mergeamos selections del form + agencia/usuario
   const normalized = useMemo(
@@ -509,8 +528,10 @@ const TemplateEditor: React.FC<Props> = ({
     () => (Array.isArray(value.blocks) ? value.blocks : []),
     [value.blocks],
   );
-  const setBlocks = (next: OrderedBlock[]) =>
-    onChange({ ...value, blocks: next });
+  const setBlocks = useCallback(
+    (next: OrderedBlock[]) => onChange({ ...value, blocks: next }),
+    [onChange, value],
+  );
 
   // 🔄 Hidratar bloques fijos desde la config si están vacíos
   useEffect(() => {
@@ -570,8 +591,10 @@ const TemplateEditor: React.FC<Props> = ({
     gapBlocks,
     gapGrid,
     listSpace,
+    blockPaddingYClass,
     contentMaxW,
     density,
+    dividers,
   } = useUiTokens(rCfg);
 
   // Portada
@@ -654,8 +677,8 @@ const TemplateEditor: React.FC<Props> = ({
     ? withAlpha(accent, 0.35)
     : "rgba(255,255,255,0.10)";
   const dividerColor = isLightBg
-    ? "rgba(0,0,0,0.10)"
-    : "rgba(255,255,255,0.10)";
+    ? "rgba(0,0,0,0.16)"
+    : "rgba(255,255,255,0.18)";
   const panelBorder = `1px solid ${borderColor}`;
   const chipStyle: React.CSSProperties = {
     border: panelBorder,
@@ -911,138 +934,201 @@ const TemplateEditor: React.FC<Props> = ({
           ),
     [unlockFixed, blocks],
   );
+  const quickAddItems: Array<[BlockType, string]> = [
+    ["heading", "Título"],
+    ["subtitle", "Subtítulo"],
+    ["paragraph", "Párrafo"],
+    ["list", "Lista"],
+    ["keyValue", "Clave/Valor"],
+    ["twoColumns", "Dos columnas"],
+    ["threeColumns", "Tres columnas"],
+  ];
+  const canToggleQuoteCoreLock = useCallback(
+    (block: OrderedBlock) => block.id.startsWith("q_core_"),
+    [],
+  );
+  const toggleQuoteCoreLock = useCallback(
+    (id: string, next: "fixed" | "form") => {
+      setBlocks(
+        (blocks ?? []).map((b) => {
+          if (b.id !== id || !b.id.startsWith("q_core_")) return b;
+          return { ...b, origin: next === "fixed" ? "fixed" : "form" };
+        }),
+      );
+    },
+    [blocks, setBlocks],
+  );
 
   return (
     <section className={cx("space-y-6", className)}>
+      {toolbarMode === "studio" && (
+        <div className="pointer-events-none sticky top-2 z-[118] md:top-3">
+          <div className="pointer-events-auto flex flex-nowrap items-center gap-2 overflow-x-auto rounded-2xl border border-sky-300/35 bg-white/90 p-2 shadow-lg shadow-sky-900/15 backdrop-blur dark:border-sky-200/20 dark:bg-slate-950/85">
+            {quickAddItems.map(([t, label]) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => onAddBlock(t)}
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-sky-300/50 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-900 shadow-sm transition hover:scale-[0.98] dark:border-sky-300/30 dark:bg-sky-500/20 dark:text-sky-100"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 4.5v15m7.5-7.5h-15"
+                  />
+                </svg>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {toolbarMode === "compact" && (
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-white/10 p-3 shadow-sm shadow-sky-950/10 backdrop-blur">
+          <div className="text-sm font-medium text-slate-800 dark:text-slate-100">
+            Herramientas de contenido
+          </div>
+          <button
+            type="button"
+            onClick={() => setToolbarOpen((prev) => !prev)}
+            className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900 shadow-sm transition hover:scale-[0.98] dark:bg-sky-500/20 dark:text-sky-100"
+          >
+            {toolbarOpen ? "Ocultar herramientas" : "Mostrar herramientas"}
+          </button>
+        </div>
+      )}
       {/* Toolbar superior */}
-      <div className={cx("mb-2", PANEL_CLASS)}>
-        <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex size-8 items-center justify-center rounded-2xl border border-sky-400/40 bg-sky-500/10 text-sky-900 shadow-sm shadow-sky-900/10 dark:text-sky-100">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                className="size-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M8.25 6.75h12m-12 6h12m-12 6h12M3.75 6.75h.008v.008H3.75V6.75Zm0 6h.008v.008H3.75V12.75Zm0 6h.008v.008H3.75V18.75Z"
+      {toolbarMode !== "hidden" && toolbarOpen && (
+        <div className={cx("mb-2", PANEL_CLASS)}>
+          <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex size-8 items-center justify-center rounded-2xl border border-sky-400/40 bg-sky-500/10 text-sky-900 shadow-sm shadow-sky-900/10 dark:text-sky-100">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M8.25 6.75h12m-12 6h12m-12 6h12M3.75 6.75h.008v.008H3.75V6.75Zm0 6h.008v.008H3.75V12.75Zm0 6h.008v.008H3.75V18.75Z"
+                  />
+                </svg>
+              </span>
+              <h3 className="text-base font-semibold opacity-90">
+                Contenido del documento
+              </h3>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Toggle: desbloquear fijos */}
+              <label className={CHIP_TOGGLE_CLASS}>
+                <input
+                  type="checkbox"
+                  className="size-4 accent-emerald-600"
+                  checked={unlockFixed}
+                  onChange={(e) => setUnlockFixed(e.target.checked)}
                 />
-              </svg>
-            </span>
-            <h3 className="text-base font-semibold opacity-90">
-              Contenido del documento
-            </h3>
+                Editar bloques fijos
+              </label>
+
+              <button
+                type="button"
+                onClick={saveCurrentAsPreset}
+                className={SKY_ACTION_CLASS}
+                title="Guardar los bloques actuales como preset"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M16.5 3.75h-9A2.25 2.25 0 005.25 6v12a.75.75 0 001.125.65L12 15.75l5.625 2.9A.75.75 0 0018.75 18V6A2.25 2.25 0 0016.5 3.75Z"
+                  />
+                </svg>
+                Guardar preset
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Toggle: desbloquear fijos */}
-            <label className={CHIP_TOGGLE_CLASS}>
-              <input
-                type="checkbox"
-                className="size-4 accent-emerald-600"
-                checked={unlockFixed}
-                onChange={(e) => setUnlockFixed(e.target.checked)}
-              />
-              Editar bloques fijos
-            </label>
-
-            <button
-              type="button"
-              onClick={saveCurrentAsPreset}
-              className={SKY_ACTION_CLASS}
-              title="Guardar los bloques actuales como preset"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                className="size-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M16.5 3.75h-9A2.25 2.25 0 005.25 6v12a.75.75 0 001.125.65L12 15.75l5.625 2.9A.75.75 0 0018.75 18V6A2.25 2.25 0 0016.5 3.75Z"
-                />
-              </svg>
-              Guardar preset
-            </button>
-          </div>
-        </div>
-
-        <TextPresetPicker
-          token={token ?? null}
-          docType={docType}
-          onApply={(content) => {
-            if (!content?.trim()) return;
-            setBlocks([
-              ...(blocks ?? []),
-              {
-                id: nanoid(),
-                origin: "extra",
-                type: "paragraph",
-                value: { type: "paragraph", text: content },
-              },
-            ]);
-            setFocusSeq((n) => n + 1);
-          }}
-          onApplyData={(maybeBlocks) => {
-            if (Array.isArray(maybeBlocks)) {
-              setBlocks(maybeBlocks as OrderedBlock[]);
+          <TextPresetPicker
+            token={token ?? null}
+            docType={docType}
+            onApply={(content) => {
+              if (!content?.trim()) return;
+              setBlocks([
+                ...(blocks ?? []),
+                {
+                  id: nanoid(),
+                  origin: "extra",
+                  type: "paragraph",
+                  value: { type: "paragraph", text: content },
+                },
+              ]);
               setFocusSeq((n) => n + 1);
-            }
-          }}
-        />
+            }}
+            onApplyData={(maybeBlocks) => {
+              if (Array.isArray(maybeBlocks)) {
+                setBlocks(maybeBlocks as OrderedBlock[]);
+                setFocusSeq((n) => n + 1);
+              }
+            }}
+          />
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          {(
-            [
-              ["heading", "Título"],
-              ["subtitle", "Subtítulo"],
-              ["paragraph", "Párrafo"],
-              ["list", "Lista"],
-              ["keyValue", "Clave/Valor"],
-              ["twoColumns", "Dos columnas"],
-              ["threeColumns", "Tres columnas"],
-            ] as Array<[BlockType, string]>
-          ).map(([t, label]) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => onAddBlock(t)}
-              className={ADD_BLOCK_CLASS}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                className="size-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {quickAddItems.map(([t, label]) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => onAddBlock(t)}
+                className={ADD_BLOCK_CLASS}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 4.5v15m7.5-7.5h-15"
-                />
-              </svg>
-              {label}
-            </button>
-          ))}
-        </div>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 4.5v15m7.5-7.5h-15"
+                  />
+                </svg>
+                {label}
+              </button>
+            ))}
+          </div>
 
-        <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
-          Edita los bloques directamente en la vista previa. Arrastra desde el
-          bloque o el boton Mover. Si activas &quot;Editar bloques fijos&quot;
-          tambien puedes editarlos o eliminarlos.
-        </p>
-      </div>
+          {toolbarMode !== "compact" && (
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
+              Edita los bloques directamente en la vista previa. Arrastra desde
+              el bloque o el boton Mover. Si activas
+              &quot;Editar bloques fijos&quot; tambien puedes editarlos o
+              eliminarlos.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Lienzo: preview editable */}
       <div
@@ -1094,15 +1180,19 @@ const TemplateEditor: React.FC<Props> = ({
                   blocks={blocks}
                   onChange={setBlocks}
                   lockedIds={lockedIdsSet}
+                  canToggleMode={canToggleQuoteCoreLock}
+                  onToggleMode={toggleQuoteCoreLock}
                   options={{
-                    dividerColor,
+                    dividerColor: dividers ? dividerColor : "transparent",
                     panelBgStrong,
                     innerRadiusClass,
                     gapGridClass: gapGrid,
                     listSpaceClass: listSpace,
+                    blockPaddingYClass,
                     accentColor: accent,
                     headingFont,
                     headingWeight,
+                    controlsOnDarkSurface: !isLightBg,
                   }}
                 />
               </div>
@@ -1141,15 +1231,19 @@ const TemplateEditor: React.FC<Props> = ({
                   blocks={blocks}
                   onChange={setBlocks}
                   lockedIds={lockedIdsSet}
+                  canToggleMode={canToggleQuoteCoreLock}
+                  onToggleMode={toggleQuoteCoreLock}
                   options={{
-                    dividerColor,
+                    dividerColor: dividers ? dividerColor : "transparent",
                     panelBgStrong,
                     innerRadiusClass,
                     gapGridClass: gapGrid,
                     listSpaceClass: listSpace,
+                    blockPaddingYClass,
                     accentColor: accent,
                     headingFont,
                     headingWeight,
+                    controlsOnDarkSurface: !isLightBg,
                   }}
                 />
               </div>
@@ -1261,15 +1355,19 @@ const TemplateEditor: React.FC<Props> = ({
                     blocks={blocks}
                     onChange={setBlocks}
                     lockedIds={lockedIdsSet}
+                    canToggleMode={canToggleQuoteCoreLock}
+                    onToggleMode={toggleQuoteCoreLock}
                     options={{
-                      dividerColor,
+                      dividerColor: dividers ? dividerColor : "transparent",
                       panelBgStrong,
                       innerRadiusClass,
                       gapGridClass: gapGrid,
                       listSpaceClass: listSpace,
+                      blockPaddingYClass,
                       accentColor: accent,
                       headingFont,
                       headingWeight,
+                      controlsOnDarkSurface: !isLightBg,
                     }}
                   />
                 </div>
@@ -1303,6 +1401,7 @@ const TemplateEditor: React.FC<Props> = ({
                 : `confirmacion-${todayDateKeyInBuenosAires()}.pdf`)
           }
           className={DOWNLOAD_BTN_CLASS}
+          onDownloaded={onPdfDownloaded}
         />
       </div>
     </section>
@@ -1321,9 +1420,11 @@ export type CanvasOptions = {
   innerRadiusClass: string;
   gapGridClass: string;
   listSpaceClass: string;
+  blockPaddingYClass?: string;
   accentColor: string;
   headingFont: string;
   headingWeight: number;
+  controlsOnDarkSurface: boolean;
 };
 
 export type BlocksCanvasProps = {
@@ -1334,6 +1435,7 @@ export type BlocksCanvasProps = {
   showMeta?: boolean;
   getLabel?: (block: OrderedBlock, index: number) => string | undefined;
   getMode?: (block: OrderedBlock) => "fixed" | "form";
+  canToggleMode?: (block: OrderedBlock) => boolean;
   onToggleMode?: (id: string, next: "fixed" | "form") => void;
   allowRemoveLocked?: boolean;
 };

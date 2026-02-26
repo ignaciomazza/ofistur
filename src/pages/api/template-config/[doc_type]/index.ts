@@ -34,6 +34,24 @@ type UpsertBody = {
   mode?: "replace" | "merge";
 };
 
+const ALLOWED_DOC_TYPES = new Set([
+  "quote",
+  "quote_budget",
+  "confirmation",
+  "voucher",
+]);
+
+function parseDocTypeParam(
+  req: NextApiRequest,
+): "quote" | "quote_budget" | "confirmation" | "voucher" | null {
+  const raw = Array.isArray(req.query.doc_type)
+    ? req.query.doc_type[0]
+    : req.query.doc_type;
+  const docType = String(raw || "").trim();
+  if (!ALLOWED_DOC_TYPES.has(docType)) return null;
+  return docType as "quote" | "quote_budget" | "confirmation" | "voucher";
+}
+
 /* ============================================================================
  * Auth helpers
  * ========================================================================== */
@@ -534,11 +552,10 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       return res.status(403).json({ error: "Plan insuficiente" });
     }
 
-    const doc_type = Array.isArray(req.query.doc_type)
-      ? req.query.doc_type[0]
-      : req.query.doc_type;
-    const docType = (doc_type || "").trim();
-    if (!docType) return res.status(400).json({ error: "doc_type requerido" });
+    const docType = parseDocTypeParam(req);
+    if (!docType) {
+      return res.status(400).json({ error: "doc_type inválido" });
+    }
 
     const row = await prisma.templateConfig.findUnique({
       where: {
@@ -583,7 +600,15 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
 
 function canEdit(role?: string) {
   const r = (role || "").toLowerCase();
-  return ["gerente", "administrativo", "desarrollador"].includes(r);
+  return [
+    "gerente",
+    "administrativo",
+    "admin",
+    "administrador",
+    "desarrollador",
+    "dev",
+    "developer",
+  ].includes(r);
 }
 
 async function handleUpsert(req: NextApiRequest, res: NextApiResponse) {
@@ -609,11 +634,10 @@ async function handleUpsert(req: NextApiRequest, res: NextApiResponse) {
     }
     const agencyId = auth.id_agency;
 
-    const doc_type = Array.isArray(req.query.doc_type)
-      ? req.query.doc_type[0]
-      : req.query.doc_type;
-    const docType = (doc_type || "").trim();
-    if (!docType) return res.status(400).json({ error: "doc_type requerido" });
+    const docType = parseDocTypeParam(req);
+    if (!docType) {
+      return res.status(400).json({ error: "doc_type inválido" });
+    }
 
     const body = (req.body ?? {}) as UpsertBody;
     const mode = body.mode === "merge" ? "merge" : "replace";
@@ -635,7 +659,7 @@ async function handleUpsert(req: NextApiRequest, res: NextApiResponse) {
     if (mode === "merge" && current?.config) {
       nextConfig = deepMergeInput(asInputJsonObject(current.config), sanitized);
     } else {
-      nextConfig = incoming;
+      nextConfig = sanitized;
     }
 
     const saved = await prisma.$transaction(async (tx) => {
@@ -704,15 +728,15 @@ async function handleDelete(req: NextApiRequest, res: NextApiResponse) {
         .json({ error: "No autorizado para borrar templates" });
     }
 
-    const doc_type = Array.isArray(req.query.doc_type)
-      ? req.query.doc_type[0]
-      : req.query.doc_type;
-    const docType = (doc_type || "").trim();
-    if (!docType) return res.status(400).json({ error: "doc_type requerido" });
+    const docType = parseDocTypeParam(req);
+    if (!docType) {
+      return res.status(400).json({ error: "doc_type inválido" });
+    }
 
-    await prisma.templateConfig.delete({
+    await prisma.templateConfig.deleteMany({
       where: {
-        id_agency_doc_type: { id_agency: auth.id_agency, doc_type: docType },
+        id_agency: auth.id_agency,
+        doc_type: docType,
       },
     });
 

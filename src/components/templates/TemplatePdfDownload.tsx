@@ -64,6 +64,8 @@ export type TemplatePdfDownloadProps = {
   className?: string;
   /** Contenido del botón (default “Descargar PDF”) */
   children?: React.ReactNode;
+  /** Callback al descargar el PDF correctamente */
+  onDownloaded?: (fileName: string) => void | Promise<void>;
 };
 
 /* ========================================================================
@@ -433,6 +435,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       .slice(0, 10)}.pdf`,
     className,
     children,
+    onDownloaded,
   } = props;
 
   const [busy, setBusy] = useState(false);
@@ -547,6 +550,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       try {
         const blob = await buildOnce("full", "multilínea completa");
         saveBlob(blob, fileName);
+        if (onDownloaded) await onDownloaded(fileName);
         return;
       } catch (e) {
         if (debug)
@@ -558,6 +562,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       try {
         const blob = await buildOnce("soft", "recorte de saltos en blanco");
         saveBlob(blob, fileName);
+        if (onDownloaded) await onDownloaded(fileName);
         return;
       } catch (e) {
         if (debug)
@@ -569,6 +574,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       try {
         const blob = await buildOnce("hard", "forzado single-line");
         saveBlob(blob, fileName);
+        if (onDownloaded) await onDownloaded(fileName);
         return;
       } catch (e) {
         if (debug)
@@ -602,7 +608,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
     } finally {
       setBusy(false);
     }
-  }, [busy, effectiveBlocks, buildOnce, baseDocProps, fileName, debug]);
+  }, [busy, effectiveBlocks, buildOnce, baseDocProps, fileName, debug, onDownloaded]);
 
   return (
     <button

@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Spinner from "@/components/Spinner";
@@ -61,6 +62,12 @@ type QuoteItem = {
   agency_quote_id?: number | null;
   public_id?: string | null;
   id_user: number;
+  quote_status?: "active" | "converted" | null;
+  converted_at?: string | null;
+  converted_booking_id?: number | null;
+  pdf_draft?: unknown;
+  pdf_draft_saved_at?: string | null;
+  pdf_last_file_name?: string | null;
   lead_name?: string | null;
   lead_phone?: string | null;
   lead_email?: string | null;
@@ -175,6 +182,7 @@ type Profile = {
 type FormMode = "create" | "edit";
 type QuoteWorkspaceView = "form" | "list";
 type QuoteListView = "card" | "grid" | "table";
+type QuoteStatusScope = "active" | "converted" | "all";
 type PresenceFilter = "all" | "with" | "without";
 type MoneyFieldName = "sale_price" | "cost_price";
 type ServiceTypeOption = {
@@ -387,6 +395,27 @@ function normalizeQuoteItem(input: unknown): QuoteItem | null {
     id_user,
     agency_quote_id:
       rec.agency_quote_id == null ? null : Number(rec.agency_quote_id),
+    quote_status:
+      rec.quote_status === "converted"
+        ? "converted"
+        : rec.quote_status === "active"
+          ? "active"
+          : null,
+    converted_at:
+      typeof rec.converted_at === "string" ? rec.converted_at : null,
+    converted_booking_id:
+      rec.converted_booking_id == null
+        ? null
+        : Number(rec.converted_booking_id),
+    pdf_draft: rec.pdf_draft,
+    pdf_draft_saved_at:
+      typeof rec.pdf_draft_saved_at === "string"
+        ? rec.pdf_draft_saved_at
+        : null,
+    pdf_last_file_name:
+      typeof rec.pdf_last_file_name === "string"
+        ? rec.pdf_last_file_name
+        : null,
     public_id: typeof rec.public_id === "string" ? rec.public_id : null,
     lead_name: typeof rec.lead_name === "string" ? rec.lead_name : null,
     lead_phone: typeof rec.lead_phone === "string" ? rec.lead_phone : null,
@@ -680,6 +709,7 @@ function SectionCard({
 }
 
 export default function QuotesPage() {
+  const router = useRouter();
   const { token } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -696,6 +726,7 @@ export default function QuotesPage() {
   const [expandedQuoteId, setExpandedQuoteId] = useState<number | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
+  const [statusScope, setStatusScope] = useState<QuoteStatusScope>("active");
   const [createdFrom, setCreatedFrom] = useState("");
   const [createdTo, setCreatedTo] = useState("");
   const [paxFilter, setPaxFilter] = useState<PresenceFilter>("all");
@@ -866,15 +897,17 @@ export default function QuotesPage() {
 
   const hasActiveFilters = useMemo(
     () =>
+      statusScope !== "active" ||
       ownerFilter !== "all" ||
       createdFrom !== "" ||
       createdTo !== "" ||
       paxFilter !== "all" ||
       serviceFilter !== "all",
-    [createdFrom, createdTo, ownerFilter, paxFilter, serviceFilter],
+    [createdFrom, createdTo, ownerFilter, paxFilter, serviceFilter, statusScope],
   );
 
   const clearFilters = useCallback(() => {
+    setStatusScope("active");
     setOwnerFilter("all");
     setCreatedFrom("");
     setCreatedTo("");
@@ -892,6 +925,7 @@ export default function QuotesPage() {
     try {
       setLoading(true);
       const qs = new URLSearchParams({ take: "50" });
+      qs.set("status_scope", statusScope);
       if (search.trim()) qs.set("q", search.trim());
       const res = await authFetch(`/api/quotes?${qs.toString()}`, { cache: "no-store" }, token);
       const payload = (await res.json().catch(() => null)) as
@@ -910,7 +944,7 @@ export default function QuotesPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, token]);
+  }, [search, statusScope, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -1188,7 +1222,7 @@ export default function QuotesPage() {
     return null;
   };
 
-  const saveQuote = async () => {
+  const saveQuote = async (nextAction: "stay" | "open_studio" = "stay") => {
     if (!token) return;
     const validation = validateForm();
     if (validation) {
@@ -1230,6 +1264,19 @@ export default function QuotesPage() {
         | QuoteItem
         | null;
       if (!res.ok) throw new Error(data && "error" in data ? data.error || "Error" : "Error");
+      const normalized = normalizeQuoteItem(data);
+      const targetId = normalized?.public_id ?? normalized?.id_quote ?? form.id_quote;
+
+      if (nextAction === "open_studio" && targetId) {
+        toast.success(
+          formMode === "edit"
+            ? "Cotización actualizada. Abriendo estudio..."
+            : "Cotización creada. Abriendo estudio...",
+        );
+        router.push(`/quotes/${encodeURIComponent(String(targetId))}/template`);
+        return;
+      }
+
       toast.success(formMode === "edit" ? "Cotización actualizada" : "Cotización creada");
       startCreate();
       await loadQuotes();
@@ -1343,6 +1390,10 @@ export default function QuotesPage() {
   };
 
   const openConvert = (quote: QuoteItem) => {
+    if (quote.quote_status === "converted") {
+      toast.info("Esta cotización ya está en Convertidas.");
+      return;
+    }
     const bookingDraft = normalizeQuoteBookingDraft(quote.booking_draft);
     const paxDrafts = normalizeQuotePaxDrafts(quote.pax_drafts);
     const serviceDrafts = normalizeQuoteServiceDrafts(quote.service_drafts);
@@ -1525,7 +1576,6 @@ export default function QuotesPage() {
         departure_date: cleanString(s.departure_date),
         return_date: cleanString(s.return_date),
       })),
-      delete_quote: true,
     };
 
     try {
@@ -1542,9 +1592,7 @@ export default function QuotesPage() {
         throw new Error(data?.error || "No se pudo convertir");
       }
       toast.success(
-        `Cotización convertida en reserva Nº ${
-          data?.id_booking ?? ""
-        }`,
+        `Cotización convertida y movida a Convertidas (reserva Nº ${data?.id_booking ?? ""})`,
       );
       closeConvert();
       await loadQuotes();
@@ -1575,7 +1623,7 @@ export default function QuotesPage() {
             Cotizaciones
           </h1>
           <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
-            Guardá presupuestos flexibles y convertilos en reserva cuando se confirme.
+            Creá cotizaciones y trabajalas en el estudio visual de PDF dentro del mismo flujo.
           </p>
         </div>
 
@@ -2349,12 +2397,25 @@ export default function QuotesPage() {
             </SectionCard>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={BTN} onClick={saveQuote} disabled={saving}>
+              <button
+                type="button"
+                className={BTN}
+                onClick={() => void saveQuote("stay")}
+                disabled={saving}
+              >
                 {saving
                   ? "Guardando..."
                   : formMode === "edit"
                     ? "Guardar cambios"
                     : "Crear cotización"}
+              </button>
+              <button
+                type="button"
+                className={SUBTLE_BTN}
+                onClick={() => void saveQuote("open_studio")}
+                disabled={saving}
+              >
+                Guardar y abrir estudio
               </button>
               {formMode === "edit" && (
                 <button type="button" className={SUBTLE_BTN} onClick={startCreate}>
@@ -2373,6 +2434,29 @@ export default function QuotesPage() {
                 <p className="text-xs text-sky-900/75 dark:text-sky-100/70">
                   Vistas: grilla, card y tabla.
                 </p>
+                <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-sky-300/35 bg-white/55 p-1 text-xs shadow-sm shadow-sky-950/10 dark:border-sky-200/25 dark:bg-sky-950/25">
+                  {(
+                    [
+                      ["active", "Activas"],
+                      ["converted", "Convertidas"],
+                      ["all", "Todas"],
+                    ] as Array<[QuoteStatusScope, string]>
+                  ).map(([scope, label]) => (
+                    <button
+                      key={scope}
+                      type="button"
+                      onClick={() => setStatusScope(scope)}
+                      className={`rounded-full px-3 py-1 transition ${
+                        statusScope === scope
+                          ? "bg-sky-500/15 font-medium text-sky-800 dark:text-sky-200"
+                          : "text-sky-900/75 hover:text-sky-900 dark:text-sky-100"
+                      }`}
+                      aria-pressed={statusScope === scope}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {canConfigure && (
@@ -2671,6 +2755,7 @@ export default function QuotesPage() {
                     <tbody>
                       {filteredQuotes.map((row) => {
                         const q = row.quote;
+                        const isConverted = q.quote_status === "converted";
                         const isExpanded = expandedQuoteId === q.id_quote;
                         const quoteTemplateId = q.public_id ?? q.id_quote;
                         return (
@@ -2685,6 +2770,11 @@ export default function QuotesPage() {
                                   {q.lead_name || "Cliente sin nombre"}
                                 </p>
                                 <p className="text-xs opacity-75">{q.lead_phone || "Sin teléfono"}</p>
+                                {isConverted ? (
+                                  <p className="mt-1 inline-flex w-max rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
+                                    Convertida
+                                  </p>
+                                ) : null}
                               </td>
                               <td className="px-3 py-2">{row.ownerName}</td>
                               <td className="px-3 py-2">{formatDate(q.creation_date)}</td>
@@ -2707,18 +2797,20 @@ export default function QuotesPage() {
                                     className="rounded-full border border-emerald-500/45 bg-emerald-300/25 px-3 py-1 text-xs font-medium text-emerald-900 transition hover:bg-emerald-300/35 dark:text-emerald-50"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    Armar PDF
+                                    Abrir estudio
                                   </Link>
-                                  <button
-                                    type="button"
-                                    className="rounded-full border border-amber-500/45 bg-amber-300/25 px-3 py-1 text-xs font-medium text-amber-900 transition hover:bg-amber-300/35 dark:text-amber-50"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openConvert(q);
-                                    }}
-                                  >
-                                    Convertir
-                                  </button>
+                                  {!isConverted && (
+                                    <button
+                                      type="button"
+                                      className="rounded-full border border-amber-500/45 bg-amber-300/25 px-3 py-1 text-xs font-medium text-amber-900 transition hover:bg-amber-300/35 dark:text-amber-50"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openConvert(q);
+                                      }}
+                                    >
+                                      Convertir
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -2741,6 +2833,15 @@ export default function QuotesPage() {
                                       {formatDate(row.bookingDraft.departure_date || "")} /{" "}
                                       {formatDate(row.bookingDraft.return_date || "")}
                                     </p>
+                                    {q.quote_status === "converted" ? (
+                                      <p>
+                                        <span className="font-semibold">Estado:</span>{" "}
+                                        Convertida
+                                        {q.converted_at
+                                          ? ` el ${formatDate(q.converted_at)}`
+                                          : ""}
+                                      </p>
+                                    ) : null}
                                     <div>
                                       <button
                                         type="button"
@@ -2771,6 +2872,7 @@ export default function QuotesPage() {
               >
                 {filteredQuotes.map((row, idx) => {
                   const q = row.quote;
+                  const isConverted = q.quote_status === "converted";
                   const isExpanded = expandedQuoteId === q.id_quote;
                   const quoteTemplateId = q.public_id ?? q.id_quote;
                   return (
@@ -2789,6 +2891,11 @@ export default function QuotesPage() {
                           <h3 className="text-sm font-semibold text-sky-950 dark:text-sky-50">
                             {q.lead_name || "Cliente sin nombre"}
                           </h3>
+                          {isConverted ? (
+                            <span className="mt-1 inline-flex rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
+                              Convertida
+                            </span>
+                          ) : null}
                         </div>
                         <span className="text-xs text-sky-900/75 dark:text-sky-100/70">
                           {formatDate(q.creation_date)}
@@ -2829,30 +2936,32 @@ export default function QuotesPage() {
                             />
                           </svg>
                         </ActionIconButton>
-                        <ActionIconButton
-                          type="button"
-                          tone="amber"
-                          onClick={() => openConvert(q)}
-                          label="Convertir"
-                          aria-label="Convertir cotización"
-                          title="Convertir cotización"
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="size-5"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth={1.4}
-                            aria-hidden="true"
+                        {!isConverted && (
+                          <ActionIconButton
+                            type="button"
+                            tone="amber"
+                            onClick={() => openConvert(q)}
+                            label="Convertir"
+                            aria-label="Convertir cotización"
+                            title="Convertir cotización"
                           >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M8.25 4.5 3.75 9m0 0 4.5 4.5M3.75 9h10.5a4.5 4.5 0 0 1 0 9h-1.5"
-                            />
-                          </svg>
-                        </ActionIconButton>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="size-5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={1.4}
+                              aria-hidden="true"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M8.25 4.5 3.75 9m0 0 4.5 4.5M3.75 9h10.5a4.5 4.5 0 0 1 0 9h-1.5"
+                              />
+                            </svg>
+                          </ActionIconButton>
+                        )}
                         <ActionIconButton
                           type="button"
                           tone="neutral"
@@ -2899,11 +3008,11 @@ export default function QuotesPage() {
                         <Link
                           href={`/quotes/${encodeURIComponent(String(quoteTemplateId))}/template`}
                           className={ACTION_TONE_CLASS.neutral}
-                          aria-label="Armar PDF de cotización"
-                          title="Armar PDF de cotización"
+                          aria-label="Abrir estudio de cotización"
+                          title="Abrir estudio de cotización"
                         >
                           <span className={ACTION_TRACK}>
-                            <span className={ACTION_TEXT}>Armar PDF</span>
+                            <span className={ACTION_TEXT}>Abrir estudio</span>
                             <svg
                               xmlns="http://www.w3.org/2000/svg"
                               className="size-5"
@@ -2973,6 +3082,15 @@ export default function QuotesPage() {
                                 <span className="font-semibold">Moneda:</span>{" "}
                                 {row.bookingDraft.currency || "Sin moneda"}
                               </p>
+                              {q.quote_status === "converted" ? (
+                                <p>
+                                  <span className="font-semibold">Estado:</span>{" "}
+                                  Convertida
+                                  {q.converted_at
+                                    ? ` el ${formatDate(q.converted_at)}`
+                                    : ""}
+                                </p>
+                              ) : null}
                             </div>
                           </motion.div>
                         )}

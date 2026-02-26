@@ -55,7 +55,15 @@ function normalizeRole(role?: string | null): string {
 }
 
 function canEditByRole(role?: string | null): boolean {
-  return ["gerente", "administrativo", "desarrollador"].includes(
+  return [
+    "gerente",
+    "administrativo",
+    "admin",
+    "administrador",
+    "desarrollador",
+    "dev",
+    "developer",
+  ].includes(
     normalizeRole(role),
   );
 }
@@ -260,25 +268,62 @@ export default function QuotesConfigPage() {
         </div>
 
         <div className={`${GLASS} mb-5 p-4`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
-                PDF de cotización
-              </p>
-              <p className="mt-1 text-base font-semibold text-sky-950 dark:text-sky-50">
-                Editor de presupuesto PDF
-              </p>
-              <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
-                Configurá estilos, portada, bloques y opciones para
-                <code className="ml-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-xs">
-                  quote_budget
-                </code>
-                .
-              </p>
-            </div>
-            <Link href="/template-config/quote_budget" className={BTN}>
-              Editar PDF
-            </Link>
+          <p className="text-[11px] uppercase tracking-[0.18em] text-sky-800/70 dark:text-sky-100/65">
+            Estudios PDF
+          </p>
+          <p className="mt-1 text-base font-semibold text-sky-950 dark:text-sky-50">
+            Accesos directos a configuración de PDF
+          </p>
+          <p className="mt-1 text-sm text-sky-900/75 dark:text-sky-100/70">
+            Abrí el estudio correspondiente sin salir de configuración comercial.
+          </p>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {[
+              {
+                href: "/template-config/quote_budget",
+                title: "Presupuesto (quote_budget)",
+                desc: "Estilo principal del PDF de cotización.",
+              },
+              {
+                href: "/template-config/quote",
+                title: "Cotización comercial (quote)",
+                desc: "Base alternativa para propuestas de venta.",
+              },
+            ].map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="group rounded-2xl border border-sky-300/45 bg-white/65 p-3 shadow-sm shadow-sky-950/10 transition hover:-translate-y-0.5 hover:bg-white/85 dark:border-sky-200/25 dark:bg-sky-950/25 dark:hover:bg-sky-950/35"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-sky-950 dark:text-sky-50">
+                      {item.title}
+                    </p>
+                    <p className="mt-1 text-xs text-sky-900/75 dark:text-sky-100/70">
+                      {item.desc}
+                    </p>
+                  </div>
+                  <span className="inline-flex size-8 items-center justify-center rounded-xl border border-sky-300/55 bg-sky-500/10 text-sky-900 transition group-hover:scale-[0.98] dark:border-sky-200/25 dark:text-sky-100">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      className="size-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.8}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M13.5 4.5H19.5V10.5M10.5 19.5H4.5V13.5M19.5 4.5L12 12M12 12L4.5 19.5"
+                      />
+                    </svg>
+                  </span>
+                </div>
+              </Link>
+            ))}
           </div>
         </div>
 

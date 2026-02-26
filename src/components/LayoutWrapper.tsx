@@ -23,6 +23,15 @@ export default function LayoutWrapper({
   const isLoginPage = pathname === "/login";
   const isLanding = pathname === "/"; // ✅ NUEVO
   const isQr = pathname === "/qr";
+  const isQuoteStudio = /^\/quotes\/[^/]+\/template$/.test(pathname);
+  const isTemplatesStudio = pathname === "/templates";
+  const isBookingVoucherStudio = /^\/bookings\/services\/[^/]+\/template$/.test(pathname);
+  const isTemplateConfigStudio = /^\/template-config\/[^/]+$/.test(pathname);
+  const isStudioPage =
+    isQuoteStudio ||
+    isTemplatesStudio ||
+    isBookingVoucherStudio ||
+    isTemplateConfigStudio;
 
   // ✅ En landing forzamos modo claro (sin dark)
   useEffect(() => {
@@ -32,7 +41,7 @@ export default function LayoutWrapper({
     }
   }, [isLanding]);
 
-  const showSidebar = !isLoginPage && !isLanding && !isQr; // ✅ sin sidebar en landing
+  const showSidebar = !isLoginPage && !isLanding && !isQr && !isStudioPage; // ✅ sin sidebar en landing y modo estudio
   const showVanta = !isLoginPage; // mantenemos Vanta (en light queda bien)
 
   // Bloqueo del scroll cuando el menú lateral está abierto (mejor UX móvil)
@@ -82,7 +91,9 @@ export default function LayoutWrapper({
           />
         )}
         <main
-          className={`min-w-0 flex-1 px-2 pb-6 transition-[margin,max-width,padding] duration-300 ease-out md:px-6 ${
+          className={`min-w-0 flex-1 transition-[margin,max-width,padding] duration-300 ease-out ${
+            isStudioPage ? "px-0 pb-0 md:px-0" : "px-2 pb-6 md:px-6"
+          } ${
             showSidebar
               ? sidebarHidden
                 ? "md:mx-auto md:max-w-7xl md:px-8"

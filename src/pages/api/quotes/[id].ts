@@ -24,6 +24,9 @@ type QuoteUpdateBody = {
   pax_drafts?: unknown;
   service_drafts?: unknown;
   custom_values?: unknown;
+  pdf_draft?: unknown;
+  pdf_draft_saved_at?: string | null;
+  pdf_last_file_name?: string | null;
 };
 
 function cleanString(v: unknown, max = 500): string | null | undefined {
@@ -39,6 +42,41 @@ function toPositiveInt(v: unknown): number | undefined {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return undefined;
   return Math.trunc(n);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizePdfDraft(value: unknown): Prisma.InputJsonValue | null {
+  if (!isRecord(value)) return null;
+  const blocks = value.blocks;
+  if (!Array.isArray(blocks)) return null;
+  const layout =
+    value.layout === "layoutA" ||
+    value.layout === "layoutB" ||
+    value.layout === "layoutC"
+      ? value.layout
+      : undefined;
+  const payload = {
+    blocks,
+    layout,
+    cover: isRecord(value.cover) ? value.cover : undefined,
+    contact: isRecord(value.contact) ? value.contact : undefined,
+    payment: isRecord(value.payment) ? value.payment : undefined,
+    styles: isRecord(value.styles) ? value.styles : undefined,
+  };
+  const serialized = JSON.stringify(payload);
+  if (serialized.length > 900_000) {
+    throw new Error("El borrador PDF supera el tamaño permitido.");
+  }
+  return payload as Prisma.InputJsonValue;
+}
+
+function parseDateOrNull(value: unknown): Date | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 async function resolveQuoteIdFromParam(
@@ -175,6 +213,16 @@ async function handlePut(req: NextApiRequest, res: NextApiResponse) {
         body.custom_values,
       ) as Prisma.InputJsonValue;
     }
+    if (body.pdf_draft !== undefined) {
+      const draft = sanitizePdfDraft(body.pdf_draft);
+      data.pdf_draft = draft ?? Prisma.DbNull;
+    }
+    if (body.pdf_draft_saved_at !== undefined) {
+      data.pdf_draft_saved_at = parseDateOrNull(body.pdf_draft_saved_at);
+    }
+    if (body.pdf_last_file_name !== undefined) {
+      data.pdf_last_file_name = cleanString(body.pdf_last_file_name, 180) ?? null;
+    }
 
     const role = normalizeRole(auth.role);
     const canAssignOthers = [
@@ -193,6 +241,15 @@ async function handlePut(req: NextApiRequest, res: NextApiResponse) {
             .status(403)
             .json({ error: "No podés asignar fuera de tu equipo." });
         }
+      }
+      const targetUser = await prisma.user.findFirst({
+        where: { id_user: target, id_agency: auth.id_agency },
+        select: { id_user: true },
+      });
+      if (!targetUser) {
+        return res
+          .status(400)
+          .json({ error: "Usuario inválido para esta agencia." });
       }
       data.user = { connect: { id_user: target } };
     }

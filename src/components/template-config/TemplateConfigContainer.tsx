@@ -100,9 +100,10 @@ const LOCAL_DEFAULTS: Record<DocType, Config> = {
 // ===== Props =====
 type Props = {
   docType: DocType;
+  embedded?: boolean;
 };
 
-const TemplateConfigContainer: React.FC<Props> = ({ docType }) => {
+const TemplateConfigContainer: React.FC<Props> = ({ docType, embedded = false }) => {
   const { token } = useAuth();
 
   const [cfg, setCfg] = useState<Config>({});
@@ -282,7 +283,13 @@ const TemplateConfigContainer: React.FC<Props> = ({ docType }) => {
   };
 
   return (
-    <section className="mx-auto max-w-6xl p-6 text-slate-950 dark:text-white">
+    <section
+      className={
+        embedded
+          ? "text-slate-950 dark:text-white"
+          : "mx-auto max-w-6xl p-6 text-slate-950 dark:text-white"
+      }
+    >
       <TemplateConfigHeader
         docType={docType}
         exists={exists}

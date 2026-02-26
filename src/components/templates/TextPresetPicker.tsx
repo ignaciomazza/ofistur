@@ -247,22 +247,22 @@ export default function TextPresetPicker({
   const Item = ({ p }: { p: TextPreset }) => (
     <div
       className={`group relative rounded-2xl border border-white/10 bg-white/10 p-3 text-left shadow-sm shadow-sky-950/10 transition-colors hover:bg-white/20 dark:text-white ${
-        view === "grid" ? "" : "flex items-center justify-between gap-3"
+        view === "grid" ? "" : "flex flex-col gap-2"
       }`}
       title={p.title}
     >
       <div
-        className={`${view === "grid" ? "" : "min-w-0 flex-1"} cursor-pointer`}
+        className={`${view === "grid" ? "cursor-pointer" : "min-w-0 flex-1 cursor-pointer"}`}
         onClick={() => handleUse(p)}
       >
-        <div className="mb-1 flex items-center gap-2">
-          <div className="truncate text-sm font-medium">{p.title}</div>
+        <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1 truncate text-sm font-medium">{p.title}</div>
           {pinned.includes(p.id_preset) && (
-            <span className="rounded-full bg-yellow-200/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-yellow-900 dark:bg-yellow-400/20 dark:text-yellow-200">
+            <span className="shrink-0 rounded-full bg-yellow-200/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-yellow-900 dark:bg-yellow-400/20 dark:text-yellow-200">
               fav
             </span>
           )}
-          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide opacity-70">
+          <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide opacity-70">
             {String(p.doc_type)}
           </span>
         </div>
@@ -276,7 +276,7 @@ export default function TextPresetPicker({
       </div>
 
       {/* acciones */}
-      <div className="mt-2 flex shrink-0 items-center gap-1 self-start">
+      <div className="mt-1 flex w-full flex-wrap items-center gap-1">
         <button
           type="button"
           onClick={() => handleUse(p)}
@@ -325,9 +325,9 @@ export default function TextPresetPicker({
     setQ(ev.target.value);
 
   return (
-    <div className="mb-4 space-y-2">
+    <div className="mb-4 min-w-0 max-w-full space-y-2">
       {/* header */}
-      <div className="flex items-center justify-between">
+      <div className="space-y-2">
         <p className="ml-1 text-xs font-semibold uppercase tracking-wide opacity-70">
           Presets (
           {docType === "quote"
@@ -339,9 +339,9 @@ export default function TextPresetPicker({
               : "Confirmación manual"}
           )
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
           <input
-            className="w-56 rounded-2xl border border-white/10 bg-white/10 p-2 px-3 text-sm shadow-sm shadow-sky-950/10 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:text-white"
+            className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/10 p-2 px-3 text-sm shadow-sm shadow-sky-950/10 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:text-white"
             placeholder="Buscar…"
             value={q}
             onChange={onSearchChange}
@@ -349,7 +349,7 @@ export default function TextPresetPicker({
           <button
             type="button"
             onClick={toggleView}
-            className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs text-slate-700 shadow-sm shadow-sky-950/10 hover:bg-white/20 dark:text-slate-200"
+            className="shrink-0 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs text-slate-700 shadow-sm shadow-sky-950/10 hover:bg-white/20 dark:text-slate-200"
             title={view === "compact" ? "Ver en grilla" : "Ver compacto"}
           >
             {view === "compact" ? "Grilla" : "Compacto"}
@@ -367,7 +367,7 @@ export default function TextPresetPicker({
           No hay presets para este tipo de documento.
         </div>
       ) : view === "grid" ? (
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2">
           {visible.map((p) => (
             <Item key={p.id_preset} p={p} />
           ))}

@@ -25,7 +25,12 @@ type QuoteCreateBody = {
   pax_drafts?: unknown;
   service_drafts?: unknown;
   custom_values?: unknown;
+  pdf_draft?: unknown;
+  pdf_draft_saved_at?: string | null;
+  pdf_last_file_name?: string | null;
 };
+
+type QuoteStatusScope = "active" | "converted" | "all";
 
 function toPositiveInt(v: unknown): number | undefined {
   const n = Number(v);
@@ -38,6 +43,50 @@ function cleanString(v: unknown, max = 500): string | undefined {
   const s = v.trim();
   if (!s) return undefined;
   return s.slice(0, max);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeStatusScope(value: unknown): QuoteStatusScope {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "converted") return "converted";
+  if (normalized === "all") return "all";
+  return "active";
+}
+
+function parseDateOrNull(value: unknown): Date | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function sanitizePdfDraft(value: unknown): Prisma.InputJsonValue | null {
+  if (!isRecord(value)) return null;
+  const blocks = value.blocks;
+  if (!Array.isArray(blocks)) return null;
+  const layout =
+    value.layout === "layoutA" ||
+    value.layout === "layoutB" ||
+    value.layout === "layoutC"
+      ? value.layout
+      : undefined;
+  const payload = {
+    blocks,
+    layout,
+    cover: isRecord(value.cover) ? value.cover : undefined,
+    contact: isRecord(value.contact) ? value.contact : undefined,
+    payment: isRecord(value.payment) ? value.payment : undefined,
+    styles: isRecord(value.styles) ? value.styles : undefined,
+  };
+  const serialized = JSON.stringify(payload);
+  if (serialized.length > 900_000) {
+    throw new Error("El borrador PDF supera el tamaño permitido.");
+  }
+  return payload as Prisma.InputJsonValue;
 }
 
 async function handleGet(req: NextApiRequest, res: NextApiResponse) {
@@ -64,8 +113,16 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       ? req.query.teamId[0]
       : req.query.teamId;
     const teamId = Number(teamIdRaw || 0);
+    const statusScope = normalizeStatusScope(
+      Array.isArray(req.query.status_scope)
+        ? req.query.status_scope[0]
+        : req.query.status_scope,
+    );
 
     const where: Prisma.QuoteWhereInput = { id_agency: auth.id_agency };
+    if (statusScope !== "all") {
+      where.quote_status = statusScope;
+    }
 
     let leaderTeamIds: number[] = [];
     let leaderUserIds: number[] = [];
@@ -254,6 +311,16 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
             .json({ error: "No podés asignar fuera de tu equipo." });
         }
       }
+
+      const targetUser = await prisma.user.findFirst({
+        where: { id_user: requestedUser, id_agency: auth.id_agency },
+        select: { id_user: true },
+      });
+      if (!targetUser) {
+        return res
+          .status(400)
+          .json({ error: "Usuario inválido para esta agencia." });
+      }
       usedUserId = requestedUser;
     }
 
@@ -261,6 +328,9 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     const paxDrafts = normalizeQuotePaxDrafts(body.pax_drafts);
     const serviceDrafts = normalizeQuoteServiceDrafts(body.service_drafts);
     const customValues = normalizeQuoteCustomValues(body.custom_values);
+    const pdfDraft = sanitizePdfDraft(body.pdf_draft);
+    const pdfDraftSavedAt = parseDateOrNull(body.pdf_draft_saved_at);
+    const pdfLastFileName = cleanString(body.pdf_last_file_name, 180) ?? null;
 
     const created = await prisma.$transaction(async (tx) => {
       const agencyQuoteId = await getNextAgencyCounter(
@@ -281,6 +351,10 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           pax_drafts: paxDrafts as Prisma.InputJsonValue,
           service_drafts: serviceDrafts as Prisma.InputJsonValue,
           custom_values: customValues as Prisma.InputJsonValue,
+          quote_status: "active",
+          pdf_draft: pdfDraft ?? undefined,
+          pdf_draft_saved_at: pdfDraftSavedAt,
+          pdf_last_file_name: pdfLastFileName,
         },
         include: {
           user: {
@@ -315,4 +389,3 @@ export default async function handler(
   res.setHeader("Allow", ["GET", "POST"]);
   return res.status(405).end(`Method ${req.method} Not Allowed`);
 }
-

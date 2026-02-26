@@ -34,11 +34,10 @@ import type { BlocksCanvasProps, CanvasOptions } from "./TemplateEditor";
 const cx = (...c: Array<string | false | null | undefined>) =>
   c.filter(Boolean).join(" ");
 
-const CONTROL_BAR_CLASS =
-  "text-slate-600 dark:text-slate-200";
+const CONTROL_BAR_CLASS = "transition-colors";
 
 const CONTROL_CHIP_CLASS =
-  "inline-flex items-center gap-1 rounded-full border border-slate-900/15 bg-white/65 px-2 py-1 text-[11px] text-slate-700 shadow-sm backdrop-blur transition hover:bg-white/80 dark:border-white/20 dark:bg-slate-900/55 dark:text-slate-100 dark:hover:bg-slate-900/70";
+  "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] shadow-sm backdrop-blur transition";
 
 const WS_PRESERVE: React.CSSProperties = {
   whiteSpace: "break-spaces",
@@ -418,6 +417,7 @@ type BlockItemProps = {
   block: OrderedBlock;
   label?: string;
   mode: "fixed" | "form";
+  canToggleMode: boolean;
   canRemove: boolean;
   canEdit: boolean;
   onRemove?: () => void;
@@ -441,6 +441,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
   block,
   label,
   mode,
+  canToggleMode,
   canRemove,
   canEdit,
   onRemove,
@@ -461,7 +462,47 @@ const BlockItem: React.FC<BlockItemProps> = ({
 }) => {
   const controls = useDragControls();
   const showLabel = Boolean(label);
-  const showToggle = Boolean(onToggleMode);
+  const showToggle = canToggleMode && Boolean(onToggleMode);
+  const controlsOnDarkSurface = options.controlsOnDarkSurface;
+  const controlBarToneClass = controlsOnDarkSurface
+    ? "text-slate-100"
+    : "text-slate-600";
+  const controlChipClass = cx(
+    CONTROL_CHIP_CLASS,
+    controlsOnDarkSurface
+      ? "border-white/35 bg-white/20 text-slate-100 hover:bg-white/28"
+      : "border-slate-900/15 bg-white/70 text-slate-700 hover:bg-white/85",
+  );
+  const controlChipMutedClass = controlsOnDarkSurface
+    ? "text-slate-200/85"
+    : "text-slate-500";
+  const controlDangerClass = controlsOnDarkSurface
+    ? "inline-flex items-center gap-1 rounded-full border border-rose-300/45 bg-rose-500/25 px-2 py-1 text-xs text-rose-100 shadow-sm backdrop-blur transition hover:bg-rose-500/35"
+    : "inline-flex items-center gap-1 rounded-full border border-rose-500/35 bg-rose-500/12 px-2 py-1 text-xs text-rose-700 shadow-sm backdrop-blur transition hover:bg-rose-500/18";
+  const controlDangerMetaClass = controlsOnDarkSurface
+    ? "inline-flex items-center gap-1 rounded-full border border-rose-300/45 bg-rose-500/25 px-2 py-1 text-[11px] text-rose-100 shadow-sm backdrop-blur transition hover:bg-rose-500/35"
+    : "inline-flex items-center gap-1 rounded-full border border-rose-500/35 bg-rose-500/12 px-2 py-1 text-[11px] text-rose-700 shadow-sm backdrop-blur transition hover:bg-rose-500/18";
+  const controlIconBadgeClass = controlsOnDarkSurface
+    ? "inline-flex size-4 items-center justify-center rounded-full border border-white/30 bg-white/20 text-slate-100"
+    : "inline-flex size-4 items-center justify-center rounded-full border border-slate-900/15 bg-white/75 text-slate-600";
+  const controlWeightBadgeClass = controlsOnDarkSurface
+    ? "inline-flex size-4 items-center justify-center rounded-full border border-white/30 bg-white/20 text-[10px] font-black text-slate-100"
+    : "inline-flex size-4 items-center justify-center rounded-full border border-slate-900/15 bg-white/75 text-[10px] font-black text-slate-700";
+  const controlSelectClass = controlsOnDarkSurface
+    ? "rounded-full border-0 bg-transparent px-1.5 py-0.5 text-[10px] text-slate-100 outline-none ring-sky-200/40 transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60"
+    : "rounded-full border-0 bg-transparent px-1.5 py-0.5 text-[10px] text-slate-700 outline-none ring-sky-200/60 transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60";
+  const controlSelectStyle: React.CSSProperties = {
+    colorScheme: controlsOnDarkSurface ? "dark" : "light",
+    backgroundColor: controlsOnDarkSurface
+      ? "rgba(255,255,255,0.24)"
+      : "rgba(255,255,255,0.92)",
+    color: controlsOnDarkSurface ? "#F8FAFC" : "#334155",
+    borderRadius: 9999,
+  };
+  const controlOptionStyle: React.CSSProperties = {
+    backgroundColor: controlsOnDarkSurface ? "#0F172A" : "#FFFFFF",
+    color: controlsOnDarkSurface ? "#F8FAFC" : "#334155",
+  };
   const isInteractiveTarget = (target: EventTarget | null) => {
     if (!(target instanceof HTMLElement)) return false;
     return Boolean(
@@ -530,6 +571,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
             className={cx(
               "absolute -right-2 -top-2 z-10 hidden items-center gap-1 group-focus-within:flex group-hover:flex",
               CONTROL_BAR_CLASS,
+              controlBarToneClass,
             )}
           >
             <button
@@ -538,7 +580,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
                 e.preventDefault();
                 controls.start(e);
               }}
-              className={cx(CONTROL_CHIP_CLASS, "px-2 py-1 text-xs")}
+              className={cx(controlChipClass, "px-2 py-1 text-xs")}
               title="Arrastrar para mover"
               aria-label="Arrastrar para mover"
             >
@@ -557,11 +599,73 @@ const BlockItem: React.FC<BlockItemProps> = ({
                 />
               </svg>
             </button>
+            {showToggle && onToggleMode ? (
+              <button
+                type="button"
+                onClick={() =>
+                  onToggleMode(block.id, mode === "fixed" ? "form" : "fixed")
+                }
+                className={cx(controlChipClass, "px-2 py-1")}
+                title={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
+                aria-label={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.6}
+                >
+                  {mode === "fixed" ? (
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M16.5 10.5V7.875a4.125 4.125 0 0 0-8.25 0v2.625m11.25 0H4.5v8.25h15v-8.25Z"
+                    />
+                  ) : (
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M18.75 10.5H6.75v8.25h12V10.5Zm-6-6.75a4.125 4.125 0 0 0-4.125 4.125v2.625"
+                    />
+                  )}
+                </svg>
+              </button>
+            ) : !canRemove ? (
+              <span
+                className={cx(
+                  controlChipClass,
+                  controlChipMutedClass,
+                  "px-2 py-1 opacity-80",
+                )}
+                title={
+                  canEdit
+                    ? "Bloque fijo: no se puede eliminar"
+                    : "Bloque fijo: no editable"
+                }
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.6}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M16.5 10.5V7.875a4.125 4.125 0 0 0-8.25 0v2.625m11.25 0H4.5v8.25h15v-8.25Z"
+                  />
+                </svg>
+              </span>
+            ) : null}
             {canRemove ? (
               <button
                 type="button"
                 onClick={onRemove}
-                className="bg-rose-500/12 hover:bg-rose-500/18 dark:bg-rose-500/16 dark:hover:bg-rose-500/22 inline-flex items-center gap-1 rounded-full border border-rose-500/35 px-2 py-1 text-xs text-rose-700 shadow-sm backdrop-blur transition dark:border-rose-400/35 dark:text-rose-200"
+                className={controlDangerClass}
                 title="Quitar bloque"
               >
                 <svg
@@ -580,30 +684,25 @@ const BlockItem: React.FC<BlockItemProps> = ({
                 </svg>
                 Quitar
               </button>
-            ) : (
-              <span
-                className={cx(
-                  CONTROL_CHIP_CLASS,
-                  "px-2 py-1 text-[10px] uppercase tracking-wide opacity-80",
-                )}
-                title={
-                  canEdit
-                    ? "Bloque fijo: no se puede eliminar"
-                    : "Bloque fijo: no editable"
-                }
-              >
-                Fijo
-              </span>
-            )}
+            ) : null}
           </div>
         )}
 
         <div
-          className="rounded-xl px-3 py-2 transition-colors hover:bg-white/5"
+          className={cx(
+            "rounded-xl px-3 transition-colors hover:bg-white/5",
+            options.blockPaddingYClass ?? "py-2",
+          )}
           style={{ border: `1px solid ${options.dividerColor}` }}
         >
           {showMeta && (
-            <div className={cx("mb-2 flex flex-wrap items-center gap-2", CONTROL_BAR_CLASS)}>
+            <div
+              className={cx(
+                "mb-2 flex flex-wrap items-center gap-2",
+                CONTROL_BAR_CLASS,
+                controlBarToneClass,
+              )}
+            >
               <button
                 type="button"
                 onPointerDown={(e) => {
@@ -611,7 +710,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   controls.start(e);
                 }}
                 className={cx(
-                  CONTROL_CHIP_CLASS,
+                  controlChipClass,
                   "cursor-grab px-2 py-1 active:cursor-grabbing",
                 )}
                 title="Arrastrar para mover"
@@ -635,53 +734,52 @@ const BlockItem: React.FC<BlockItemProps> = ({
               </button>
 
               {showLabel && (
-                <span className={cx(CONTROL_CHIP_CLASS, "px-2 py-0.5")}>
+                <span className={cx(controlChipClass, "px-2 py-0.5")}>
                   {label}
                 </span>
               )}
 
               <div className="ml-auto flex flex-wrap items-center gap-2">
-                {showToggle && onToggleMode && (
-                  <div
-                    className={cx(
-                      "inline-flex items-center rounded-full border p-0.5 text-[11px] shadow-sm backdrop-blur",
-                      "border-slate-900/20 bg-white/65 dark:border-white/20 dark:bg-slate-900/55",
-                    )}
+                {showToggle && onToggleMode ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onToggleMode(block.id, mode === "fixed" ? "form" : "fixed")
+                    }
+                    className={cx(controlChipClass, "px-2 py-1")}
+                    title={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
+                    aria-label={mode === "fixed" ? "Desbloquear bloque" : "Bloquear bloque"}
                   >
-                    <button
-                      type="button"
-                      onClick={() => onToggleMode(block.id, "fixed")}
-                      className={cx(
-                        "rounded-full px-2 py-0.5 transition",
-                        mode === "fixed"
-                          ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
-                          : "text-slate-600 hover:bg-slate-900/6 dark:text-slate-200 dark:hover:bg-white/10",
-                      )}
-                      aria-pressed={mode === "fixed"}
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      className="size-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.6}
                     >
-                      Fijo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onToggleMode(block.id, "form")}
-                      className={cx(
-                        "rounded-full px-2 py-0.5 transition",
-                        mode === "form"
-                          ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
-                          : "text-slate-600 hover:bg-slate-900/6 dark:text-slate-200 dark:hover:bg-white/10",
+                      {mode === "fixed" ? (
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M16.5 10.5V7.875a4.125 4.125 0 0 0-8.25 0v2.625m11.25 0H4.5v8.25h15v-8.25Z"
+                        />
+                      ) : (
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M18.75 10.5H6.75v8.25h12V10.5Zm-6-6.75a4.125 4.125 0 0 0-4.125 4.125v2.625"
+                        />
                       )}
-                      aria-pressed={mode === "form"}
-                    >
-                      Editar
-                    </button>
-                  </div>
-                )}
+                    </svg>
+                  </button>
+                ) : null}
 
                 {canRemove ? (
                   <button
                     type="button"
                     onClick={onRemove}
-                    className="bg-rose-500/12 hover:bg-rose-500/18 dark:bg-rose-500/16 dark:hover:bg-rose-500/22 inline-flex items-center gap-1 rounded-full border border-rose-500/35 px-2 py-1 text-[11px] text-rose-700 shadow-sm backdrop-blur transition dark:border-rose-400/35 dark:text-rose-200"
+                    className={controlDangerMetaClass}
                     title="Quitar bloque"
                   >
                     <svg
@@ -702,8 +800,9 @@ const BlockItem: React.FC<BlockItemProps> = ({
                 ) : (
                   <span
                     className={cx(
-                      CONTROL_CHIP_CLASS,
-                      "px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-200",
+                      controlChipClass,
+                      controlChipMutedClass,
+                      "px-2 py-0.5",
                     )}
                     title={
                       canEdit
@@ -711,7 +810,20 @@ const BlockItem: React.FC<BlockItemProps> = ({
                         : "Bloque fijo: no editable"
                     }
                   >
-                    Fijo
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      className="size-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.6}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M16.5 10.5V7.875a4.125 4.125 0 0 0-8.25 0v2.625m11.25 0H4.5v8.25h15v-8.25Z"
+                      />
+                    </svg>
                   </span>
                 )}
               </div>
@@ -720,20 +832,28 @@ const BlockItem: React.FC<BlockItemProps> = ({
 
           <div
             className={cx(
-              "mb-2 flex flex-wrap items-center gap-2 text-[11px]",
+              "mb-2 flex flex-wrap items-center gap-1.5 text-[10px]",
               CONTROL_BAR_CLASS,
+              controlBarToneClass,
             )}
           >
-            <span
-              className={cx(
-                CONTROL_CHIP_CLASS,
-                "px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-200",
-              )}
-            >
-              Tipografía
-            </span>
-            <label className={cx(CONTROL_CHIP_CLASS, "gap-2 pr-1")}>
-              <span className="text-slate-600 dark:text-slate-200">Tamaño</span>
+            <label className={cx(controlChipClass, "gap-1 pr-0.5")}>
+              <span className={controlIconBadgeClass}>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.7}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M4.5 19.5h15M7.5 4.5h9m-4.5 0v15"
+                  />
+                </svg>
+              </span>
               <select
                 value={textSize}
                 onChange={(e) =>
@@ -743,17 +863,24 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   })
                 }
                 disabled={!canStyle}
-                className="rounded-full border border-slate-900/20 bg-white/75 px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-900/60 dark:text-slate-100"
+                className={controlSelectClass}
+                style={controlSelectStyle}
               >
                 {BLOCK_TEXT_SIZE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
+                  <option
+                    key={opt.value}
+                    value={opt.value}
+                    style={controlOptionStyle}
+                  >
                     {opt.label}
                   </option>
                 ))}
               </select>
             </label>
-            <label className={cx(CONTROL_CHIP_CLASS, "gap-2 pr-1")}>
-              <span className="text-slate-600 dark:text-slate-200">Peso</span>
+            <label className={cx(controlChipClass, "gap-1 pr-0.5")}>
+              <span className={controlWeightBadgeClass}>
+                B
+              </span>
               <select
                 value={textWeight}
                 onChange={(e) =>
@@ -763,10 +890,15 @@ const BlockItem: React.FC<BlockItemProps> = ({
                   })
                 }
                 disabled={!canStyle}
-                className="rounded-full border border-slate-900/20 bg-white/75 px-2 py-1 text-[11px] text-slate-700 shadow-sm outline-none ring-sky-200/60 transition focus:border-sky-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/20 dark:bg-slate-900/60 dark:text-slate-100"
+                className={controlSelectClass}
+                style={controlSelectStyle}
               >
                 {BLOCK_TEXT_WEIGHT_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
+                  <option
+                    key={opt.value}
+                    value={opt.value}
+                    style={controlOptionStyle}
+                  >
                     {opt.label}
                   </option>
                 ))}
@@ -886,6 +1018,12 @@ function ListEditor({
 }) {
   const lv = (b.value as ListV) ?? { type: "list", items: [] };
   const items: string[] = Array.isArray(lv.items) ? lv.items : [];
+  const listControlChipClass = options.controlsOnDarkSurface
+    ? "rounded-full border border-white/30 bg-white/20 px-2 py-1 text-xs text-slate-100 transition hover:bg-white/28"
+    : "rounded-full border border-slate-900/15 bg-white/70 px-2 py-1 text-xs text-slate-700 transition hover:bg-white/85";
+  const listAddClass = options.controlsOnDarkSurface
+    ? "inline-flex items-center gap-1 rounded-full border border-emerald-300/35 bg-emerald-500/20 px-2 py-1 text-xs text-emerald-100 shadow-sm transition hover:opacity-90"
+    : "inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 shadow-sm shadow-emerald-900/10 transition hover:opacity-90";
 
   const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
   const setItemRef =
@@ -954,14 +1092,14 @@ function ListEditor({
             {!readOnly && (
               <div className="flex items-center gap-1 pt-1">
                 <button
-                  className="rounded-full bg-white/10 px-2 py-1 text-xs hover:bg-white/20"
+                  className={listControlChipClass}
                   onClick={() => move(i, -1)}
                   title="Subir"
                 >
                   ↑
                 </button>
                 <button
-                  className="rounded-full bg-white/10 px-2 py-1 text-xs hover:bg-white/20"
+                  className={listControlChipClass}
                   onClick={() => move(i, 1)}
                   title="Bajar"
                 >
@@ -998,7 +1136,7 @@ function ListEditor({
           <div className="mt-1 flex items-center gap-2">
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 shadow-sm shadow-emerald-900/10 hover:opacity-90 dark:border-emerald-400/20 dark:text-emerald-300"
+              className={listAddClass}
               onClick={addEnd}
               title="Agregar ítem"
             >
@@ -1022,6 +1160,7 @@ function KeyValueEditor({
   readOnly,
   panelBg,
   innerRadiusClass,
+  controlsOnDarkSurface,
   textClass,
 }: {
   b: OrderedBlock;
@@ -1029,12 +1168,19 @@ function KeyValueEditor({
   readOnly: boolean;
   panelBg: string;
   innerRadiusClass: string;
+  controlsOnDarkSurface: boolean;
   textClass: string;
 }) {
   const kv = (b.value as KeyValueV) ?? { type: "keyValue", pairs: [] };
   const pairs: Array<{ key: string; value: string }> = Array.isArray(kv.pairs)
     ? kv.pairs
     : [];
+  const rowActionClass = controlsOnDarkSurface
+    ? "rounded-full border border-white/30 bg-white/20 px-2 py-1 text-xs text-slate-100 transition hover:bg-white/28"
+    : "rounded-full border border-slate-900/15 bg-white/70 px-2 py-1 text-xs text-slate-700 transition hover:bg-white/85";
+  const addRowClass = controlsOnDarkSurface
+    ? "inline-flex w-max items-center gap-1 rounded-full border border-emerald-300/35 bg-emerald-500/20 px-3 py-1 text-xs text-emerald-100 shadow-sm transition hover:opacity-90"
+    : "inline-flex w-max items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-700 shadow-sm shadow-emerald-900/10 transition hover:opacity-90";
 
   const keyRefs = useRef<Array<HTMLDivElement | null>>([]);
   const valRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -1126,7 +1272,7 @@ function KeyValueEditor({
           {!readOnly && (
             <div className="flex items-center gap-1 pt-1">
               <button
-                className="rounded-full bg-white/10 px-2 py-1 text-xs hover:bg-white/20"
+                className={rowActionClass}
                 onClick={() => addAt(i + 1)}
                 title="Agregar debajo"
               >
@@ -1160,7 +1306,7 @@ function KeyValueEditor({
       {!readOnly && (
         <div className="flex items-center gap-2">
           <button
-            className="inline-flex w-max items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-700 shadow-sm shadow-emerald-900/10 hover:opacity-90 dark:border-emerald-400/20 dark:text-emerald-300"
+            className={addRowClass}
             onClick={addEnd}
             title="Agregar fila"
           >
@@ -1307,6 +1453,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
   showMeta = false,
   getLabel,
   getMode,
+  canToggleMode,
   onToggleMode,
   allowRemoveLocked = false,
 }) => {
@@ -1567,6 +1714,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
               block={b}
               label={label}
               mode={mode}
+              canToggleMode={canToggleMode ? canToggleMode(b) : true}
               onRemove={() => remove(b.id)}
               canEdit={!readOnly}
               canRemove={canRemove}
@@ -1638,6 +1786,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   readOnly={readOnly}
                   panelBg={options.panelBgStrong}
                   innerRadiusClass={options.innerRadiusClass}
+                  controlsOnDarkSurface={options.controlsOnDarkSurface}
                   textClass={textClass}
                 />
               )}

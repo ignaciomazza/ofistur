@@ -44,6 +44,7 @@ type Props = {
   onChange: (next: TemplateFormValues) => void;
   token?: string | null;
   className?: string;
+  sections?: Array<"cover" | "contact" | "payment">;
 };
 
 /* --------------------------- Tiny atoms --------------------------- */
@@ -120,7 +121,7 @@ function RadioBadge({ active }: { active: boolean }) {
     <span
       aria-hidden
       className={cx(
-        "pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs shadow-sm",
+        "pointer-events-none absolute right-2 top-2 inline-flex size-6 items-center justify-center rounded-full border shadow-sm transition",
         active
           ? "border-sky-400/60 bg-sky-500/85 text-white"
           : "border-white/10 bg-white/10 text-white/80 opacity-0",
@@ -140,7 +141,6 @@ function RadioBadge({ active }: { active: boolean }) {
           d="M9 12.75l2.25 2.25L15 11.25"
         />
       </svg>
-      Seleccionado
     </span>
   );
 }
@@ -208,11 +208,24 @@ export default function TemplateConfigForm({
   onChange,
   token,
   className,
+  sections,
 }: Props) {
   const { token: ctxToken } = useAuth();
   const authToken = token ?? ctxToken ?? null;
 
   const { agency, loading } = useAgencyAndUser(authToken);
+  const enabledSections = useMemo(
+    () =>
+      new Set(
+        sections && sections.length
+          ? sections
+          : (["cover", "contact", "payment"] as const),
+      ),
+    [sections],
+  );
+  const showCover = enabledSections.has("cover");
+  const showContact = enabledSections.has("contact");
+  const showPayment = enabledSections.has("payment");
 
   /* ------- Portada: combinamos saved[] + url actual + helper ------- */
   const savedCovers = useMemo<CoverSavedItem[]>(() => {
@@ -301,10 +314,11 @@ export default function TemplateConfigForm({
   return (
     <div className={cx("space-y-6 dark:text-white", className)}>
       {/* --------------------------- Portada --------------------------- */}
+      {showCover ? (
       <Card>
         <SectionHeader
-          title="Portada"
-          subtitle="Elegí una imagen de portada definida por el gerente. La proporción se adapta automáticamente."
+          title="Imágenes de portada"
+          subtitle="Elegí la imagen principal que verá el cliente al abrir el PDF."
           tone="amber"
           icon={
             <svg
@@ -371,12 +385,14 @@ export default function TemplateConfigForm({
           </div>
         )}
       </Card>
+      ) : null}
 
       {/* --------------------------- Contacto --------------------------- */}
+      {showContact ? (
       <Card>
         <SectionHeader
-          title="Contacto a mostrar"
-          subtitle="Elegí si mostrar el teléfono institucional de la agencia o el de un vendedor."
+          title="Teléfono visible"
+          subtitle="Definí qué número aparece en la sección de contacto del documento."
           tone="emerald"
           icon={
             <svg
@@ -397,7 +413,7 @@ export default function TemplateConfigForm({
         />
 
         {loading ? (
-          <div className="grid grid-cols-1 gap-2 pb-1 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 pb-1">
             {Array.from({ length: 4 }).map((_, i) => (
               <div
                 key={i}
@@ -416,7 +432,7 @@ export default function TemplateConfigForm({
           </div>
         ) : (
           <div
-            className="grid grid-cols-1 gap-2 pb-1 md:grid-cols-2 lg:grid-cols-3"
+            className="grid grid-cols-1 gap-2 pb-1"
             role="radiogroup"
             aria-label="Seleccionar teléfono"
           >
@@ -447,8 +463,8 @@ export default function TemplateConfigForm({
                     </svg>
                   }
                 >
-                  <div className="flex flex-col">
-                    <div className="text-sm font-medium opacity-95">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="break-all text-sm font-semibold tabular-nums opacity-95">
                       {opt.label}
                     </div>
                     <div className="text-xs opacity-70">
@@ -463,12 +479,14 @@ export default function TemplateConfigForm({
           </div>
         )}
       </Card>
+      ) : null}
 
       {/* --------------------------- Pago --------------------------- */}
+      {showPayment ? (
       <Card>
         <SectionHeader
-          title="Opciones de pago"
-          subtitle="Seleccioná la leyenda de pago disponible para este documento."
+          title="Texto de cobro"
+          subtitle="Seleccioná el mensaje de pago que se imprime al final del documento."
           tone="amber"
           icon={
             <svg
@@ -544,6 +562,7 @@ export default function TemplateConfigForm({
           </div>
         )}
       </Card>
+      ) : null}
     </div>
   );
 }

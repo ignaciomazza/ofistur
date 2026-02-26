@@ -76,7 +76,6 @@ type ConvertBody = {
   titular: ConvertPassenger;
   companions?: ConvertPassenger[];
   services?: ConvertService[];
-  delete_quote?: boolean;
 };
 
 function cleanString(v: unknown, max = 2000): string {
@@ -266,6 +265,11 @@ export default async function handler(
   if (!quote || quote.id_agency !== auth.id_agency) {
     return res.status(404).json({ error: "Cotización no encontrada" });
   }
+  if (quote.quote_status === "converted") {
+    return res
+      .status(400)
+      .json({ error: "La cotización ya fue convertida en reserva." });
+  }
 
   const allowed = await canAccessQuoteOwner(auth, quote.id_user);
   if (!allowed) return res.status(403).json({ error: "No autorizado." });
@@ -275,7 +279,6 @@ export default async function handler(
   const titular = body.titular;
   const companions = Array.isArray(body.companions) ? body.companions : [];
   const services = Array.isArray(body.services) ? body.services : [];
-  const deleteQuote = body.delete_quote !== false;
 
   if (!booking || typeof booking !== "object") {
     return res.status(400).json({ error: "Falta bloque booking." });
@@ -338,6 +341,15 @@ export default async function handler(
           .status(403)
           .json({ error: "No podés asignar fuera de tu equipo." });
       }
+    }
+    const ownerUser = await prisma.user.findFirst({
+      where: { id_user: requestedOwnerId, id_agency: auth.id_agency },
+      select: { id_user: true },
+    });
+    if (!ownerUser) {
+      return res
+        .status(400)
+        .json({ error: "Usuario inválido para esta agencia." });
     }
     ownerUserId = requestedOwnerId;
   }
@@ -469,9 +481,14 @@ export default async function handler(
         createdServices += 1;
       }
 
-      if (deleteQuote) {
-        await tx.quote.delete({ where: { id_quote: quote.id_quote } });
-      }
+      await tx.quote.update({
+        where: { id_quote: quote.id_quote },
+        data: {
+          quote_status: "converted",
+          converted_at: new Date(),
+          converted_booking_id: createdBooking.id_booking,
+        },
+      });
 
       return { booking: createdBooking, servicesCreated: createdServices };
     });
@@ -489,7 +506,8 @@ export default async function handler(
       ...result.booking,
       public_id,
       services_created: result.servicesCreated,
-      quote_deleted: deleteQuote,
+      quote_deleted: false,
+      quote_status: "converted",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error desconocido";

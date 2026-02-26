@@ -218,6 +218,16 @@ export type TemplateFormValues = {
     tiktokIndex?: number;
   };
   payment?: { selectedIndex?: number };
+  layout?: "layoutA" | "layoutB" | "layoutC";
+  styles?: {
+    colors?: { background?: string; text?: string; accent?: string };
+    ui?: {
+      radius?: "sm" | "md" | "lg" | "xl" | "2xl";
+      density?: Density;
+      contentWidth?: "narrow" | "normal" | "wide";
+      dividers?: boolean;
+    };
+  };
 
   /** Orden final a renderizar (incluye fijos, form y extra) */
   blocks?: OrderedBlock[];

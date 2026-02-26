@@ -1,248 +1,193 @@
 // src/components/template-config/sections/StylesSection.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { getAt, setAt, section } from "./_helpers";
-import { Config, STYLE_PRESETS, StylePreset, PdfLayout } from "../types";
-import { useAuth } from "@/context/AuthContext";
-import { authFetch } from "@/utils/authFetch";
-
-/** ===== Mini helpers de UI ===== */
-const radio =
-  "inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-sm shadow-sm shadow-sky-950/10 transition hover:scale-[0.99]";
-const radioActive = "ring-2 ring-emerald-400 border-emerald-400/60";
-
-/** Check visual para cards activas */
-const SelectedMark: React.FC = () => (
-  <div className="pointer-events-none absolute right-2 top-2 rounded-full border border-emerald-300/60 bg-emerald-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">
-    Activo
-  </div>
-);
+import React from "react";
+import { getAt, input, section, setAt } from "./_helpers";
+import { Config, PdfLayout, STYLE_PRESETS, StylePreset } from "../types";
 
 type Props = {
   cfg: Config;
   disabled: boolean;
   onChange: (next: Config) => void;
+  uiMode?: "default" | "sales";
 };
 
-type AgencyLite = { id?: number; id_agency?: number } & Record<string, unknown>;
+type ColorKey = "background" | "text" | "accent";
 
-const StylesSection: React.FC<Props> = ({ cfg, disabled, onChange }) => {
-  // ===== valores actuales =====
-  const presetId = getAt<string>(cfg, ["styles", "presetId"], "light");
+const SURFACE =
+  "rounded-2xl border border-white/10 bg-white/10 p-4 shadow-sm shadow-sky-950/10";
+const TOGGLE_BASE =
+  "inline-flex h-12 w-full items-center justify-center rounded-xl border p-1.5 transition hover:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60";
+const TOGGLE_ACTIVE = "border-sky-500/60 bg-sky-500/15";
+const TOGGLE_IDLE =
+  "border-slate-300/60 bg-white/85 dark:border-slate-200/20 dark:bg-slate-900/60";
+
+const LAYOUT_COPY: Record<
+  PdfLayout,
+  { title: string; description: string }
+> = {
+  layoutA: {
+    title: "Formato A",
+    description: "Portada + encabezado + contenido + pie",
+  },
+  layoutB: {
+    title: "Formato B",
+    description: "Encabezado + portada + contenido + pie",
+  },
+  layoutC: {
+    title: "Formato C",
+    description: "Sidebar lateral + contenido principal",
+  },
+};
+
+const SelectedMark: React.FC = () => (
+  <span className="pointer-events-none absolute right-2 top-2 inline-flex rounded-full border border-emerald-300/60 bg-emerald-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-white shadow-sm">
+    Activo
+  </span>
+);
+
+const StylesSection: React.FC<Props> = ({
+  cfg,
+  disabled,
+  onChange,
+  uiMode = "default",
+}) => {
+  const isSalesUi = uiMode === "sales";
+  const presetId = getAt<string>(cfg, ["styles", "presetId"], "paper");
   const layout = getAt<PdfLayout>(cfg, ["layout"], "layoutA");
-
-  // Avanzados
-  const radius = getAt<string>(cfg, ["styles", "ui", "radius"], "xl"); // sm|md|lg|xl|2xl
-  const width = getAt<string>(cfg, ["styles", "ui", "contentWidth"], "normal"); // narrow|normal|wide
-  const density = getAt<string>(
-    cfg,
-    ["styles", "ui", "density"],
-    "comfortable",
-  ); // compact|comfortable|relaxed
+  const radius = getAt<string>(cfg, ["styles", "ui", "radius"], "2xl");
+  const width = getAt<string>(cfg, ["styles", "ui", "contentWidth"], "normal");
+  const density = getAt<string>(cfg, ["styles", "ui", "density"], "comfortable");
   const dividers = getAt<boolean>(cfg, ["styles", "ui", "dividers"], true);
-
-  // Colores actuales
   const colors = getAt(cfg, ["styles", "colors"], {
     background: "#ffffff",
-    text: "#111827",
-    accent: "#22C55E",
+    text: "#111111",
+    accent: "#6B7280",
   }) as { background: string; text: string; accent: string };
-
-  /** Importante: acá SOLO seteamos colores + presetId. No tocamos fonts. */
-  const applyPreset = (p: StylePreset) => {
-    let next = setAt(cfg, ["styles", "presetId"], p.id);
-    next = setAt(next, ["styles", "colors"], p.colors);
-    onChange(next);
-  };
 
   const isPreset = (id: string) => id === presetId;
 
-  // ===== Detección de agencia Mupu (id=1) para habilitar edición de acento =====
-  const { token } = useAuth();
-  const [isMupuAgency, setIsMupuAgency] = useState(false);
+  const applyPreset = (preset: StylePreset) => {
+    let next = setAt(cfg, ["styles", "presetId"], preset.id);
+    next = setAt(next, ["styles", "colors"], preset.colors);
+    onChange(next);
+  };
 
-  useEffect(() => {
-    let mounted = true;
-    if (!token) return;
-    (async () => {
-      try {
-        const res = await authFetch(
-          "/api/agency",
-          { cache: "no-store" },
-          token,
-        );
-        const data = (await res.json().catch(() => ({}))) as AgencyLite;
-        const agencyId =
-          (typeof data.id === "number" ? data.id : data.id_agency) ?? null;
-        if (mounted) setIsMupuAgency(agencyId === 1);
-      } catch {
-        if (mounted) setIsMupuAgency(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [token]);
+  const setColor = (key: ColorKey, value: string) => {
+    onChange(setAt(cfg, ["styles", "colors", key], value));
+  };
 
-  // ====== preview del layout (miniatura) ======
+  const resetPalette = () => {
+    const preset = STYLE_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    onChange(setAt(cfg, ["styles", "colors"], preset.colors));
+  };
+
   const LayoutThumb: React.FC<{ kind: PdfLayout; active: boolean }> = ({
     kind,
     active,
-  }) => {
-    const border = active
-      ? `border-amber-400/60 ring-2 ring-amber-300`
-      : `border-white/10`;
-
-    const coverBlock = (
-      <div
-        className="h-4 w-full rounded"
-        style={{ background: "rgba(0,0,0,0.22)" }}
-      />
-    );
-    const headerBlock = (
-      <div
-        className="h-4 w-2/3 rounded"
-        style={{ background: colors.accent }}
-      />
-    );
-    const contentBlock = (
-      <div className="grid gap-1">
-        <div
-          className="h-2 w-11/12 rounded"
-          style={{ background: "rgba(0,0,0,0.18)" }}
-        />
-        <div
-          className="h-2 w-10/12 rounded"
-          style={{ background: "rgba(0,0,0,0.14)" }}
-        />
-        <div
-          className="h-2 w-9/12 rounded"
-          style={{ background: "rgba(0,0,0,0.10)" }}
-        />
-      </div>
-    );
-    const footerBlock = (
-      <div
-        className="h-3 w-1/2 rounded"
-        style={{ background: "rgba(0,0,0,0.18)" }}
-      />
-    );
-
-    return (
-      <div
-        className={`relative rounded-xl border p-3 transition hover:scale-[0.99] ${border}`}
-        style={{ background: colors.background, color: colors.text }}
-      >
-        {active && <SelectedMark />}
-        {kind === "layoutA" && (
-          <div className="grid gap-2">
-            {coverBlock}
-            {headerBlock}
-            {contentBlock}
-            {footerBlock}
+  }) => (
+    <div
+      className={[
+        "relative rounded-xl border p-3 transition",
+        active
+          ? "border-sky-500/60 ring-2 ring-sky-300/40"
+          : "border-white/10 hover:border-sky-300/45",
+      ].join(" ")}
+      style={{ backgroundColor: colors.background }}
+    >
+      {active ? <SelectedMark /> : null}
+      {kind === "layoutA" ? (
+        <div className="grid h-16 grid-rows-[8px_10px_1fr_8px] gap-1.5">
+          <div className="rounded-md bg-slate-500/30" />
+          <div className="w-2/3 rounded-md" style={{ backgroundColor: colors.accent }} />
+          <div className="space-y-1">
+            <div className="h-2 rounded-md bg-slate-500/25" />
+            <div className="h-2 w-4/5 rounded-md bg-slate-500/20" />
+            <div className="h-2 w-3/5 rounded-md bg-slate-500/20" />
           </div>
-        )}
-        {kind === "layoutB" && (
-          <div className="grid gap-2">
-            {headerBlock}
-            {coverBlock}
-            {contentBlock}
-            {footerBlock}
+          <div className="h-1.5 w-1/2 rounded-md bg-slate-500/25" />
+        </div>
+      ) : null}
+      {kind === "layoutB" ? (
+        <div className="grid h-16 grid-rows-[10px_18px_1fr_8px] gap-1.5">
+          <div className="w-2/3 rounded-md" style={{ backgroundColor: colors.accent }} />
+          <div className="rounded-md bg-slate-500/30" />
+          <div className="space-y-1">
+            <div className="h-2 rounded-md bg-slate-500/25" />
+            <div className="h-2 w-4/5 rounded-md bg-slate-500/20" />
           </div>
-        )}
-        {kind === "layoutC" && (
-          <div className="grid grid-cols-[1fr_2fr] gap-2">
-            <div className="grid gap-2">
-              <div
-                className="h-3 w-3/5 rounded"
-                style={{ background: colors.accent }}
-              />
-              <div
-                className="h-2 w-4/5 rounded"
-                style={{ background: "rgba(0,0,0,0.18)" }}
-              />
-              <div
-                className="h-2 w-2/3 rounded"
-                style={{ background: "rgba(0,0,0,0.14)" }}
-              />
-            </div>
-            <div className="grid gap-2">
-              {coverBlock}
-              {contentBlock}
-              {footerBlock}
-            </div>
+          <div className="h-1.5 w-1/2 rounded-md bg-slate-500/25" />
+        </div>
+      ) : null}
+      {kind === "layoutC" ? (
+        <div className="grid h-16 grid-cols-[28px_1fr] gap-1.5">
+          <div className="space-y-1 rounded-md bg-slate-500/20 p-1">
+            <div className="h-1.5 rounded bg-slate-500/30" />
+            <div className="h-1.5 rounded bg-slate-500/25" />
+            <div className="h-1.5 w-2/3 rounded bg-slate-500/25" />
           </div>
-        )}
-      </div>
-    );
-  };
+          <div className="space-y-1.5">
+            <div className="h-2 rounded-md" style={{ backgroundColor: colors.accent }} />
+            <div className="h-2 rounded-md bg-slate-500/25" />
+            <div className="h-2 w-4/5 rounded-md bg-slate-500/20" />
+            <div className="h-1.5 w-1/2 rounded-md bg-slate-500/20" />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 
-  // ====== tarjeta de preset (texto simplificado, SIN tipografías) ======
-  const PresetCard: React.FC<{ p: StylePreset }> = ({ p }) => {
-    const active = isPreset(p.id);
+  const PresetCard: React.FC<{ preset: StylePreset }> = ({ preset }) => {
+    const active = isPreset(preset.id);
     return (
       <button
         type="button"
         disabled={disabled}
-        onClick={() => applyPreset(p)}
-        className={`relative rounded-xl border p-3 text-left transition hover:scale-[0.99] ${
+        onClick={() => applyPreset(preset)}
+        className={[
+          "relative rounded-xl border p-3 text-left transition hover:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60",
           active
-            ? "border-emerald-400 ring-2 ring-emerald-300"
-            : "border-white/10"
-        }`}
+            ? "border-emerald-400/60 ring-2 ring-emerald-300/40"
+            : "border-white/10 hover:border-sky-300/45",
+        ].join(" ")}
       >
-        {active && <SelectedMark />}
-
-        {/* Header / título */}
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold">{p.label}</div>
-          <div
-            className="size-4 rounded-full"
-            style={{ background: p.colors.accent }}
-            aria-hidden
+        {active ? <SelectedMark /> : null}
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            {preset.label}
+          </span>
+          <span
+            className="size-4 rounded-full border border-white/40"
+            style={{ backgroundColor: preset.colors.accent }}
           />
         </div>
-
-        {/* Bloque muestra de colores */}
         <div
-          className="mb-2 grid h-14 w-full grid-cols-[1fr_auto] items-center rounded-lg px-3"
-          style={{ backgroundColor: p.colors.background }}
+          className="grid h-14 grid-cols-[1fr_auto] items-center rounded-lg px-3"
+          style={{ backgroundColor: preset.colors.background }}
         >
           <div className="space-y-1">
             <div
               className="h-2 w-10/12 rounded"
-              style={{ background: p.colors.text, opacity: 0.9 }}
+              style={{ backgroundColor: preset.colors.text, opacity: 0.9 }}
             />
             <div
-              className="h-2 w-8/12 rounded"
-              style={{ background: p.colors.text, opacity: 0.6 }}
+              className="h-2 w-7/12 rounded"
+              style={{ backgroundColor: preset.colors.text, opacity: 0.6 }}
             />
           </div>
           <div
             className="size-6 rounded-full"
-            style={{ background: p.colors.accent }}
+            style={{ backgroundColor: preset.colors.accent }}
           />
         </div>
       </button>
     );
   };
 
-  // ===== Handlers de color de acento (solo Mupu) =====
-  const setAccent = (value: string | undefined) => {
-    const next = setAt(cfg, ["styles", "colors", "accent"], value || "#22C55E");
-    onChange(next);
-  };
-
-  const resetAccentToPreset = () => {
-    const preset = STYLE_PRESETS.find((p) => p.id === presetId);
-    const fallback = preset?.colors.accent || "#22C55E";
-    setAccent(fallback);
-  };
-
   return (
     <section className={section}>
-      <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold">
+      <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold">
         <span className="inline-flex size-8 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 shadow-sm shadow-emerald-900/10 dark:border-emerald-400/20 dark:text-emerald-300">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -261,222 +206,246 @@ const StylesSection: React.FC<Props> = ({ cfg, disabled, onChange }) => {
         </span>
         Estilos y formato
       </h2>
+      <p className="mb-4 text-xs text-slate-600 dark:text-slate-300">
+        {isSalesUi
+          ? "Definí la base visual del estudio y cómo se distribuye el contenido en el PDF."
+          : "Configurá la apariencia general y la estructura del documento."}
+      </p>
 
-      {/* ======== Presets (sin tipografías) ======== */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {STYLE_PRESETS.map((p) => (
-          <PresetCard key={p.id} p={p} />
+      <div className={SURFACE}>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            Estilos base
+          </h3>
+          <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500 dark:text-slate-300">
+            Presets rápidos
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {STYLE_PRESETS.map((preset) => (
+            <PresetCard key={preset.id} preset={preset} />
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {(
+          [
+            { key: "background", label: "Fondo" },
+            { key: "text", label: "Texto" },
+            { key: "accent", label: "Acento" },
+          ] as Array<{ key: ColorKey; label: string }>
+        ).map((item) => (
+          <div key={item.key} className={SURFACE}>
+            <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-slate-600 dark:text-slate-300">
+              {item.label}
+            </label>
+            <input
+              type="color"
+              value={colors[item.key]}
+              onChange={(event) => setColor(item.key, event.target.value)}
+              disabled={disabled}
+              className="mt-2 h-11 w-full cursor-pointer rounded-2xl border border-slate-300/60 bg-white/90 p-1 dark:border-slate-200/20 dark:bg-slate-900/60"
+            />
+            <input
+              className={`${input} mt-2`}
+              value={colors[item.key]}
+              onChange={(event) => setColor(item.key, event.target.value)}
+              placeholder="#000000"
+              disabled={disabled}
+            />
+          </div>
         ))}
       </div>
 
-      {/* ======== Formatos (A/B/C) ======== */}
-      <div className="mt-6">
-        <div className="mb-2 text-sm font-semibold">Formato del PDF</div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {(["layoutA", "layoutB", "layoutC"] as PdfLayout[]).map((k) => {
-            const active = layout === k;
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={resetPalette}
+          disabled={disabled}
+          className="inline-flex items-center rounded-full border border-slate-300/60 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-200/25 dark:bg-slate-900/60 dark:text-slate-100"
+        >
+          Volver al preset
+        </button>
+      </div>
+
+      <div className={`${SURFACE} mt-4`}>
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+          Formato del PDF
+        </h3>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {(["layoutA", "layoutB", "layoutC"] as PdfLayout[]).map((kind) => {
+            const active = layout === kind;
             return (
               <button
-                key={k}
+                key={kind}
                 type="button"
-                onClick={() => onChange(setAt(cfg, ["layout"], k))}
+                onClick={() => onChange(setAt(cfg, ["layout"], kind))}
                 disabled={disabled}
-                className="text-left"
+                className="text-left transition hover:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                 aria-pressed={active}
               >
-                <LayoutThumb kind={k} active={active} />
-                <div className="mt-2 text-sm font-medium">
-                  {k === "layoutA"
-                    ? "Formato A"
-                    : k === "layoutB"
-                      ? "Formato B"
-                      : "Formato C"}
-                </div>
-                <div className="text-xs opacity-70">
-                  {k === "layoutA" &&
-                    "Portada → Encabezado → Contenido → Pie de página"}
-                  {k === "layoutB" &&
-                    "Encabezado → Portada → Contenido → Pie de página"}
-                  {k === "layoutC" &&
-                    "Encabezado lateral → Contenido → Pie de página"}
-                </div>
+                <LayoutThumb kind={kind} active={active} />
+                <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  {LAYOUT_COPY[kind].title}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-300">
+                  {LAYOUT_COPY[kind].description}
+                </p>
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* ======== Color de acento (solo Mupu) ======== */}
-      {isMupuAgency && (
-        <div className="mt-6">
-          <div className="mb-2 text-sm font-semibold">
-            Color de acento (solo Mupu)
+      <div className={`${SURFACE} mt-4`}>
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+          Ajustes avanzados
+        </h3>
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Radio de bordes
+            </p>
+            <div className="mt-1.5 grid grid-cols-5 gap-2">
+              {(
+                [
+                  { key: "sm", radiusClass: "rounded-sm" },
+                  { key: "md", radiusClass: "rounded-md" },
+                  { key: "lg", radiusClass: "rounded-lg" },
+                  { key: "xl", radiusClass: "rounded-xl" },
+                  { key: "2xl", radiusClass: "rounded-2xl" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => onChange(setAt(cfg, ["styles", "ui", "radius"], opt.key))}
+                  disabled={disabled}
+                  className={[
+                    TOGGLE_BASE,
+                    radius === opt.key ? TOGGLE_ACTIVE : TOGGLE_IDLE,
+                  ].join(" ")}
+                  title={opt.key}
+                >
+                  <span className="sr-only">{opt.key}</span>
+                  <span
+                    className={[
+                      "h-6 w-8 border border-slate-400/70 bg-slate-300/50 dark:border-slate-300/40 dark:bg-slate-300/25",
+                      opt.radiusClass,
+                    ].join(" ")}
+                  />
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[auto_1fr_auto]">
-            {/* Picker */}
-            <label className="text-sm">
-              Elegir color
-              <input
-                type="color"
-                className="mt-1 h-10 w-12 cursor-pointer rounded border border-white/10 bg-white/10"
-                value={colors.accent}
-                onChange={(e) => setAccent(e.target.value)}
-                disabled={disabled}
-                title="Elegí un color de acento"
-              />
-            </label>
 
-            {/* Input libre */}
-            <label className="text-sm">
-              Valor (hex / rgb / etc.)
-              <input
-                className="mt-1 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm"
-                value={colors.accent}
-                onChange={(e) => setAccent(e.target.value || undefined)}
-                placeholder="#22C55E"
-                disabled={disabled}
-              />
-            </label>
+          <div>
+            <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Ancho del contenido
+            </p>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {(
+                [
+                  { key: "narrow", widthClass: "max-w-[34px]" },
+                  { key: "normal", widthClass: "max-w-[48px]" },
+                  { key: "wide", widthClass: "max-w-[62px]" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() =>
+                    onChange(setAt(cfg, ["styles", "ui", "contentWidth"], opt.key))
+                  }
+                  disabled={disabled}
+                  className={[
+                    TOGGLE_BASE,
+                    width === opt.key ? TOGGLE_ACTIVE : TOGGLE_IDLE,
+                  ].join(" ")}
+                  title={opt.key}
+                >
+                  <span className="sr-only">{opt.key}</span>
+                  <div className="w-full rounded-lg border border-slate-300/65 p-1 dark:border-slate-200/25">
+                    <div className={`mx-auto space-y-1 ${opt.widthClass}`}>
+                      <div className="h-1.5 rounded bg-slate-400/70 dark:bg-slate-300/45" />
+                      <div className="h-1.5 rounded bg-slate-400/60 dark:bg-slate-300/35" />
+                      <div className="h-1.5 rounded bg-slate-400/60 dark:bg-slate-300/35" />
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
 
-            {/* Reset */}
+          <div>
+            <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Separación vertical (eje Y)
+            </p>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {(
+                [
+                  { key: "compact", spacing: "space-y-0.5" },
+                  { key: "comfortable", spacing: "space-y-1" },
+                  { key: "relaxed", spacing: "space-y-1.5" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() =>
+                    onChange(setAt(cfg, ["styles", "ui", "density"], opt.key))
+                  }
+                  disabled={disabled}
+                  className={[
+                    TOGGLE_BASE,
+                    density === opt.key ? TOGGLE_ACTIVE : TOGGLE_IDLE,
+                  ].join(" ")}
+                  title={opt.key}
+                >
+                  <span className="sr-only">{opt.key}</span>
+                  <div className={`w-full max-w-[72px] ${opt.spacing}`}>
+                    <div className="h-1.5 rounded bg-slate-400/70 dark:bg-slate-300/45" />
+                    <div className="h-1.5 rounded bg-slate-400/60 dark:bg-slate-300/35" />
+                    <div className="h-1.5 rounded bg-slate-400/60 dark:bg-slate-300/35" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Divisores entre bloques
+            </p>
             <button
               type="button"
-              onClick={resetAccentToPreset}
+              onClick={() =>
+                onChange(setAt(cfg, ["styles", "ui", "dividers"], !dividers))
+              }
               disabled={disabled}
-              className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-sm shadow-sm shadow-sky-950/10 transition hover:scale-[0.99]"
-              title="Volver al color de acento del preset seleccionado"
+              className={[
+                "mt-1.5 inline-flex w-full items-center justify-between rounded-xl border px-3 py-2 text-xs font-medium transition hover:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60",
+                dividers
+                  ? "border-emerald-400/55 bg-emerald-500/12 text-emerald-900 dark:text-emerald-200"
+                  : "border-slate-300/60 bg-white/85 text-slate-700 dark:border-slate-200/20 dark:bg-slate-900/60 dark:text-slate-100",
+              ].join(" ")}
             >
-              Restablecer al preset
-            </button>
-          </div>
-          <div className="mt-2 text-xs opacity-70">
-            Este color se usa para líneas, badges y títulos resaltados en el
-            PDF.
-          </div>
-        </div>
-      )}
-
-      {/* ======== Avanzados de presentación ======== */}
-      <div className="mt-6">
-        <div className="mb-2 text-sm font-semibold">Ajustes avanzados</div>
-
-        {/* Radio de bordes + Ancho de contenido */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <div className="mb-1 text-xs opacity-70">Radio de bordes</div>
-            <div className="flex flex-wrap gap-2">
-              {(["sm", "md", "lg", "xl", "2xl"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() =>
-                    onChange(setAt(cfg, ["styles", "ui", "radius"], opt))
-                  }
-                  className={`${radio} ${opt === radius ? radioActive : ""}`}
-                  aria-pressed={opt === radius}
-                >
-                  <div
-                    className={`h-4 w-8 ${
-                      opt === "2xl"
-                        ? "rounded-2xl"
-                        : opt === "xl"
-                          ? "rounded-xl"
-                          : opt === "lg"
-                            ? "rounded-lg"
-                            : opt === "md"
-                              ? "rounded-md"
-                              : "rounded-sm"
-                    } bg-black/20 dark:bg-white/20`}
-                  />
-                  {opt}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="mb-1 text-xs opacity-70">Ancho del contenido</div>
-            <div className="flex flex-wrap gap-2">
-              {(["narrow", "normal", "wide"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() =>
-                    onChange(setAt(cfg, ["styles", "ui", "contentWidth"], opt))
-                  }
-                  className={`${radio} ${opt === width ? radioActive : ""}`}
-                  aria-pressed={opt === width}
-                >
-                  <div className="flex items-end gap-[2px]">
-                    <div
-                      className={`h-3 ${
-                        opt === "narrow"
-                          ? "w-6"
-                          : opt === "normal"
-                            ? "w-8"
-                            : "w-10"
-                      } rounded bg-black/20 dark:bg-white/20`}
-                    />
-                  </div>
-                  {opt === "narrow"
-                    ? "Estrecho"
-                    : opt === "normal"
-                      ? "Normal"
-                      : "Ancho"}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Densidad + Divisores */}
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <div className="mb-1 text-xs opacity-70">Densidad</div>
-            <div className="flex flex-wrap gap-2">
-              {(["compact", "comfortable", "relaxed"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() =>
-                    onChange(setAt(cfg, ["styles", "ui", "density"], opt))
-                  }
-                  className={`${radio} ${opt === density ? radioActive : ""}`}
-                  aria-pressed={opt === density}
-                >
-                  {opt === "compact"
-                    ? "Compacta"
-                    : opt === "comfortable"
-                      ? "Cómoda"
-                      : "Relajada"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="mb-1 text-xs opacity-70">
-              Divisor entre secciones
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() =>
-                  onChange(setAt(cfg, ["styles", "ui", "dividers"], !dividers))
-                }
-                className={`${radio} ${dividers ? radioActive : ""}`}
-                aria-pressed={dividers}
+              <span>{dividers ? "Activados" : "Desactivados"}</span>
+              <span
+                className={[
+                  "inline-flex h-5 w-10 rounded-full p-0.5 transition",
+                  dividers ? "bg-emerald-500/60" : "bg-slate-400/50",
+                ].join(" ")}
               >
-                {dividers ? "Activado" : "Desactivado"}
-              </button>
-              <div
-                className={`h-px flex-1 ${dividers ? "bg-black/30 dark:bg-white/30" : "bg-transparent"}`}
-              />
-            </div>
+                <span
+                  className={[
+                    "h-4 w-4 rounded-full bg-white shadow-sm transition",
+                    dividers ? "translate-x-5" : "",
+                  ].join(" ")}
+                />
+              </span>
+            </button>
           </div>
         </div>
       </div>

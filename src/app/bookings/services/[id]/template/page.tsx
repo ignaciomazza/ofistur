@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Spinner from "@/components/Spinner";
@@ -9,6 +8,8 @@ import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
 import TemplatePdfDownload from "@/components/templates/TemplatePdfDownload";
 import TextPresetPicker from "@/components/templates/TextPresetPicker";
+import StudioShell, { type StudioTab } from "@/components/studio/StudioShell";
+import StudioSystemNavigation from "@/components/studio/StudioSystemNavigation";
 import type {
   OrderedBlock,
   BlockFormValue,
@@ -28,9 +29,37 @@ type BookingPayload = Booking & { services?: ServiceWithOperator[] };
 
 /* eslint-disable @next/next/no-img-element */
 const PAGE_TITLE = "Confirmación de servicios";
+const PANEL_CLASS =
+  "rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur";
+const STUDIO_ICON_TAB =
+  "inline-flex items-center justify-center rounded-xl border border-slate-300/55 bg-white/85 p-2 text-slate-700 shadow-sm transition hover:scale-[0.98] dark:border-slate-200/25 dark:bg-slate-900/60 dark:text-slate-100";
+const STUDIO_ICON_TAB_ACTIVE =
+  "border-sky-500/55 bg-sky-500/15 text-sky-900 dark:border-sky-300/50 dark:bg-sky-500/30 dark:text-sky-50";
 
 const cx = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(" ");
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(
+    (hex || "").trim(),
+  );
+  if (!m) return null;
+  return {
+    r: parseInt(m[1], 16),
+    g: parseInt(m[2], 16),
+    b: parseInt(m[3], 16),
+  };
+}
+
+function luminance(hex: string): number {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0.5;
+  const a = [rgb.r, rgb.g, rgb.b].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+}
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -477,6 +506,14 @@ function presetBlocksToOrdered(input: unknown): OrderedBlock[] {
     .filter(Boolean) as OrderedBlock[];
 }
 
+type StudioPanel = "system" | "design" | "manage";
+type DesignMenuSection =
+  | "cover"
+  | "contact"
+  | "payment"
+  | "services"
+  | "signature";
+
 export default function BookingVoucherPage() {
   const params = useParams();
   const id = params?.id ? String(params.id) : null;
@@ -501,6 +538,9 @@ export default function BookingVoucherPage() {
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<number>>(
     new Set(),
   );
+  const [studioPanel, setStudioPanel] = useState<StudioPanel>("design");
+  const [designMenuSection, setDesignMenuSection] =
+    useState<DesignMenuSection>("cover");
 
   const coverTouchedRef = useRef(false);
   const paymentTouchedRef = useRef(false);
@@ -580,6 +620,7 @@ export default function BookingVoucherPage() {
   const accent = rCfg?.styles?.colors?.accent ?? "#6B7280";
   const bg = rCfg?.styles?.colors?.background ?? "#ffffff";
   const text = rCfg?.styles?.colors?.text ?? "#111111";
+  const isLightBg = luminance(bg) >= 0.7;
   const dividerColor =
     bg.toLowerCase() === "#ffffff" || bg.toLowerCase() === "#fff"
       ? "rgba(0,0,0,0.08)"
@@ -867,6 +908,19 @@ export default function BookingVoucherPage() {
       .map((b) => b.id);
     return new Set<string>(ids);
   }, [editableBlocks]);
+  const canToggleInheritedLock = useCallback(
+    (block: OrderedBlock) => block.id.startsWith("v_"),
+    [],
+  );
+  const toggleInheritedLock = useCallback((id: string, next: "fixed" | "form") => {
+    setEditableBlocks((prev) =>
+      prev.map((block) => {
+        if (block.id !== id) return block;
+        if (!block.id.startsWith("v_")) return block;
+        return { ...block, origin: next === "fixed" ? "fixed" : "form" };
+      }),
+    );
+  }, []);
   const previewKey = useMemo(
     () => previewBlocks.map((b) => b.id).join("|"),
     [previewBlocks],
@@ -1031,229 +1085,294 @@ export default function BookingVoucherPage() {
   };
 
   const bookingId = booking?.agency_booking_id ?? booking?.id_booking ?? "";
+  const tabs: StudioTab[] = useMemo(
+    () => [
+      {
+        key: "system",
+        srLabel: "Menú",
+        label: (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12H12m-8.25 5.25h16.5" />
+          </svg>
+        ),
+      },
+      {
+        key: "design",
+        srLabel: "Diseño",
+        label: (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.53 16.122a3 3 0 0 0-5.78 1.128 2.25 2.25 0 0 1-2.4 2.245 4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128Zm0 0a15.998 15.998 0 0 0 3.388-1.62m-5.043-.025a15.994 15.994 0 0 1 1.622-3.395m3.42 3.42a15.995 15.995 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a15.996 15.996 0 0 0-4.649 4.763m3.42 3.42a6.776 6.776 0 0 0-3.42-3.42" />
+          </svg>
+        ),
+      },
+      {
+        key: "manage",
+        srLabel: "Cotización",
+        label: (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 21H4.5a1.5 1.5 0 0 1-1.5-1.5V5.56a1.5 1.5 0 0 1 .44-1.06l1.06-1.06A1.5 1.5 0 0 1 5.56 3h11.38a1.5 1.5 0 0 1 1.06.44l1.06 1.06a1.5 1.5 0 0 1 .44 1.06V19.5A1.5 1.5 0 0 1 19.5 21Z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v5.25h7.5V3M8.25 21v-6h7.5v6" />
+          </svg>
+        ),
+      },
+    ],
+    [],
+  );
+  const panelTitle =
+    studioPanel === "system"
+      ? "Menú"
+      : studioPanel === "design"
+      ? "Diseño"
+      : "Cotización";
+  const designMenuItems: Array<{
+    key: DesignMenuSection;
+    label: string;
+    icon: JSX.Element;
+  }> = [
+    {
+      key: "cover",
+      label: "Portada",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.6}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Z" />
+        </svg>
+      ),
+    },
+    {
+      key: "contact",
+      label: "Contacto",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.6}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102A1.125 1.125 0 0 0 5.872 2.25H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
+        </svg>
+      ),
+    },
+    {
+      key: "payment",
+      label: "Cobro",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.6}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z" />
+        </svg>
+      ),
+    },
+    {
+      key: "services",
+      label: "Servicios",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.6}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5h18M3 12h18M3 16.5h18" />
+        </svg>
+      ),
+    },
+    {
+      key: "signature",
+      label: "Firmas",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.6}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 3.75H7.5a2.25 2.25 0 0 0-2.25 2.25v12A2.25 2.25 0 0 0 7.5 20.25h9A2.25 2.25 0 0 0 18.75 18V6A2.25 2.25 0 0 0 16.5 3.75Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 15.75h7.5M8.25 11.25h7.5M8.25 6.75h7.5" />
+        </svg>
+      ),
+    },
+  ];
+  const quickAddItems: Array<{ type: BlockType; label: string }> = [
+    { type: "heading", label: "Título" },
+    { type: "subtitle", label: "Subtítulo" },
+    { type: "paragraph", label: "Párrafo" },
+    { type: "list", label: "Lista" },
+    { type: "keyValue", label: "Clave/Valor" },
+    { type: "twoColumns", label: "Dos columnas" },
+    { type: "threeColumns", label: "Tres columnas" },
+  ];
 
-  return (
-    <ProtectedRoute>
-      <section className="mx-auto p-6 text-slate-950 dark:text-white">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold">{PAGE_TITLE}</h1>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">
-              Generá la confirmación con los datos de la reserva y el template
-              configurado.
+  const panelBody = (() => {
+    if (studioPanel === "system") {
+      return (
+        <StudioSystemNavigation
+          backHref={`/bookings/services/${id}`}
+          backLabel="Volver a la reserva"
+          intro="Navegá por el sistema sin perder el contexto de la confirmación."
+        />
+      );
+    }
+
+    if (studioPanel === "design") {
+      return (
+        <div className="space-y-3">
+          <div className={PANEL_CLASS}>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+              Módulos de diseño
+            </h3>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              Elegí un módulo y editá ese grupo de opciones.
             </p>
-          </div>
-          <Link
-            href={`/bookings/services/${id}`}
-            className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-950 shadow-sm shadow-sky-900/5 transition hover:scale-[0.98] dark:bg-sky-500/20 dark:text-sky-100"
-          >
-            Volver a la reserva
-          </Link>
-        </div>
-
-        {loading ? (
-          <div className="flex min-h-[50vh] items-center justify-center">
-            <Spinner />
-          </div>
-        ) : error ? (
-          <div className="rounded-3xl border border-rose-500/20 bg-rose-500/10 p-6 text-rose-700 dark:text-rose-200">
-            {error}
-          </div>
-        ) : !booking ? (
-          <div className="rounded-3xl border border-slate-200/70 bg-white p-6 text-slate-700 shadow-sm shadow-sky-900/5 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
-            No se encontró la reserva.
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm uppercase tracking-wide text-slate-500 dark:text-slate-300">
-                    Reserva
-                  </p>
-                  <p className="text-lg font-semibold">
-                    {booking.details} - Nº {bookingId}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">
-                    Salida: {formatDate(booking.departure_date)} · Regreso:{" "}
-                    {formatDate(booking.return_date)}
-                  </p>
-                </div>
-                <TemplatePdfDownload
-                  cfg={rCfg}
-                  agency={agencyForPdf}
-                  user={userForPdf}
-                  blocks={editableBlocks}
-                  docLabel="Confirmación"
-                  selectedCoverUrl={selectedCoverUrl}
-                  paymentSelected={paymentSelected}
-                  fileName={`confirmacion-${bookingId || "reserva"}.pdf`}
-                  className="dark:bg-emeral-500/50 inline-flex items-center justify-center rounded-full border border-emerald-100 bg-emerald-50/90 px-5 py-2 text-sm font-medium text-emerald-900 shadow-sm shadow-emerald-900/10 transition hover:scale-[0.98] dark:border-emerald-100/70 dark:bg-emerald-500/20 dark:text-emerald-100"
+            <div className="mt-3 grid grid-cols-5 gap-2">
+              {designMenuItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setDesignMenuSection(item.key)}
+                  className={cx(
+                    STUDIO_ICON_TAB,
+                    designMenuSection === item.key && STUDIO_ICON_TAB_ACTIVE,
+                  )}
+                  title={item.label}
                 >
-                  Descargar PDF
-                </TemplatePdfDownload>
-              </div>
+                  {item.icon}
+                  <span className="sr-only">{item.label}</span>
+                </button>
+              ))}
             </div>
+            <div className="mt-2 grid grid-cols-5 gap-2 text-center text-[10px] font-medium text-slate-500 dark:text-slate-300">
+              {designMenuItems.map((item) => (
+                <span key={item.key}>{item.label}</span>
+              ))}
+            </div>
+          </div>
 
-            <div className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur">
-              <div className="mb-4">
-                <h2 className="text-base font-semibold">Personalización</h2>
-                <p className="text-sm text-slate-500 dark:text-slate-300">
-                  Elegí portada, teléfono visible y forma de pago para esta
-                  confirmación.
+          {designMenuSection === "cover" ? (
+            <div className={PANEL_CLASS}>
+              <h3 className="text-sm font-semibold">Portada</h3>
+              {coverOptions.length === 0 ? (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
+                  No hay portadas configuradas en el template.
                 </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-white/10 bg-white/20 p-4">
-                  <h3 className="text-sm font-semibold">Portada</h3>
-                  {coverOptions.length === 0 ? (
-                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
-                      No hay portadas configuradas en el template.
-                    </p>
-                  ) : (
-                    <div className="mt-3 grid grid-cols-3 gap-2">
+              ) : (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      coverTouchedRef.current = true;
+                      setSelectedCoverUrl("");
+                    }}
+                    className={cx(
+                      "rounded-xl border px-2 py-2 text-xs",
+                      !selectedCoverUrl
+                        ? "border-sky-400/60 bg-sky-500/10 text-sky-900 dark:text-sky-200"
+                        : "border-white/10 bg-white/10 text-slate-600 dark:text-slate-300",
+                    )}
+                  >
+                    Usar logo
+                  </button>
+                  {coverOptions.map((opt) => {
+                    const active = selectedCoverUrl === opt.url;
+                    return (
                       <button
+                        key={opt.url}
                         type="button"
                         onClick={() => {
                           coverTouchedRef.current = true;
-                          setSelectedCoverUrl("");
+                          setSelectedCoverUrl(opt.url);
                         }}
                         className={cx(
-                          "rounded-xl border px-2 py-2 text-xs",
-                          !selectedCoverUrl
+                          "relative overflow-hidden rounded-xl border",
+                          active
+                            ? "border-sky-400/60 ring-1 ring-sky-300/60"
+                            : "border-white/10",
+                        )}
+                        title={opt.name}
+                      >
+                        <img
+                          src={opt.url}
+                          alt={opt.name}
+                          className="h-24 w-full object-cover"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {designMenuSection === "contact" ? (
+            <div className={PANEL_CLASS}>
+              <h3 className="text-sm font-semibold">Teléfono visible</h3>
+              {phoneOptions.length === 0 ? (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
+                  La agencia no tiene teléfonos cargados.
+                </p>
+              ) : (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {phoneOptions.map((opt) => {
+                    const active = selectedPhone === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => {
+                          phoneTouchedRef.current = true;
+                          setSelectedPhone(opt.value);
+                        }}
+                        className={cx(
+                          "w-full rounded-xl border px-3 py-2 text-left text-xs",
+                          active
                             ? "border-sky-400/60 bg-sky-500/10 text-sky-900 dark:text-sky-200"
                             : "border-white/10 bg-white/10 text-slate-600 dark:text-slate-300",
                         )}
                       >
-                        Usar logo
+                        <div className="font-medium">{opt.value}</div>
+                        <div className="opacity-70">{opt.label}</div>
                       </button>
-                      {coverOptions.map((opt) => {
-                        const active = selectedCoverUrl === opt.url;
-                        return (
-                          <button
-                            key={opt.url}
-                            type="button"
-                            onClick={() => {
-                              coverTouchedRef.current = true;
-                              setSelectedCoverUrl(opt.url);
-                            }}
-                            className={cx(
-                              "relative overflow-hidden rounded-xl border",
-                              active
-                                ? "border-sky-400/60 ring-1 ring-sky-300/60"
-                                : "border-white/10",
-                            )}
-                            title={opt.name}
-                          >
-                            <img
-                              src={opt.url}
-                              alt={opt.name}
-                              className="h-28 w-full object-cover"
-                            />
-                            <span className="absolute inset-x-4 bottom-2 truncate rounded border border-sky-600/10 bg-sky-600/10 px-1 py-0.5 text-[10px] tracking-wide text-sky-100 backdrop-blur-sm">
-                              {opt.name}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
-
-                <div className="rounded-2xl border border-white/10 bg-white/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold">Teléfono visible</h3>
-                  </div>
-                  {phoneOptions.length === 0 ? (
-                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
-                      La agencia no tiene teléfonos cargados.
-                    </p>
-                  ) : (
-                    <div className="mt-3 grid grid-cols-3 gap-2 space-y-2">
-                      {phoneOptions.map((opt) => {
-                        const active = selectedPhone === opt.value;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() => {
-                              phoneTouchedRef.current = true;
-                              setSelectedPhone(opt.value);
-                            }}
-                            className={cx(
-                              "w-full rounded-xl border px-3 py-2 text-left text-xs",
-                              active
-                                ? "border-sky-400/60 bg-sky-500/10 text-sky-900 dark:text-sky-200"
-                                : "border-white/10 bg-white/10 text-slate-600 dark:text-slate-300",
-                            )}
-                          >
-                            <div className="font-medium">{opt.value}</div>
-                            <div className="opacity-70">{opt.label}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-white/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold">Forma de pago</h3>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        paymentTouchedRef.current = true;
-                        setSelectedPaymentIndex(null);
-                      }}
-                      className="text-[11px] opacity-70 hover:opacity-100"
-                    >
-                      Limpiar
-                    </button>
-                  </div>
-                  {paymentOptions.length === 0 ? (
-                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
-                      No hay opciones de pago cargadas.
-                    </p>
-                  ) : (
-                    <div className="mt-3 grid grid-cols-3 gap-2 space-y-2">
-                      {paymentOptions.map((opt, idx) => {
-                        const active = selectedPaymentIndex === idx;
-                        return (
-                          <button
-                            key={`${opt}-${idx}`}
-                            type="button"
-                            onClick={() => {
-                              paymentTouchedRef.current = true;
-                              setSelectedPaymentIndex(idx);
-                            }}
-                            className={cx(
-                              "w-full rounded-xl border px-3 py-2 text-left text-xs",
-                              active
-                                ? "border-sky-400/60 bg-sky-500/10 text-sky-900 dark:text-sky-200"
-                                : "border-white/10 bg-white/10 text-slate-600 dark:text-slate-300",
-                            )}
-                          >
-                            {opt.length > 140 ? `${opt.slice(0, 137)}…` : opt}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
+              )}
             </div>
+          ) : null}
 
-            <div className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold">
-                    Servicios incluidos
-                  </h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-300">
-                    Elegí qué servicios se muestran en la confirmación.
-                  </p>
+          {designMenuSection === "payment" ? (
+            <div className={PANEL_CLASS}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Forma de pago</h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    paymentTouchedRef.current = true;
+                    setSelectedPaymentIndex(null);
+                  }}
+                  className="text-[11px] opacity-70 hover:opacity-100"
+                >
+                  Limpiar
+                </button>
+              </div>
+              {paymentOptions.length === 0 ? (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">
+                  No hay opciones de pago cargadas.
+                </p>
+              ) : (
+                <div className="mt-3 grid grid-cols-1 gap-2">
+                  {paymentOptions.map((opt, idx) => {
+                    const active = selectedPaymentIndex === idx;
+                    return (
+                      <button
+                        key={`${opt}-${idx}`}
+                        type="button"
+                        onClick={() => {
+                          paymentTouchedRef.current = true;
+                          setSelectedPaymentIndex(idx);
+                        }}
+                        className={cx(
+                          "w-full rounded-xl border px-3 py-2 text-left text-xs",
+                          active
+                            ? "border-sky-400/60 bg-sky-500/10 text-sky-900 dark:text-sky-200"
+                            : "border-white/10 bg-white/10 text-slate-600 dark:text-slate-300",
+                        )}
+                      >
+                        {opt.length > 140 ? `${opt.slice(0, 137)}…` : opt}
+                      </button>
+                    );
+                  })}
                 </div>
+              )}
+            </div>
+          ) : null}
+
+          {designMenuSection === "services" ? (
+            <div className={PANEL_CLASS}>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Servicios incluidos</h3>
                 <div className="flex items-center gap-2 text-xs">
                   <button
                     type="button"
@@ -1264,7 +1383,7 @@ export default function BookingVoucherPage() {
                     }
                     className="rounded-full border border-sky-500/30 bg-sky-500/5 px-3 py-1 text-sky-900 dark:text-sky-200"
                   >
-                    Seleccionar todo
+                    Todo
                   </button>
                   <button
                     type="button"
@@ -1275,13 +1394,12 @@ export default function BookingVoucherPage() {
                   </button>
                 </div>
               </div>
-
               {services.length === 0 ? (
                 <p className="text-sm text-slate-500 dark:text-slate-300">
-                  No hay servicios cargados en esta reserva.
+                  No hay servicios cargados.
                 </p>
               ) : (
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="space-y-2">
                   {services.map((service) => {
                     const active = selectedServiceIds.has(service.id_service);
                     const label =
@@ -1292,7 +1410,7 @@ export default function BookingVoucherPage() {
                       <label
                         key={service.id_service}
                         className={cx(
-                          "flex cursor-pointer items-start gap-3 rounded-2xl border p-3 text-xs",
+                          "flex cursor-pointer items-start gap-3 rounded-xl border p-2 text-xs",
                           active
                             ? "border border-sky-500/30 bg-sky-500/5 text-sky-900 dark:text-sky-200"
                             : "border-white/10 bg-white/10 text-slate-600 dark:text-slate-300",
@@ -1321,14 +1439,6 @@ export default function BookingVoucherPage() {
                               Operador: {service.operator.name}
                             </div>
                           )}
-                          {service.sale_price != null && (
-                            <div className="mt-1 opacity-70">
-                              {formatMoney(
-                                service.sale_price,
-                                service.currency,
-                              )}
-                            </div>
-                          )}
                         </div>
                       </label>
                     );
@@ -1336,15 +1446,12 @@ export default function BookingVoucherPage() {
                 </div>
               )}
             </div>
+          ) : null}
 
-            <div className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold">Firmas</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-300">
-                    Activá o desactivá la sección de firmas en la confirmación.
-                  </p>
-                </div>
+          {designMenuSection === "signature" ? (
+            <div className={PANEL_CLASS}>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Firmas</h3>
                 <label className="inline-flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -1352,12 +1459,11 @@ export default function BookingVoucherPage() {
                     onChange={(e) => setIncludeSignature(e.target.checked)}
                     className="size-4"
                   />
-                  Incluir firmas
+                  Incluir
                 </label>
               </div>
-
-              {includeSignature && (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {includeSignature ? (
+                <div className="mt-3 grid gap-2">
                   <label className="inline-flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
@@ -1371,9 +1477,7 @@ export default function BookingVoucherPage() {
                     <input
                       type="checkbox"
                       checked={includeAgencySignature}
-                      onChange={(e) =>
-                        setIncludeAgencySignature(e.target.checked)
-                      }
+                      onChange={(e) => setIncludeAgencySignature(e.target.checked)}
                       className="size-4"
                     />
                     Firma Agencia
@@ -1382,9 +1486,7 @@ export default function BookingVoucherPage() {
                     <input
                       type="checkbox"
                       checked={includeClarification}
-                      onChange={(e) =>
-                        setIncludeClarification(e.target.checked)
-                      }
+                      onChange={(e) => setIncludeClarification(e.target.checked)}
                       className="size-4"
                     />
                     Aclaración
@@ -1399,56 +1501,31 @@ export default function BookingVoucherPage() {
                     DNI
                   </label>
                 </div>
-              )}
+              ) : null}
             </div>
+          ) : null}
+        </div>
+      );
+    }
 
-            <div className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold">
-                    Vista previa editable
-                  </h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-300">
-                    Editá, reordená y agregá bloques antes de descargar.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={saveCurrentAsPreset}
-                    className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-900 shadow-sm shadow-emerald-900/10 transition hover:scale-[0.98] dark:text-emerald-200"
-                    title="Guardar preset con los bloques personalizados"
-                  >
-                    Guardar preset
-                  </button>
-                  {(
-                    [
-                      { type: "heading", label: "Título" },
-                      { type: "subtitle", label: "Subtítulo" },
-                      { type: "paragraph", label: "Párrafo" },
-                      { type: "list", label: "Lista" },
-                      { type: "keyValue", label: "Clave/Valor" },
-                      { type: "twoColumns", label: "2 columnas" },
-                      { type: "threeColumns", label: "3 columnas" },
-                    ] as const
-                  ).map((item) => (
-                    <button
-                      key={item.type}
-                      type="button"
-                      onClick={() =>
-                        setEditableBlocks((prev) => [
-                          ...prev,
-                          makeNewBlock(item.type as BlockType),
-                        ])
-                      }
-                      className="rounded-full border border-white/30 bg-white/40 px-3 py-1 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition hover:scale-[0.98] dark:border-white/10 dark:bg-white/10 dark:text-white"
-                    >
-                      + {item.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
+    if (studioPanel === "manage") {
+      return (
+        <div className="space-y-3">
+          <div className={PANEL_CLASS}>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+              Presets de contenido
+            </h3>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              Guardá bloques personalizados para reutilizar en futuras confirmaciones.
+            </p>
+            <button
+              type="button"
+              onClick={saveCurrentAsPreset}
+              className="mt-3 inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm shadow-emerald-900/10 transition hover:scale-[0.98] dark:text-emerald-200"
+            >
+              Guardar preset actual
+            </button>
+            <div className="mt-3">
               <TextPresetPicker
                 token={token ?? null}
                 docType="voucher"
@@ -1470,142 +1547,260 @@ export default function BookingVoucherPage() {
                   setEditableBlocks((prev) => [...prev, ...nextBlocks]);
                 }}
               />
+            </div>
+          </div>
+          <div className={PANEL_CLASS}>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+              Resumen de la confirmación
+            </h3>
+            <div className="mt-2 space-y-1 text-xs text-slate-600 dark:text-slate-300">
+              <p>
+                <b>Reserva:</b> Nº {bookingId || "—"}
+              </p>
+              <p>
+                <b>Titular:</b>{" "}
+                {`${booking?.titular?.first_name || ""} ${booking?.titular?.last_name || ""}`.trim() ||
+                  "—"}
+              </p>
+              <p>
+                <b>Servicios:</b> {selectedServices.length}/{services.length}
+              </p>
+              <p>
+                <b>Bloques:</b> {editableBlocks.length}
+              </p>
+              <p>
+                <b>Pago seleccionado:</b> {paymentSelected || "Sin seleccionar"}
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
-              <div
-                className={cx(
-                  "rounded-3xl border border-white/10 bg-white/40 shadow-inner shadow-sky-950/5 dark:border-white/10 dark:bg-white/5",
-                  uiTokens.padY,
-                )}
-                style={{ backgroundColor: bg, color: text }}
-              >
-                <div className={cx(uiTokens.padX, "pb-6")}>
-                  <div
-                    className={cx("mx-auto", uiTokens.contentMaxW, "w-full")}
-                  >
-                    <div className="mb-4 flex items-start justify-between gap-4">
-                      <div>
-                        <h3
-                          className="text-2xl font-semibold"
-                          style={{ color: text, fontFamily: headingFont }}
-                        >
-                          {agencyForPdf.name || "Agencia"}
-                        </h3>
-                        <div
-                          className="mt-1 h-[2px] w-24"
-                          style={{ backgroundColor: accent }}
-                        />
-                      </div>
-                      <span
-                        className="rounded-full border px-3 py-1 text-xs font-semibold uppercase"
-                        style={{
-                          borderColor: dividerColor,
-                          color: accent,
-                        }}
-                      >
-                        Confirmación
-                      </span>
+    return null;
+  })();
+
+  return (
+    <ProtectedRoute>
+      <section className="p-3 text-slate-950 dark:text-white md:p-4">
+        {loading ? (
+          <div className="flex min-h-[60vh] items-center justify-center">
+            <Spinner />
+          </div>
+        ) : error ? (
+          <div className="rounded-3xl border border-rose-500/20 bg-rose-500/10 p-6 text-rose-700 dark:text-rose-200">
+            {error}
+          </div>
+        ) : !booking ? (
+          <div className="rounded-3xl border border-slate-200/70 bg-white p-6 text-slate-700 shadow-sm shadow-sky-900/5 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+            No se encontró la reserva.
+          </div>
+        ) : (
+          <StudioShell
+            eyebrow="Estudio de confirmación"
+            title={`Reserva Nº ${bookingId || "—"}`}
+            badges={[
+              {
+                label: `Servicios ${selectedServices.length}/${services.length}`,
+                tone: "sky",
+              },
+              {
+                label: `Bloques ${editableBlocks.length}`,
+                tone: "slate",
+              },
+            ]}
+            backHref={`/bookings/services/${id}`}
+            backLabel="Volver a la reserva"
+            tabs={tabs}
+            tabsVariant="icon"
+            tabColumnsDesktop={3}
+            tabColumnsMobile={3}
+            activeTab={studioPanel}
+            onChangeTab={(key) => setStudioPanel(key as StudioPanel)}
+            panelTitle={panelTitle}
+            panelBody={panelBody}
+            showMobilePanel
+            mainContent={
+              <div className="space-y-4">
+                <div className={PANEL_CLASS}>
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                        Confirmación automática
+                      </p>
+                      <p className="text-lg font-semibold">
+                        {booking.details || "Reserva"} - Nº {bookingId}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">
+                        Salida: {formatDate(booking.departure_date)} · Regreso:{" "}
+                        {formatDate(booking.return_date)}
+                      </p>
                     </div>
+                    <TemplatePdfDownload
+                      cfg={rCfg}
+                      agency={agencyForPdf}
+                      user={userForPdf}
+                      blocks={editableBlocks}
+                      docLabel="Confirmación"
+                      selectedCoverUrl={selectedCoverUrl}
+                      paymentSelected={paymentSelected}
+                      fileName={`confirmacion-${bookingId || "reserva"}.pdf`}
+                      className="inline-flex items-center justify-center rounded-full border border-emerald-100 bg-emerald-50/90 px-5 py-2 text-sm font-medium text-emerald-900 shadow-sm shadow-emerald-900/10 transition hover:scale-[0.98] dark:border-emerald-100/70 dark:bg-emerald-500/20 dark:text-emerald-100"
+                    >
+                      Descargar PDF
+                    </TemplatePdfDownload>
+                  </div>
+                </div>
 
-                    {contactLine.length > 0 && (
-                      <div
-                        className={cx(
-                          "mb-4 flex flex-wrap gap-2 border p-2 text-xs",
-                          uiTokens.innerRadiusClass,
-                        )}
-                        style={{
-                          borderColor: dividerColor,
-                          backgroundColor: panelBgStrong,
-                        }}
-                      >
-                        {contactLine.map((item) => (
+                <div className={PANEL_CLASS}>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-base font-semibold">Preview editable</h2>
+                      <p className="text-sm text-slate-500 dark:text-slate-300">
+                        Editá, reordená y agregá bloques antes de descargar.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {quickAddItems.map((item) => (
+                        <button
+                          key={item.type}
+                          type="button"
+                          onClick={() =>
+                            setEditableBlocks((prev) => [
+                              ...prev,
+                              makeNewBlock(item.type),
+                            ])
+                          }
+                          className="rounded-full border border-white/30 bg-white/40 px-3 py-1 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition hover:scale-[0.98] dark:border-white/10 dark:bg-white/10 dark:text-white"
+                        >
+                          + {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div
+                    className={cx(
+                      "rounded-3xl border border-white/10 bg-white/40 shadow-inner shadow-sky-950/5 dark:border-white/10 dark:bg-white/5",
+                      uiTokens.padY,
+                    )}
+                    style={{ backgroundColor: bg, color: text }}
+                  >
+                    <div className={cx(uiTokens.padX, "pb-6")}>
+                      <div className={cx("mx-auto", uiTokens.contentMaxW, "w-full")}>
+                        <div className="mb-4 flex items-start justify-between gap-4">
+                          <div>
+                            <h3
+                              className="text-2xl font-semibold"
+                              style={{ color: text, fontFamily: headingFont }}
+                            >
+                              {agencyForPdf.name || "Agencia"}
+                            </h3>
+                            <div
+                              className="mt-1 h-[2px] w-24"
+                              style={{ backgroundColor: accent }}
+                            />
+                          </div>
                           <span
-                            key={`${item.label}-${item.value}`}
+                            className="rounded-full border px-3 py-1 text-xs font-semibold uppercase"
+                            style={{
+                              borderColor: dividerColor,
+                              color: accent,
+                            }}
+                          >
+                            Confirmación
+                          </span>
+                        </div>
+
+                        {contactLine.length > 0 && (
+                          <div
                             className={cx(
-                              "rounded-full px-2 py-1",
+                              "mb-4 flex flex-wrap gap-2 border p-2 text-xs",
                               uiTokens.innerRadiusClass,
                             )}
                             style={{
-                              backgroundColor: dividerColor,
-                              color: text,
+                              borderColor: dividerColor,
+                              backgroundColor: panelBgStrong,
                             }}
                           >
-                            <strong style={{ color: accent }}>
-                              {item.label}:
-                            </strong>{" "}
-                            {item.value}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {selectedCoverUrl ? (
-                      <img
-                        src={selectedCoverUrl}
-                        alt="Portada confirmación"
-                        className={cx(
-                          "w-full object-cover",
-                          uiTokens.innerRadiusClass,
+                            {contactLine.map((item) => (
+                              <span
+                                key={`${item.label}-${item.value}`}
+                                className={cx(
+                                  "rounded-full px-2 py-1",
+                                  uiTokens.innerRadiusClass,
+                                )}
+                                style={{
+                                  backgroundColor: dividerColor,
+                                  color: text,
+                                }}
+                              >
+                                <strong style={{ color: accent }}>
+                                  {item.label}:
+                                </strong>{" "}
+                                {item.value}
+                              </span>
+                            ))}
+                          </div>
                         )}
-                        style={{
-                          height:
-                            uiTokens.density === "compact"
-                              ? 144
-                              : uiTokens.density === "relaxed"
-                                ? 220
-                                : 184,
-                        }}
-                      />
-                    ) : null}
 
-                    <div className={cx("mt-4", uiTokens.gapBlocks)}>
-                      {editableBlocks.length === 0 ? (
-                        <p className="text-sm opacity-70">
-                          No hay contenido para mostrar.
-                        </p>
-                      ) : (
-                        <BlocksCanvas
-                          blocks={editableBlocks}
-                          onChange={setEditableBlocks}
-                          lockedIds={lockedIds}
-                          showMeta
-                          getMode={(b) =>
-                            b.origin === "fixed" ? "fixed" : "form"
-                          }
-                          onToggleMode={(id, nextMode) => {
-                            setEditableBlocks((prev) =>
-                              prev.map((b) =>
-                                b.id === id
-                                  ? {
-                                      ...b,
-                                      origin:
-                                        nextMode === "fixed" ? "fixed" : "form",
-                                    }
-                                  : b,
-                              ),
-                            );
-                          }}
-                          options={{
-                            dividerColor: uiTokens.dividers
-                              ? dividerColor
-                              : "transparent",
-                            panelBgStrong,
-                            innerRadiusClass: uiTokens.innerRadiusClass,
-                            gapGridClass: uiTokens.gapGrid,
-                            listSpaceClass: uiTokens.listSpace,
-                            accentColor: accent,
-                            headingFont,
-                            headingWeight,
-                          }}
-                        />
-                      )}
+                        {selectedCoverUrl ? (
+                          <img
+                            src={selectedCoverUrl}
+                            alt="Portada confirmación"
+                            className={cx(
+                              "w-full object-cover",
+                              uiTokens.innerRadiusClass,
+                            )}
+                            style={{
+                              height:
+                                uiTokens.density === "compact"
+                                  ? 144
+                                  : uiTokens.density === "relaxed"
+                                  ? 220
+                                  : 184,
+                            }}
+                          />
+                        ) : null}
+
+                        <div className={cx("mt-4", uiTokens.gapBlocks)}>
+                          {editableBlocks.length === 0 ? (
+                            <p className="text-sm opacity-70">
+                              No hay contenido para mostrar.
+                            </p>
+                          ) : (
+                            <BlocksCanvas
+                              blocks={editableBlocks}
+                              onChange={setEditableBlocks}
+                              lockedIds={lockedIds}
+                              showMeta
+                              canToggleMode={canToggleInheritedLock}
+                              onToggleMode={toggleInheritedLock}
+                              options={{
+                                dividerColor: uiTokens.dividers
+                                  ? dividerColor
+                                  : "transparent",
+                                panelBgStrong,
+                                innerRadiusClass: uiTokens.innerRadiusClass,
+                                gapGridClass: uiTokens.gapGrid,
+                                listSpaceClass: uiTokens.listSpace,
+                                accentColor: accent,
+                                headingFont,
+                                headingWeight,
+                                controlsOnDarkSurface: !isLightBg,
+                              }}
+                            />
+                          )}
+                        </div>
+
+                        <PaymentPreview />
+                      </div>
                     </div>
-
-                    <PaymentPreview />
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
+            }
+          />
         )}
       </section>
     </ProtectedRoute>

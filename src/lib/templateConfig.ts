@@ -245,6 +245,26 @@ export function mergeConfigWithFormValues(
     };
   }
 
+  // ---- Layout por documento
+  if (form?.layout) {
+    config.layout = form.layout;
+  }
+
+  // ---- Overrides visuales por documento (sin tocar config base)
+  if (form?.styles) {
+    config.styles = {
+      ...(config.styles ?? {}),
+      colors: {
+        ...(config.styles?.colors ?? {}),
+        ...(form.styles.colors ?? {}),
+      },
+      ui: {
+        ...(config.styles?.ui ?? {}),
+        ...(form.styles.ui ?? {}),
+      },
+    };
+  }
+
   // ---- Agency priorizada con selección del usuario
   const baseSocials = agency.socials ?? agency.social ?? {};
   const resolvedAgency: Agency = {

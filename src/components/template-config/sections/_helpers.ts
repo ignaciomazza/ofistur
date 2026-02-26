@@ -15,15 +15,20 @@ export function getAt<T>(obj: AnyObj, path: string[], fallback: T): T {
 }
 
 export function setAt(obj: AnyObj, path: string[], value: unknown): AnyObj {
+  if (path.length === 0) return { ...obj };
   const next: AnyObj = { ...obj };
-  let cur: AnyObj = next;
+  let curNext: AnyObj = next;
+  let curPrev: AnyObj = obj;
+
   for (let i = 0; i < path.length - 1; i += 1) {
     const k = path[i];
-    const v = cur[k];
-    if (!isObject(v)) cur[k] = {};
-    cur = cur[k] as AnyObj;
+    const prevChild = isObject(curPrev[k]) ? (curPrev[k] as AnyObj) : undefined;
+    const nextChild: AnyObj = prevChild ? { ...prevChild } : {};
+    curNext[k] = nextChild;
+    curNext = nextChild;
+    curPrev = prevChild ?? {};
   }
-  cur[path[path.length - 1]] = value;
+  curNext[path[path.length - 1]] = value;
   return next;
 }
 
