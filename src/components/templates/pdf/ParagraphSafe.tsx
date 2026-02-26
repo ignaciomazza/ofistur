@@ -71,25 +71,33 @@ export default function ParagraphSafe({
   return (
     <View>
       {lines.map((ln, li) => {
-        const line = ln.length ? ln : NBSP;
-        const toks = tokenizeBold(line);
-
         const lineStyle = [...styleArray] as TextProps["style"];
+        if (!ln.length) {
+          return (
+            <Text key={`line-${li}`} style={lineStyle}>
+              {" "}
+            </Text>
+          );
+        }
+        const toks = tokenizeBold(ln);
+        const hasBold = toks.some((tk) => tk.bold);
 
         return (
           <Text key={`line-${li}`} style={lineStyle}>
-            {toks.map((tk, ti) =>
-              tk.bold ? (
-                <Text
-                  key={`seg-${li}-${ti}`}
-                  style={[{ fontWeight: 700 }] as TextProps["style"]}
-                >
-                  {tk.text}
-                </Text>
-              ) : (
-                <Text key={`seg-${li}-${ti}`}>{tk.text}</Text>
-              ),
-            )}
+            {!hasBold
+              ? toks.map((tk) => tk.text).join("")
+              : toks.map((tk, ti) =>
+                  tk.bold ? (
+                    <Text
+                      key={`seg-${li}-${ti}`}
+                      style={[{ fontWeight: 700 }] as TextProps["style"]}
+                    >
+                      {tk.text}
+                    </Text>
+                  ) : (
+                    tk.text
+                  ),
+                )}
           </Text>
         );
       })}

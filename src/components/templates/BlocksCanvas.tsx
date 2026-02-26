@@ -63,14 +63,10 @@ const BLOCK_TAGS = new Set(["DIV", "P"]);
 
 function serializeEditable(el: HTMLElement): string {
   const out: string[] = [];
-  const pushNewline = () => {
+  const pushNewline = () => out.push("\n");
+  const endsWithNewline = () => {
     const last = out[out.length - 1];
-    if (!last) {
-      out.push("\n");
-      return;
-    }
-    if (last.endsWith("\n")) return;
-    out.push("\n");
+    return !!last && last.endsWith("\n");
   };
 
   const walk = (node: Node) => {
@@ -88,8 +84,22 @@ function serializeEditable(el: HTMLElement): string {
     }
 
     const isBlock = BLOCK_TAGS.has(tag);
+    if (!isBlock) {
+      node.childNodes.forEach(walk);
+      return;
+    }
+
+    // Para bloques (DIV/P):
+    // - Conservamos saltos internos (incluye BR).
+    // - Aseguramos exactamente un salto de fin de bloque, salvo que ya exista.
+    const before = out.length;
     node.childNodes.forEach(walk);
-    if (isBlock) pushNewline();
+    const blockProducedContent = out.length > before;
+    if (!blockProducedContent) {
+      pushNewline();
+      return;
+    }
+    if (!endsWithNewline()) pushNewline();
   };
 
   el.childNodes.forEach(walk);
@@ -917,7 +927,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
               </select>
             </label>
           </div>
-          {showPdfDoubleLineBreakWarning && (
+          {/* {showPdfDoubleLineBreakWarning && (
             <p
               className={cx(
                 "mb-2 text-[11px] leading-snug",
@@ -927,7 +937,7 @@ const BlockItem: React.FC<BlockItemProps> = ({
               Aviso: al usar tamano o peso distinto de Base/Normal, el motor PDF
               puede no respetar los dobles saltos de linea.
             </p>
-          )}
+          )} */}
 
           {children}
         </div>
