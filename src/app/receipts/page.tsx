@@ -147,6 +147,12 @@ type ReceiptRow = {
   verification_status?: string | null;
 
   serviceIds?: number[] | null;
+  service_allocations?: Array<{
+    id_receipt_service_allocation?: number;
+    service_id: number;
+    amount_service: number | string;
+    service_currency?: string | null;
+  }> | null;
   clientIds?: number[] | null;
   clientLabels?: string[] | null;
   booking?: {
@@ -227,6 +233,7 @@ type BookingServiceItem = {
   currency?: string | null;
   sale_currency?: string | null;
   sale_price?: number | string | null;
+  cost_price?: number | string | null;
   card_interest?: number | string | null;
   taxableCardInterest?: number | string | null;
   vatOnCardInterest?: number | string | null;
@@ -1022,6 +1029,10 @@ export default function ReceiptsPage() {
           typeof s?.sale_price === "number"
             ? s.sale_price
             : Number(s?.sale_price ?? 0);
+        const cost =
+          typeof s?.cost_price === "number"
+            ? s.cost_price
+            : Number(s?.cost_price ?? 0);
         const cardInt =
           typeof s?.card_interest === "number"
             ? s.card_interest
@@ -1043,6 +1054,7 @@ export default function ReceiptsPage() {
             (Number.isFinite(id) && id > 0 ? `Servicio ${id}` : "Servicio"),
           currency,
           sale_price: sale > 0 ? sale : undefined,
+          cost_price: Number.isFinite(cost) && cost > 0 ? cost : undefined,
           card_interest:
             Number.isFinite(cardInt) && cardInt > 0 ? cardInt : undefined,
           taxableCardInterest:
@@ -1479,6 +1491,7 @@ export default function ReceiptsPage() {
           initialCounterAmount={editingReceipt?.counter_amount ?? null}
           initialCounterCurrency={editingReceipt?.counter_currency ?? null}
           initialClientIds={editingReceipt?.clientIds ?? []}
+          initialServiceAllocations={editingReceipt?.service_allocations ?? []}
           initialPayments={
             editingReceipt ? buildInitialPayments(editingReceipt) : []
           }

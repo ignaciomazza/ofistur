@@ -101,6 +101,31 @@ type ReceiptPaymentLineNormalized = {
   operator_id?: number;
 };
 
+type ReceiptServiceAllocationIn = {
+  service_id: unknown;
+  amount_service: unknown;
+  service_currency?: unknown;
+  amount_payment?: unknown;
+  payment_currency?: unknown;
+  fx_rate?: unknown;
+};
+
+type ReceiptServiceAllocationNormalized = {
+  service_id: number;
+  amount_service: number;
+  service_currency?: string;
+  amount_payment?: number;
+  payment_currency?: string;
+  fx_rate?: number;
+};
+
+type ReceiptServiceAllocationOut = {
+  id_receipt_service_allocation?: number;
+  service_id: number;
+  amount_service: number;
+  service_currency: string;
+};
+
 type ReceiptSchemaFlags = {
   hasPaymentLines: boolean;
   hasPaymentCurrency: boolean;
@@ -148,6 +173,13 @@ function buildReceiptPaymentSelect(
   };
 }
 
+const RECEIPT_SERVICE_ALLOCATION_SELECT = {
+  id_receipt_service_allocation: true,
+  service_id: true,
+  amount_service: true,
+  service_currency: true,
+} satisfies Prisma.ReceiptServiceAllocationSelect;
+
 type ReceiptPostBody = {
   // Opcional si el recibo pertenece a una reserva
   booking?: { id_booking?: number };
@@ -168,6 +200,8 @@ type ReceiptPostBody = {
 
   // Asociaciones
   serviceIds?: number[];
+  serviceAllocations?: ReceiptServiceAllocationIn[];
+  service_allocations?: ReceiptServiceAllocationIn[];
   clientIds?: number[];
 
   // Metadatos legacy (texto)
@@ -383,6 +417,56 @@ const normalizeIdList = (value: unknown): number[] => {
   return Array.from(out);
 };
 
+function parseReceiptServiceAllocations(
+  raw: unknown,
+): ReceiptServiceAllocationNormalized[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ReceiptServiceAllocationNormalized[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const serviceIdRaw =
+      rec.service_id ?? rec.serviceId ?? rec.id_service ?? rec.idService;
+    const amountServiceRaw =
+      rec.amount_service ?? rec.amountService ?? rec.amount ?? 0;
+    const serviceCurrencyRaw =
+      rec.service_currency ?? rec.serviceCurrency ?? rec.currency;
+    const amountPaymentRaw =
+      rec.amount_payment ?? rec.amountPayment ?? rec.counter_amount;
+    const paymentCurrencyRaw =
+      rec.payment_currency ?? rec.paymentCurrency ?? rec.counter_currency;
+    const fxRateRaw = rec.fx_rate ?? rec.fxRate;
+
+    const service_id = Number(serviceIdRaw);
+    const amount_service = Number(amountServiceRaw);
+    const service_currency = isNonEmptyString(serviceCurrencyRaw)
+      ? normalizeCurrency(serviceCurrencyRaw)
+      : undefined;
+    const amount_payment = Number(amountPaymentRaw);
+    const payment_currency = isNonEmptyString(paymentCurrencyRaw)
+      ? normalizeCurrency(paymentCurrencyRaw)
+      : undefined;
+    const fx_rate = Number(fxRateRaw);
+
+    if (!Number.isFinite(service_id) || service_id <= 0) continue;
+    if (!Number.isFinite(amount_service)) continue;
+
+    const hasAmountPayment = Number.isFinite(amount_payment) && amount_payment > 0;
+    const hasFxRate = Number.isFinite(fx_rate) && fx_rate > 0;
+    out.push({
+      service_id: Math.trunc(service_id),
+      amount_service: round2(Math.max(0, amount_service)),
+      ...(service_currency ? { service_currency } : {}),
+      ...(hasAmountPayment ? { amount_payment: round2(amount_payment) } : {}),
+      ...(payment_currency ? { payment_currency } : {}),
+      ...(hasFxRate ? { fx_rate: round2(fx_rate) } : {}),
+    });
+  }
+
+  return out;
+}
+
 const normalizeSaleTotals = (input: unknown): Record<string, number> => {
   const out: Record<string, number> = {};
   if (!input || typeof input !== "object" || Array.isArray(input)) return out;
@@ -465,6 +549,11 @@ function buildSelectedServiceSalesByCurrency(args: {
 
 type ReceiptDebtView = {
   serviceIds?: number[] | null;
+  service_allocations?: Array<{
+    service_id?: number | string | null;
+    amount_service?: number | string | Prisma.Decimal | null;
+    service_currency?: string | null;
+  }> | null;
   amount: number | string | Prisma.Decimal | null;
   amount_currency: string | null;
   payment_fee_amount?: number | string | Prisma.Decimal | null;
@@ -480,7 +569,27 @@ type ReceiptDebtView = {
 function addReceiptToPaidByCurrency(
   target: Record<string, number>,
   receipt: ReceiptDebtView,
+  options?: { selectedServiceIds?: Set<number> },
 ) {
+  const selectedServiceIds = options?.selectedServiceIds;
+  const rawAllocations = Array.isArray(receipt.service_allocations)
+    ? receipt.service_allocations
+    : [];
+
+  if (selectedServiceIds && rawAllocations.length > 0) {
+    for (const alloc of rawAllocations) {
+      const serviceId = Number(alloc?.service_id);
+      if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+      if (!selectedServiceIds.has(Math.trunc(serviceId))) continue;
+      const amount = toNum(alloc?.amount_service ?? 0);
+      if (!Number.isFinite(amount) || Math.abs(amount) <= DEBT_TOLERANCE)
+        continue;
+      const currency = normalizeCurrency(alloc?.service_currency || "ARS");
+      target[currency] = round2((target[currency] || 0) + amount);
+    }
+    return;
+  }
+
   const amountCurrency = normalizeCurrency(receipt.amount_currency || "ARS");
   const parsedAmount = toNum(receipt.amount ?? 0);
   const parsedFee = toNum(receipt.payment_fee_amount ?? 0);
@@ -601,6 +710,41 @@ function normalizePaymentsFromReceipt(r: unknown): ReceiptPaymentOut[] {
   return [];
 }
 
+function normalizeServiceAllocationsFromReceipt(
+  r: unknown,
+): ReceiptServiceAllocationOut[] {
+  if (!r || typeof r !== "object") return [];
+  const obj = r as Record<string, unknown>;
+  const rel = Array.isArray(obj.service_allocations)
+    ? obj.service_allocations
+    : [];
+
+  return rel
+    .map((item) => {
+      const rec = (item ?? {}) as Record<string, unknown>;
+      const serviceId = Number(rec.service_id);
+      const amountRaw = toNum(rec.amount_service);
+      const amountService = Number.isFinite(amountRaw)
+        ? round2(amountRaw)
+        : 0;
+      const currency = normalizeCurrency(rec.service_currency ?? "ARS");
+      const allocIdRaw = Number(rec.id_receipt_service_allocation);
+      return {
+        id_receipt_service_allocation:
+          Number.isFinite(allocIdRaw) && allocIdRaw > 0
+            ? allocIdRaw
+            : undefined,
+        service_id:
+          Number.isFinite(serviceId) && serviceId > 0
+            ? Math.trunc(serviceId)
+            : 0,
+        amount_service: amountService,
+        service_currency: currency,
+      };
+    })
+    .filter((row) => row.service_id > 0);
+}
+
 async function ensureBookingInAgency(
   bookingId: number,
   agencyId: number,
@@ -719,13 +863,16 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       const receipts = await prisma.receipt.findMany({
         where: { booking: { id_booking: bookingId } },
         orderBy: { issue_date: "desc" },
-        ...(schemaFlags.hasPaymentLines
-          ? {
-              include: {
+        include: {
+          ...(schemaFlags.hasPaymentLines
+            ? {
                 payments: { select: buildReceiptPaymentSelect(schemaFlags) },
-              },
-            }
-          : {}),
+              }
+            : {}),
+          service_allocations: {
+            select: RECEIPT_SERVICE_ALLOCATION_SELECT,
+          },
+        },
       });
 
       const normalized = receipts.map((r) => ({
@@ -739,6 +886,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
               })
             : null,
         payments: normalizePaymentsFromReceipt(r),
+        service_allocations: normalizeServiceAllocationsFromReceipt(r),
       }));
 
       return res.status(200).json({ receipts: normalized });
@@ -1074,6 +1222,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         counter_currency: true,
         serviceIds: true,
         clientIds: true,
+        service_allocations: {
+          select: RECEIPT_SERVICE_ALLOCATION_SELECT,
+        },
 
         ...(schemaFlags.hasPaymentLines
           ? {
@@ -1171,6 +1322,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
           ? { ...r.booking, public_id: bookingPublicId }
           : r.booking,
         payments: normalizePaymentsFromReceipt(r),
+        service_allocations: normalizeServiceAllocationsFromReceipt(r),
       };
     });
 
@@ -1246,6 +1398,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     amountString,
     amountCurrency,
     serviceIds: rawServiceIds = [],
+    serviceAllocations: rawServiceAllocationsCamel,
+    service_allocations: rawServiceAllocationsSnake,
     clientIds: rawClientIds = [],
     amount,
     issue_date,
@@ -1277,9 +1431,24 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   const bookingId = Number(booking?.id_booking);
   const hasBooking = Number.isFinite(bookingId);
   const normalizedServiceIds = normalizeIdList(rawServiceIds);
+  const rawServiceAllocations = Array.isArray(rawServiceAllocationsCamel)
+    ? rawServiceAllocationsCamel
+    : Array.isArray(rawServiceAllocationsSnake)
+      ? rawServiceAllocationsSnake
+      : [];
+  const normalizedRequestedServiceAllocations = parseReceiptServiceAllocations(
+    rawServiceAllocations,
+  );
   let normalizedClientIds = normalizeIdList(rawClientIds);
   const allowClientCreditExcess = Boolean(allow_client_credit_excess);
   const requestedClientCreditClientId = toOptionalId(client_credit_client_id);
+
+  if (!hasBooking && normalizedRequestedServiceAllocations.length > 0) {
+    return res.status(400).json({
+      error:
+        "serviceAllocations solo se permite en recibos asociados a una reserva.",
+    });
+  }
 
   if (!isNonEmptyString(concept)) {
     return res.status(400).json({ error: "concept es requerido" });
@@ -1395,6 +1564,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   }
  
   let serviceIdsForReceipt = normalizedServiceIds;
+  let serviceAllocationsForReceipt: ReceiptServiceAllocationNormalized[] = [];
   let clientCreditExcessByCurrency: Record<string, number> = {};
   let clientCreditClientId: number | null = null;
 
@@ -1474,6 +1644,123 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         serviceIdsForReceipt = resolvedServiceIds;
       }
 
+      if (normalizedRequestedServiceAllocations.length > 0) {
+        const serviceMap = new Map(
+          services.map((service) => [service.id_service, service]),
+        );
+        const validServiceIds = new Set(serviceIdsForReceipt);
+        const deduped = new Map<number, ReceiptServiceAllocationNormalized>();
+
+        for (const alloc of normalizedRequestedServiceAllocations) {
+          if (alloc.amount_service <= 0) {
+            return res.status(400).json({
+              error: "serviceAllocations debe tener montos mayores a 0.",
+            });
+          }
+          if (deduped.has(alloc.service_id)) {
+            return res.status(400).json({
+              error: "No podés repetir servicios en serviceAllocations.",
+            });
+          }
+          if (!okServiceIds.has(alloc.service_id)) {
+            return res.status(400).json({
+              error:
+                "Algún servicio de serviceAllocations no pertenece a la reserva.",
+            });
+          }
+          if (!validServiceIds.has(alloc.service_id)) {
+            return res.status(400).json({
+              error:
+                "serviceAllocations solo puede incluir servicios aplicados al recibo.",
+            });
+          }
+
+          const service = serviceMap.get(alloc.service_id);
+          const serviceCurrency = normalizeCurrency(service?.currency || "ARS");
+          const paymentCurrency = alloc.payment_currency
+            ? normalizeCurrency(alloc.payment_currency)
+            : undefined;
+          const amountPayment = toNum(alloc.amount_payment);
+          if (
+            alloc.service_currency &&
+            normalizeCurrency(alloc.service_currency) !== serviceCurrency
+          ) {
+            return res.status(400).json({
+              error:
+                "La moneda de serviceAllocations no coincide con la moneda del servicio.",
+            });
+          }
+          if (paymentCurrency && paymentCurrency !== serviceCurrency) {
+            if (!Number.isFinite(amountPayment) || amountPayment <= 0) {
+              return res.status(400).json({
+                error:
+                  "Cuando la moneda de pago difiere de la moneda del servicio, serviceAllocations debe incluir amount_payment > 0.",
+              });
+            }
+          }
+
+          deduped.set(alloc.service_id, {
+            service_id: alloc.service_id,
+            amount_service: round2(alloc.amount_service),
+            service_currency: serviceCurrency,
+            ...(Number.isFinite(amountPayment) && amountPayment > 0
+              ? { amount_payment: round2(amountPayment) }
+              : {}),
+            ...(paymentCurrency ? { payment_currency: paymentCurrency } : {}),
+            ...(Number.isFinite(alloc.fx_rate) && Number(alloc.fx_rate) > 0
+              ? { fx_rate: round2(Number(alloc.fx_rate)) }
+              : {}),
+          });
+        }
+
+        serviceAllocationsForReceipt = Array.from(deduped.values());
+      } else {
+        serviceAllocationsForReceipt = [];
+      }
+
+      if (serviceAllocationsForReceipt.length > 0) {
+        const availableByCurrency: Record<string, number> = {};
+        addReceiptToPaidByCurrency(availableByCurrency, {
+          amount: amountNum,
+          amount_currency: amountCurrencyISO,
+          payment_fee_amount: paymentFeeAmountNum,
+          base_amount: base_amount ?? null,
+          base_currency: baseCurrencyISO ?? null,
+          payments: normalizedPayments.map((p) => ({
+            amount: p.amount,
+            payment_currency: p.payment_currency,
+            fee_amount: p.fee_amount,
+          })),
+        });
+
+        const allocatedByCurrency = serviceAllocationsForReceipt.reduce<
+          Record<string, number>
+        >((acc, alloc) => {
+          const serviceCurrency = normalizeCurrency(alloc.service_currency || "ARS");
+          const paymentCurrency = normalizeCurrency(
+            alloc.payment_currency || serviceCurrency,
+          );
+          const amountPayment = toNum(alloc.amount_payment);
+          const amountService = toNum(alloc.amount_service);
+          const amount =
+            Number.isFinite(amountPayment) && amountPayment > 0
+              ? amountPayment
+              : amountService;
+          const code = paymentCurrency || serviceCurrency;
+          acc[code] = round2((acc[code] || 0) + amount);
+          return acc;
+        }, {});
+
+        for (const [code, allocated] of Object.entries(allocatedByCurrency)) {
+          const available = availableByCurrency[code] || 0;
+          if (allocated - available > DEBT_TOLERANCE) {
+            return res.status(400).json({
+              error: `serviceAllocations excede el monto disponible en ${code}.`,
+            });
+          }
+        }
+      }
+
       const salesByCurrency = buildSelectedServiceSalesByCurrency({
         selectedServiceIds: resolvedServiceIds,
         services,
@@ -1483,12 +1770,22 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       });
 
       const selectedServiceIdSet = new Set(resolvedServiceIds);
+      const allocationScopeServiceIds = bookingSaleMode
+        ? undefined
+        : selectedServiceIdSet;
       const existingReceipts = await prisma.receipt.findMany({
         where: {
           bookingId_booking: bookingId,
         },
         select: {
           serviceIds: true,
+          service_allocations: {
+            select: {
+              service_id: true,
+              amount_service: true,
+              service_currency: true,
+            },
+          },
           amount: true,
           amount_currency: true,
           payment_fee_amount: true,
@@ -1514,13 +1811,33 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
 
       const paidByCurrency: Record<string, number> = {};
       for (const receipt of existingReceipts) {
+        const receiptAllocationIds = Array.isArray(receipt.service_allocations)
+          ? Array.from(
+              new Set(
+                receipt.service_allocations
+                  .map((alloc) => Number(alloc?.service_id))
+                  .filter((sid) => Number.isFinite(sid) && sid > 0)
+                  .map((sid) => Math.trunc(sid)),
+              ),
+            )
+          : [];
         const receiptServiceIds = normalizeIdList(receipt.serviceIds);
         const appliesToSelection =
           bookingSaleMode ||
-          receiptServiceIds.length === 0 ||
-          receiptServiceIds.some((id) => selectedServiceIdSet.has(id));
+          (receiptAllocationIds.length > 0
+            ? receiptAllocationIds.some((id) => selectedServiceIdSet.has(id))
+            : receiptServiceIds.length === 0 ||
+              receiptServiceIds.some((id) => selectedServiceIdSet.has(id)));
         if (!appliesToSelection) continue;
-        addReceiptToPaidByCurrency(paidByCurrency, receipt);
+        addReceiptToPaidByCurrency(
+          paidByCurrency,
+          receipt,
+          allocationScopeServiceIds
+            ? {
+                selectedServiceIds: allocationScopeServiceIds,
+              }
+            : undefined,
+        );
       }
 
       const remainingBeforeCurrent: Record<string, number> = {};
@@ -1553,12 +1870,17 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         payment_fee_amount: paymentFeeAmountNum,
         base_amount: base_amount ?? null,
         base_currency: baseCurrencyISO ?? null,
+        service_allocations: serviceAllocationsForReceipt,
         payments: normalizedPayments.map((p) => ({
           amount: p.amount,
           payment_currency: p.payment_currency,
           fee_amount: p.fee_amount,
         })),
-      });
+      }, allocationScopeServiceIds
+        ? {
+            selectedServiceIds: allocationScopeServiceIds,
+          }
+        : undefined);
 
       const overpaidCurrencies: string[] = [];
       const overpaidByCurrency: Record<string, number> = {};
@@ -1735,9 +2057,19 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
               : {}),
           })),
         });
-      } else {
-        // Si no vinieron payments, no forzamos crear ReceiptPayment (así no “cambiás” históricos)
-        // Si después querés “uniformar”, lo hacemos con un script/migración controlada.
+      }
+
+      if (serviceAllocationsForReceipt.length > 0) {
+        await tx.receiptServiceAllocation.createMany({
+          data: serviceAllocationsForReceipt.map((alloc) => ({
+            receipt_id: created.id_receipt,
+            service_id: alloc.service_id,
+            amount_service: new Prisma.Decimal(Number(alloc.amount_service)),
+            service_currency: normalizeCurrency(
+              alloc.service_currency || "ARS",
+            ),
+          })),
+        });
       }
 
       return created;
@@ -1748,13 +2080,16 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
 
     const full = await prisma.receipt.findUnique({
       where: { id_receipt: createdReceipt.id_receipt },
-      ...(schemaFlags.hasPaymentLines
-        ? {
-            include: {
+      include: {
+        ...(schemaFlags.hasPaymentLines
+          ? {
               payments: { select: buildReceiptPaymentSelect(schemaFlags) },
-            },
-          }
-        : {}),
+            }
+          : {}),
+        service_allocations: {
+          select: RECEIPT_SERVICE_ALLOCATION_SELECT,
+        },
+      },
     });
 
     const createdPublicId =
@@ -1781,6 +2116,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
             ...full,
             public_id: createdPublicId,
             payments: normalizePaymentsFromReceipt(full),
+            service_allocations: normalizeServiceAllocationsFromReceipt(full),
           }
         : { ...createdReceipt, public_id: createdPublicId },
       ...(clientCreditExcessPayload

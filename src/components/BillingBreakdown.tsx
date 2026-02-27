@@ -18,6 +18,7 @@ interface BillingBreakdownProps {
   transferFeePct?: number;
   allowBreakdownOverrideEdit?: boolean;
   initialBreakdownOverride?: Partial<BillingBreakdownOverride> | null;
+  showNetCommissionTotal?: boolean;
 }
 
 type BreakdownField = keyof BillingBreakdownOverride;
@@ -147,6 +148,7 @@ export default function BillingBreakdown({
   transferFeePct = 0.024,
   allowBreakdownOverrideEdit = false,
   initialBreakdownOverride = null,
+  showNetCommissionTotal = true,
 }: BillingBreakdownProps) {
   const lastPayloadRef = useRef<BillingData | null>(null);
   const onBillingUpdateRef = useRef(onBillingUpdate);
@@ -578,20 +580,22 @@ export default function BillingBreakdown({
         </div>
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/20 p-3">
-        <div className="text-sm opacity-70">
-          Total Comisión (sin IVA) – neta de Costos Bancarios
+      {showNetCommissionTotal && (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/20 p-3">
+          <div className="text-sm opacity-70">
+            Total Comisión (sin IVA) – neta de Costos Bancarios
+          </div>
+          <div className="text-lg font-semibold tabular-nums">
+            {f(
+              round(
+                activeBreakdown.totalCommissionWithoutVAT -
+                  activeBreakdown.transferFeeAmount,
+                2,
+              ),
+            )}
+          </div>
         </div>
-        <div className="text-lg font-semibold tabular-nums">
-          {f(
-            round(
-              activeBreakdown.totalCommissionWithoutVAT -
-                activeBreakdown.transferFeeAmount,
-              2,
-            ),
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

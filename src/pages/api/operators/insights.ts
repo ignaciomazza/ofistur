@@ -256,27 +256,6 @@ function sumSalesWithInterest(services: {
   return totals;
 }
 
-function sumPaid(receipts: {
-  amount: unknown;
-  amount_currency: unknown;
-  base_amount?: unknown;
-  base_currency?: unknown;
-  payment_fee_amount?: unknown;
-}[]): MoneyMap {
-  const totals: MoneyMap = {};
-  receipts.forEach((rec) => {
-    const { cur, val } = pickMoney(
-      rec.amount,
-      rec.amount_currency,
-      rec.base_amount,
-      rec.base_currency,
-    );
-    const fee = Number(rec.payment_fee_amount) || 0;
-    addMoney(totals, cur, val + fee);
-  });
-  return totals;
-}
-
 function sumCosts(services: {
   currency: string;
   cost_price: unknown;
@@ -742,6 +721,13 @@ export default async function handler(
                 base_currency: true,
                 payment_fee_amount: true,
                 serviceIds: true,
+                service_allocations: {
+                  select: {
+                    service_id: true,
+                    amount_service: true,
+                    service_currency: true,
+                  },
+                },
               },
             },
           },
@@ -751,6 +737,20 @@ export default async function handler(
     const receiptedServiceIds = new Set<number>();
     bookings.forEach((booking) => {
       booking.Receipt.forEach((rec) => {
+        const allocations = Array.isArray(rec.service_allocations)
+          ? rec.service_allocations
+          : [];
+        if (allocations.length > 0) {
+          allocations.forEach((alloc) => {
+            const sid = Number(alloc.service_id);
+            const amount = Number(alloc.amount_service ?? 0);
+            if (!Number.isFinite(sid) || sid <= 0) return;
+            if (!Number.isFinite(amount) || amount <= 0) return;
+            if (serviceIdSet.has(sid)) receiptedServiceIds.add(sid);
+          });
+          return;
+        }
+
         (rec.serviceIds || []).forEach((sid) => {
           if (serviceIdSet.has(sid)) receiptedServiceIds.add(sid);
         });
@@ -769,10 +769,40 @@ export default async function handler(
         operatorServiceIds.has(svc.id_service),
       );
       const saleWithInterest = sumSalesWithInterest(operatorServices);
-      const relevantReceipts = booking.Receipt.filter((rec) =>
-        (rec.serviceIds || []).some((sid) => operatorServiceIds.has(sid)),
-      );
-      const paid = sumPaid(relevantReceipts);
+      const paid: MoneyMap = {};
+      booking.Receipt.forEach((rec) => {
+        const allocations = Array.isArray(rec.service_allocations)
+          ? rec.service_allocations
+          : [];
+        if (allocations.length > 0) {
+          allocations.forEach((alloc) => {
+            const sid = Number(alloc.service_id);
+            const amount = Number(alloc.amount_service ?? 0);
+            if (!Number.isFinite(sid) || sid <= 0) return;
+            if (!operatorServiceIds.has(sid)) return;
+            if (!Number.isFinite(amount) || amount <= 0) return;
+            const serviceCurrency = serviceMetaById.get(sid)?.currency;
+            const allocCurrency = String(
+              serviceCurrency || alloc.service_currency || "ARS",
+            ).toUpperCase();
+            addMoney(paid, allocCurrency, amount);
+          });
+          return;
+        }
+
+        const appliesToOperator = (rec.serviceIds || []).some((sid) =>
+          operatorServiceIds.has(sid),
+        );
+        if (!appliesToOperator) return;
+        const { cur, val } = pickMoney(
+          rec.amount,
+          rec.amount_currency,
+          rec.base_amount,
+          rec.base_currency,
+        );
+        const fee = Number(rec.payment_fee_amount) || 0;
+        addMoney(paid, cur, val + fee);
+      });
       const debt = subtractMoneyMaps(saleWithInterest, paid);
 
       const otherOperators = new Map<

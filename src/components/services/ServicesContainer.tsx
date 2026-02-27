@@ -42,11 +42,13 @@ const LazyBookingFilesSection = dynamic(
 );
 
 import { authFetch } from "@/utils/authFetch";
+import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
 import {
   canAccessBookingComponent,
   normalizeBookingComponentRules,
   type BookingComponentKey,
 } from "@/utils/permissions";
+import { parseAmountInput } from "@/utils/receipts/receiptForm";
 import { toDateKeyInBuenosAiresLegacySafe } from "@/lib/buenosAiresDate";
 import type { CreditNoteWithItems } from "@/services/creditNotes";
 import type {
@@ -105,6 +107,7 @@ type BookingServiceItem = {
   currency?: string | null;
   sale_currency?: string | null;
   sale_price?: number | string | null;
+  cost_price?: number | string | null;
   card_interest?: number | string | null;
   taxableCardInterest?: number | string | null;
   vatOnCardInterest?: number | string | null;
@@ -845,7 +848,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     const next: Record<string, string> = {};
     for (const cur of saleTotalCurrencies) {
       const val = bookingSaleTotals[cur];
-      next[cur] = val != null ? String(val) : "";
+      next[cur] = val != null ? formatMoneyInput(String(val), cur) : "";
     }
     setSaleTotalsDraft(next);
   }, [bookingSaleTotals, saleTotalCurrencies, useBookingSaleTotal]);
@@ -857,8 +860,8 @@ export default function ServicesContainer(props: ServicesContainerProps) {
         .toUpperCase()
         .trim();
       if (!key) continue;
-      const n = Number(String(val).replace(",", "."));
-      if (!Number.isFinite(n) || n < 0) continue;
+      const n = parseAmountInput(String(val ?? ""));
+      if (n == null || !Number.isFinite(n) || n < 0) continue;
       out[key] = n;
     }
     return out;
@@ -870,16 +873,6 @@ export default function ServicesContainer(props: ServicesContainerProps) {
       JSON.stringify(normalizedSaleTotalsDraft)
     );
   }, [bookingSaleTotals, normalizedSaleTotalsDraft]);
-
-  const effectiveUseBookingSaleTotal = useMemo(
-    () => useBookingSaleTotalOverride ?? inheritedUseBookingSaleTotal,
-    [inheritedUseBookingSaleTotal, useBookingSaleTotalOverride],
-  );
-
-  const saleModeDirty = useMemo(
-    () => useBookingSaleTotal !== effectiveUseBookingSaleTotal,
-    [effectiveUseBookingSaleTotal, useBookingSaleTotal],
-  );
 
   const nextSaleTotalOverridePayload = useMemo(() => {
     return useBookingSaleTotal === inheritedUseBookingSaleTotal
@@ -1463,16 +1456,23 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     }
   };
 
-  const handleSaleModeSave = async () => {
-    if (!booking || !token || !canEditSaleMode) return;
+  const handleSaleModeSave = async (
+    nextUseBookingSaleTotal: boolean,
+    previousUseBookingSaleTotal?: boolean,
+  ) => {
+    if (!booking || !token || !canEditSaleMode || saleModeSaving) return;
     setSaleModeSaving(true);
     try {
+      const payloadOverride =
+        nextUseBookingSaleTotal === inheritedUseBookingSaleTotal
+          ? null
+          : nextUseBookingSaleTotal;
       const res = await authFetch(
         `/api/bookings/${booking.id_booking}`,
         {
           method: "PATCH",
           body: JSON.stringify({
-            use_booking_sale_total_override: nextSaleTotalOverridePayload,
+            use_booking_sale_total_override: payloadOverride,
           }),
         },
         token ?? undefined,
@@ -1490,6 +1490,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
       onBookingUpdated?.(updated);
       toast.success("Modo de venta guardado");
     } catch (e) {
+      if (typeof previousUseBookingSaleTotal === "boolean") {
+        setUseBookingSaleTotal(previousUseBookingSaleTotal);
+      }
       const msg =
         e instanceof Error ? e.message : "Error al guardar modo de venta";
       toast.error(msg);
@@ -2306,29 +2309,37 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {canEditSaleMode ? (
-                        <>
-                          <label className="inline-flex items-center gap-2 rounded-full border border-sky-900/15 bg-white/70 px-3 py-1 text-xs font-medium text-sky-950 dark:border-white/10 dark:bg-white/10 dark:text-white">
-                            <input
-                              type="checkbox"
-                              checked={useBookingSaleTotal}
-                              onChange={(e) =>
-                                setUseBookingSaleTotal(e.target.checked)
-                              }
-                              className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 dark:border-white/20 dark:bg-white/10"
-                            />
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-sky-950/80 dark:text-white/80">
                             {useBookingSaleTotal ? "Activo" : "Inactivo"}
-                          </label>
+                          </span>
                           <button
                             type="button"
-                            onClick={handleSaleModeSave}
-                            disabled={!saleModeDirty || saleModeSaving}
-                            className="rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
+                            role="switch"
+                            aria-checked={useBookingSaleTotal}
+                            onClick={() => {
+                              const previous = useBookingSaleTotal;
+                              const next = !useBookingSaleTotal;
+                              setUseBookingSaleTotal(next);
+                              void handleSaleModeSave(next, previous);
+                            }}
+                            disabled={saleModeSaving}
+                            className={[
+                              "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                              useBookingSaleTotal
+                                ? "bg-sky-500/70"
+                                : "bg-sky-950/20 dark:bg-white/20",
+                              saleModeSaving ? "cursor-not-allowed opacity-60" : "",
+                            ].join(" ")}
                           >
-                            {saleModeSaving
-                              ? "Guardando modo..."
-                              : "Guardar modo"}
+                            <span
+                              className={[
+                                "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+                                useBookingSaleTotal ? "translate-x-4" : "translate-x-1",
+                              ].join(" ")}
+                            />
                           </button>
-                        </>
+                        </div>
                       ) : (
                         <span className="rounded-full border border-sky-900/10 bg-white/70 px-3 py-1 text-[11px] font-medium text-sky-900/80 dark:border-white/10 dark:bg-white/10 dark:text-white/70">
                           Modo heredado de configuración general
@@ -2337,59 +2348,38 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                     </div>
                   </div>
 
-                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium">
-                    <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
-                      Global:{" "}
-                      {inheritedUseBookingSaleTotal ? "Activo" : "Inactivo"}
-                    </span>
-                    <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
-                      Reserva:{" "}
-                      {useBookingSaleTotalOverride == null
-                        ? "Heredado"
-                        : useBookingSaleTotalOverride
-                          ? "Override Activo"
-                          : "Override Inactivo"}
-                    </span>
-                  </div>
-
                   {useBookingSaleTotal && (
-                    <>
-                      <div className="mt-4 flex items-center justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSaleTotalsSave}
-                          disabled={!saleTotalsDirty || saleTotalsSaving}
-                          className="rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
-                        >
-                          {saleTotalsSaving
-                            ? "Guardando venta..."
-                            : "Guardar venta"}
-                        </button>
-                      </div>
-                      <div className="mt-4 space-y-2 rounded-2xl border border-sky-900/10 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
-                        {saleTotalCurrencies.map((cur) => (
-                          <div key={cur} className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              inputMode="decimal"
-                              step="0.01"
-                              min="0"
-                              value={saleTotalsDraft[cur] ?? ""}
-                              onChange={(e) =>
-                                setSaleTotalsDraft((prev) => ({
-                                  ...prev,
-                                  [cur]: e.target.value,
-                                }))
-                              }
-                              className="w-full rounded-2xl border border-sky-900/10 bg-white p-2 px-3 text-sm shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 sm:max-w-[160px]"
-                            />
-                            <span className="rounded-full border border-sky-900/10 bg-white/75 px-2 py-1 text-xs font-semibold text-sky-900 dark:border-white/10 dark:bg-white/10 dark:text-white">
-                              {cur}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </>
+                    <div className="mt-4 space-y-2 rounded-2xl border border-sky-900/10 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                      {saleTotalCurrencies.map((cur, idx) => (
+                        <div key={cur} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={saleTotalsDraft[cur] ?? ""}
+                            onChange={(e) =>
+                              setSaleTotalsDraft((prev) => ({
+                                ...prev,
+                                [cur]: formatMoneyInput(e.target.value, cur, {
+                                  preferDotDecimal: shouldPreferDotDecimal(e),
+                                }),
+                              }))
+                            }
+                            placeholder={`${cur} 0,00`}
+                            className="w-full rounded-2xl border border-sky-900/10 bg-white p-2 px-3 text-sm shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10"
+                          />
+                          {idx === 0 && (
+                            <button
+                              type="button"
+                              onClick={handleSaleTotalsSave}
+                              disabled={!saleTotalsDirty || saleTotalsSaving}
+                              className="shrink-0 rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
+                            >
+                              {saleTotalsSaving ? "Guardando..." : "Guardar venta"}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               )}
@@ -2446,31 +2436,41 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
                               {canEditSaleMode ? (
-                                <>
-                                  <label className="inline-flex items-center gap-2 rounded-full border border-sky-900/15 bg-white/70 px-3 py-1 text-xs font-medium text-sky-950 dark:border-white/10 dark:bg-white/10 dark:text-white">
-                                    <input
-                                      type="checkbox"
-                                      checked={useBookingSaleTotal}
-                                      onChange={(e) =>
-                                        setUseBookingSaleTotal(e.target.checked)
-                                      }
-                                      className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 dark:border-white/20 dark:bg-white/10"
-                                    />
-                                    {useBookingSaleTotal
-                                      ? "Activo"
-                                      : "Inactivo"}
-                                  </label>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium text-sky-950/80 dark:text-white/80">
+                                    {useBookingSaleTotal ? "Activo" : "Inactivo"}
+                                  </span>
                                   <button
                                     type="button"
-                                    onClick={handleSaleModeSave}
-                                    disabled={!saleModeDirty || saleModeSaving}
-                                    className="rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
+                                    role="switch"
+                                    aria-checked={useBookingSaleTotal}
+                                    onClick={() => {
+                                      const previous = useBookingSaleTotal;
+                                      const next = !useBookingSaleTotal;
+                                      setUseBookingSaleTotal(next);
+                                      void handleSaleModeSave(next, previous);
+                                    }}
+                                    disabled={saleModeSaving}
+                                    className={[
+                                      "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                                      useBookingSaleTotal
+                                        ? "bg-sky-500/70"
+                                        : "bg-sky-950/20 dark:bg-white/20",
+                                      saleModeSaving
+                                        ? "cursor-not-allowed opacity-60"
+                                        : "",
+                                    ].join(" ")}
                                   >
-                                    {saleModeSaving
-                                      ? "Guardando modo..."
-                                      : "Guardar modo"}
+                                    <span
+                                      className={[
+                                        "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+                                        useBookingSaleTotal
+                                          ? "translate-x-4"
+                                          : "translate-x-1",
+                                      ].join(" ")}
+                                    />
                                   </button>
-                                </>
+                                </div>
                               ) : (
                                 <span className="rounded-full border border-sky-900/10 bg-white/70 px-3 py-1 text-[11px] font-medium text-sky-900/80 dark:border-white/10 dark:bg-white/10 dark:text-white/70">
                                   Modo heredado de configuración general
@@ -2479,66 +2479,47 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                             </div>
                           </div>
 
-                          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium">
-                            <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
-                              Global:{" "}
-                              {inheritedUseBookingSaleTotal
-                                ? "Activo"
-                                : "Inactivo"}
-                            </span>
-                            <span className="rounded-full border border-sky-900/10 bg-white/70 px-2 py-1 dark:border-white/10 dark:bg-white/10">
-                              Reserva:{" "}
-                              {useBookingSaleTotalOverride == null
-                                ? "Heredado"
-                                : useBookingSaleTotalOverride
-                                  ? "Override Activo"
-                                  : "Override Inactivo"}
-                            </span>
-                          </div>
-
                           {useBookingSaleTotal && (
-                            <>
-                              <div className="mt-4 flex items-center justify-end">
-                                <button
-                                  type="button"
-                                  onClick={handleSaleTotalsSave}
-                                  disabled={
-                                    !saleTotalsDirty || saleTotalsSaving
-                                  }
-                                  className="rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
-                                >
-                                  {saleTotalsSaving
-                                    ? "Guardando venta..."
-                                    : "Guardar venta"}
-                                </button>
-                              </div>
-                              <div className="mt-4 space-y-2 rounded-2xl border border-sky-900/10 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
-                                {saleTotalCurrencies.map((cur) => (
-                                  <div
-                                    key={cur}
-                                    className="flex items-center gap-2"
-                                  >
-                                    <input
-                                      type="number"
-                                      inputMode="decimal"
-                                      step="0.01"
-                                      min="0"
-                                      value={saleTotalsDraft[cur] ?? ""}
-                                      onChange={(e) =>
-                                        setSaleTotalsDraft((prev) => ({
-                                          ...prev,
-                                          [cur]: e.target.value,
-                                        }))
+                            <div className="mt-4 space-y-2 rounded-2xl border border-sky-900/10 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                              {saleTotalCurrencies.map((cur, idx) => (
+                                <div key={cur} className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={saleTotalsDraft[cur] ?? ""}
+                                    onChange={(e) =>
+                                      setSaleTotalsDraft((prev) => ({
+                                        ...prev,
+                                        [cur]: formatMoneyInput(
+                                          e.target.value,
+                                          cur,
+                                          {
+                                            preferDotDecimal:
+                                              shouldPreferDotDecimal(e),
+                                          },
+                                        ),
+                                      }))
+                                    }
+                                    placeholder={`${cur} 0,00`}
+                                    className="w-full rounded-2xl border border-sky-900/10 bg-white p-2 px-3 text-sm shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10"
+                                  />
+                                  {idx === 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={handleSaleTotalsSave}
+                                      disabled={
+                                        !saleTotalsDirty || saleTotalsSaving
                                       }
-                                      className="w-full rounded-2xl border border-sky-900/10 bg-white p-2 px-3 text-sm shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 sm:max-w-[160px]"
-                                    />
-                                    <span className="rounded-full border border-sky-900/10 bg-white/75 px-2 py-1 text-xs font-semibold text-sky-900 dark:border-white/10 dark:bg-white/10 dark:text-white">
-                                      {cur}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </>
+                                      className="shrink-0 rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
+                                    >
+                                      {saleTotalsSaving
+                                        ? "Guardando..."
+                                        : "Guardar venta"}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           )}
                         </div>
                       ) : null
@@ -2625,6 +2606,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                           editingReceipt?.counter_currency ?? null
                         }
                         initialClientIds={editingReceipt?.clientIds ?? []}
+                        initialServiceAllocations={
+                          editingReceipt?.service_allocations ?? []
+                        }
                         initialPayments={
                           editingReceipt
                             ? buildInitialReceiptPayments(editingReceipt)
@@ -2655,6 +2639,10 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                                 typeof s?.sale_price === "number"
                                   ? s.sale_price
                                   : Number(s?.sale_price ?? 0);
+                              const cost =
+                                typeof s?.cost_price === "number"
+                                  ? s.cost_price
+                                  : Number(s?.cost_price ?? 0);
                               const cardInt =
                                 typeof s?.card_interest === "number"
                                   ? s.card_interest
@@ -2678,6 +2666,10 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                                     : "Servicio"),
                                 currency,
                                 sale_price: sale > 0 ? sale : undefined,
+                                cost_price:
+                                  Number.isFinite(cost) && cost > 0
+                                    ? cost
+                                    : undefined,
                                 card_interest:
                                   Number.isFinite(cardInt) && cardInt > 0
                                     ? cardInt

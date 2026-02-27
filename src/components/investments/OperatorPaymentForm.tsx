@@ -308,7 +308,8 @@ const formatMoneyInput = (
   curr?: string | null,
   options?: { preferDotDecimal?: boolean },
 ) => {
-  const cleaned = String(raw || "").replace(/[^\d.,]/g, "");
+  const rawText = String(raw || "");
+  const cleaned = rawText.replace(/[^\d.,]/g, "");
   if (!/\d/.test(cleaned)) return "";
 
   const lastComma = cleaned.lastIndexOf(",");
@@ -318,8 +319,11 @@ const formatMoneyInput = (
   let preferDotDecimal = Boolean(options?.preferDotDecimal);
 
   if (!hasComma && hasDot && !preferDotDecimal) {
-    const decimals = cleaned.length - lastDot - 1;
-    preferDotDecimal = decimals > 0 && decimals <= 2;
+    const looksRawNumeric = !/[A-Za-z$]/.test(rawText) && !/\s/.test(rawText);
+    if (looksRawNumeric) {
+      const decimals = cleaned.length - lastDot - 1;
+      preferDotDecimal = decimals > 0 && decimals <= 2;
+    }
   }
 
   let sepIndex = -1;

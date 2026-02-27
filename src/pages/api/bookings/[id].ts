@@ -397,7 +397,7 @@ export default async function handler(
           simple_companions: { include: { category: true } },
           services: { include: { operator: true } },
           invoices: true,
-          Receipt: true,
+          Receipt: { include: { service_allocations: true } },
         },
       });
       const public_id =

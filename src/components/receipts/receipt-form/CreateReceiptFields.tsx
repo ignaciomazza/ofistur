@@ -9,11 +9,19 @@ import type {
   FinanceCurrency,
   FinancePaymentMethod,
   ReceiptPaymentFeeMode,
+  ServiceLite,
 } from "@/types/receipts";
 import type { Client } from "@/types";
 import Spinner from "@/components/Spinner";
 import { parseAmountInput } from "@/utils/receipts/receiptForm";
-import { Field, Section, inputBase } from "./primitives";
+import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
+import {
+  Field,
+  Section,
+  inputBase,
+  pillBase,
+  pillNeutral,
+} from "./primitives";
 
 type CreditAccountOption = {
   id_credit_account: number;
@@ -37,69 +45,7 @@ type PaymentDraft = {
   credit_account_id: number | null;
 };
 
-const moneyPrefix = (curr?: string | null) => {
-  const code = String(curr || "")
-    .trim()
-    .toUpperCase();
-  if (code === "ARS") return "$";
-  if (code === "USD") return "US$";
-  return code || "$";
-};
-
-const formatIntegerEs = (digits: string) => {
-  const normalized = digits.replace(/^0+(?=\d)/, "") || "0";
-  return normalized.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-};
-
-const formatMoneyInput = (
-  raw: string,
-  curr?: string | null,
-  options?: { preferDotDecimal?: boolean },
-) => {
-  const cleaned = String(raw || "").replace(/[^\d.,]/g, "");
-  if (!/\d/.test(cleaned)) return "";
-
-  const lastComma = cleaned.lastIndexOf(",");
-  const lastDot = cleaned.lastIndexOf(".");
-  const hasComma = lastComma >= 0;
-  const hasDot = lastDot >= 0;
-  let preferDotDecimal = Boolean(options?.preferDotDecimal);
-
-  if (!hasComma && hasDot && !preferDotDecimal) {
-    const decimals = cleaned.length - lastDot - 1;
-    preferDotDecimal = decimals > 0 && decimals <= 2;
-  }
-
-  let sepIndex = -1;
-  let intDigits = cleaned.replace(/[^\d]/g, "");
-  let decDigits = "";
-  let hasDecimal = false;
-
-  if (hasComma) {
-    sepIndex = lastComma;
-  } else if (hasDot && preferDotDecimal) {
-    sepIndex = lastDot;
-  }
-
-  if (sepIndex >= 0) {
-    const before = cleaned.slice(0, sepIndex).replace(/[^\d]/g, "");
-    const afterRaw = cleaned.slice(sepIndex + 1).replace(/[^\d]/g, "");
-    hasDecimal = true;
-    intDigits = before || "0";
-    decDigits = afterRaw.slice(0, 2);
-  }
-
-  const intPart = formatIntegerEs(intDigits);
-  const decPart = hasDecimal ? `,${decDigits}` : "";
-  return `${moneyPrefix(curr)} ${intPart}${decPart}`;
-};
-
-const shouldPreferDotDecimal = (ev: React.ChangeEvent<HTMLInputElement>) => {
-  const native = ev.nativeEvent as InputEvent | undefined;
-  const char = typeof native?.data === "string" ? native.data : "";
-  if (char === "." || char === ",") return true;
-  return native?.inputType === "insertFromPaste";
-};
+type ServiceAllocationPresetMode = "manual" | "split_payment" | "use_costs";
 
 export default function CreateReceiptFields(props: {
   token: string | null;
@@ -192,6 +138,25 @@ export default function CreateReceiptFields(props: {
   counterCurrency: string;
   setCounterCurrency: (v: string) => void;
 
+  showServiceAllocationSection: boolean;
+  allocationServices: ServiceLite[];
+  manualServiceAllocationsEnabled: boolean;
+  setManualServiceAllocationsEnabled: (next: boolean) => void;
+  serviceAllocationAmountsById: Record<number, string>;
+  setServiceAllocationAmount: (serviceId: number, value: string) => void;
+  serviceAllocationPaymentAmountsById: Record<number, string>;
+  setServiceAllocationPaymentAmount: (serviceId: number, value: string) => void;
+  serviceAllocationPaymentCurrencyById: Record<number, string>;
+  setServiceAllocationPaymentCurrency: (
+    serviceId: number,
+    currencyCode: string,
+  ) => void;
+  allocationPaymentCurrencyOptions: string[];
+  selectedServiceCurrencies: string[];
+  serviceAllocationPresetMode: ServiceAllocationPresetMode;
+  applyServiceAllocationPreset: (preset: ServiceAllocationPresetMode) => void;
+  paymentAvailableForAllocationByCurrency: Record<string, number>;
+
   // errors
   errors: Record<string, string>;
 }) {
@@ -265,6 +230,22 @@ export default function CreateReceiptFields(props: {
     counterCurrency,
     setCounterCurrency,
 
+    showServiceAllocationSection,
+    allocationServices,
+    manualServiceAllocationsEnabled,
+    setManualServiceAllocationsEnabled,
+    serviceAllocationAmountsById,
+    setServiceAllocationAmount,
+    serviceAllocationPaymentAmountsById,
+    setServiceAllocationPaymentAmount,
+    serviceAllocationPaymentCurrencyById,
+    setServiceAllocationPaymentCurrency,
+    allocationPaymentCurrencyOptions,
+    selectedServiceCurrencies,
+    serviceAllocationPresetMode,
+    applyServiceAllocationPreset,
+    paymentAvailableForAllocationByCurrency,
+
     errors,
   } = props;
 
@@ -276,6 +257,67 @@ export default function CreateReceiptFields(props: {
     if (raw && cur) return `${raw} ${cur}`;
     return "—";
   };
+  const selectedAllocationCurrency =
+    allocationPaymentCurrencyOptions[0] || selectedServiceCurrencies[0] || "ARS";
+  const paymentAvailableForSelectedCurrency =
+    paymentAvailableForAllocationByCurrency[selectedAllocationCurrency] || 0;
+  const normalizeCode = (raw: string | null | undefined) =>
+    String(raw || "")
+      .trim()
+      .toUpperCase();
+  const allocationSelectableCurrencies = Array.from(
+    new Set(
+      [
+        ...currencies.filter((c) => c.enabled).map((c) => normalizeCode(c.code)),
+        ...allocationPaymentCurrencyOptions.map((code) => normalizeCode(code)),
+        selectedAllocationCurrency,
+      ].filter(Boolean),
+    ),
+  );
+  const allocatedByCurrency = allocationServices.reduce<Record<string, number>>(
+    (acc, service) => {
+      const serviceCurrency = normalizeCode(service.currency || "ARS") || "ARS";
+      const paymentCurrency =
+        normalizeCode(serviceAllocationPaymentCurrencyById[service.id_service]) ||
+        serviceCurrency;
+      const amountService = parseAmountInput(
+        serviceAllocationAmountsById[service.id_service] || "",
+      );
+      if (amountService == null || amountService <= 0) return acc;
+      const amountPayment = parseAmountInput(
+        serviceAllocationPaymentAmountsById[service.id_service] || "",
+      );
+      const allocated =
+        amountPayment != null && amountPayment > 0 ? amountPayment : amountService;
+      acc[paymentCurrency] = (acc[paymentCurrency] || 0) + allocated;
+      return acc;
+    },
+    {},
+  );
+  const allocationDeltaWarnings = Array.from(
+    new Set([
+      ...Object.keys(paymentAvailableForAllocationByCurrency),
+      ...Object.keys(allocatedByCurrency),
+    ]),
+  )
+    .map((code) => {
+      const available = paymentAvailableForAllocationByCurrency[code] || 0;
+      const allocated = allocatedByCurrency[code] || 0;
+      const delta = allocated - available;
+      if (Math.abs(delta) <= 0.01) return null;
+      return {
+        code,
+        available,
+        allocated,
+        delta,
+      };
+    })
+    .filter(Boolean) as Array<{
+    code: string;
+    available: number;
+    allocated: number;
+    delta: number;
+  }>;
 
   return (
     <>
@@ -975,6 +1017,257 @@ export default function CreateReceiptFields(props: {
               <p className="mt-1 text-xs text-red-600">{errors.counter}</p>
             )}
           </Field>
+        </Section>
+      )}
+
+      {showServiceAllocationSection && (
+        <Section
+          title="Ajustar monto por servicio"
+          desc="Asigná cuánto del cobro corresponde a cada servicio seleccionado."
+        >
+          <div className="space-y-3 md:col-span-2">
+            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div>
+                <p className="text-sm font-medium">Ajuste por servicio</p>
+                <p className="text-xs text-sky-950/70 dark:text-white/70">
+                  Activalo para distribuir el cobro por servicio.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={manualServiceAllocationsEnabled}
+                onClick={() =>
+                  allocationServices.length > 0 &&
+                  setManualServiceAllocationsEnabled(
+                    !manualServiceAllocationsEnabled,
+                  )
+                }
+                disabled={allocationServices.length === 0}
+                className={[
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                  manualServiceAllocationsEnabled
+                    ? "bg-sky-500/70"
+                    : "bg-sky-950/20 dark:bg-white/20",
+                  allocationServices.length === 0
+                    ? "cursor-not-allowed opacity-60"
+                    : "",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                    manualServiceAllocationsEnabled ? "translate-x-5" : "translate-x-1",
+                  ].join(" ")}
+                />
+              </button>
+            </div>
+
+            {allocationServices.length === 0 && (
+              <p className="text-xs text-sky-950/70 dark:text-white/70">
+                Seleccioná servicios para poder asignar montos.
+              </p>
+            )}
+
+            {manualServiceAllocationsEnabled && allocationServices.length > 0 && (
+              <>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          { value: "manual", label: "Manual" },
+                          {
+                            value: "split_payment",
+                            label: "Dividir monto del pago",
+                          },
+                          { value: "use_costs", label: "Usar costos" },
+                        ] as Array<{
+                          value: ServiceAllocationPresetMode;
+                          label: string;
+                        }>
+                      ).map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => applyServiceAllocationPreset(opt.value)}
+                          className={[
+                            "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                            serviceAllocationPresetMode === opt.value
+                              ? "border-sky-300/60 bg-sky-500/15 text-sky-700 dark:text-sky-200"
+                              : "border-white/20 bg-white/10 text-sky-950/80 hover:bg-white/15 dark:text-white/80",
+                          ].join(" ")}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <p className="text-xs text-sky-950/70 dark:text-white/70">
+                      Disponible (cobro + CF) en {selectedAllocationCurrency}:{" "}
+                      {formatNum(
+                        paymentAvailableForSelectedCurrency,
+                        selectedAllocationCurrency,
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {allocationDeltaWarnings.length > 0 && (
+                  <div className="rounded-2xl border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                    {allocationDeltaWarnings.map((warn) => (
+                      <p key={`alloc-delta-${warn.code}`}>
+                        En {warn.code}: asignado{" "}
+                        <b>{formatNum(warn.allocated, warn.code)}</b> vs cobro+CF{" "}
+                        <b>{formatNum(warn.available, warn.code)}</b>{" "}
+                        ({warn.delta > 0 ? "exceso" : "faltante"}{" "}
+                        {formatNum(Math.abs(warn.delta), warn.code)}).
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {allocationServices.map((service) => {
+                    const serviceCurrency = (
+                      service.currency || "ARS"
+                    ).toUpperCase();
+                    const paymentCurrency = (
+                      serviceAllocationPaymentCurrencyById[service.id_service] ||
+                      allocationPaymentCurrencyOptions[0] ||
+                      effectiveCurrency ||
+                      serviceCurrency
+                    ).toUpperCase();
+                    const paymentBudget =
+                      paymentAvailableForAllocationByCurrency[paymentCurrency] || 0;
+                    const rawSale = Number(service.sale_price ?? 0);
+                    const sale = Number.isFinite(rawSale) ? rawSale : 0;
+                    const paymentCurrencyWithoutPayment =
+                      !allocationPaymentCurrencyOptions.includes(paymentCurrency);
+                    return (
+                      <div
+                        key={`alloc-${service.id_service}`}
+                        className="rounded-2xl border border-white/10 bg-white/5 p-4"
+                      >
+                        <div className="mb-3 text-sm font-medium">
+                          Servicio interno N°{" "}
+                          {service.agency_service_id != null
+                            ? service.agency_service_id
+                            : "—"}{" "}
+                          {service.type
+                            ? `· ${service.type}`
+                            : service.description || "Servicio"}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
+                          <div className="md:col-span-4">
+                            <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                              Monto servicio ({serviceCurrency})
+                            </label>
+                            <input
+                              inputMode="decimal"
+                              value={
+                                serviceAllocationAmountsById[service.id_service] || ""
+                              }
+                              onChange={(e) =>
+                                setServiceAllocationAmount(
+                                  service.id_service,
+                                  formatMoneyInput(e.target.value, serviceCurrency, {
+                                    preferDotDecimal: shouldPreferDotDecimal(e),
+                                  }),
+                                )
+                              }
+                              placeholder={formatNum(0, serviceCurrency)}
+                              className={inputBase}
+                            />
+                          </div>
+
+                          <div className="md:col-span-3">
+                            <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                              Moneda cobro
+                            </label>
+                            <select
+                              value={paymentCurrency}
+                              onChange={(e) =>
+                                setServiceAllocationPaymentCurrency(
+                                  service.id_service,
+                                  e.target.value,
+                                )
+                              }
+                              className={`${inputBase} cursor-pointer appearance-none`}
+                            >
+                              {allocationSelectableCurrencies.map((code) => (
+                                <option
+                                  key={`alloc-cur-${service.id_service}-${code}`}
+                                  value={code}
+                                >
+                                  {code}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="md:col-span-5">
+                            {paymentCurrency !== serviceCurrency && (
+                              <>
+                                <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                                  Contravalor ({paymentCurrency})
+                                </label>
+                                <input
+                                  inputMode="decimal"
+                                  value={
+                                    serviceAllocationPaymentAmountsById[
+                                      service.id_service
+                                    ] || ""
+                                  }
+                                  onChange={(e) =>
+                                    setServiceAllocationPaymentAmount(
+                                      service.id_service,
+                                      formatMoneyInput(
+                                        e.target.value,
+                                        paymentCurrency,
+                                        {
+                                          preferDotDecimal: shouldPreferDotDecimal(e),
+                                        },
+                                      ),
+                                    )
+                                  }
+                                  placeholder={formatNum(0, paymentCurrency)}
+                                  className={inputBase}
+                                />
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className={`${pillBase} ${pillNeutral}`}>
+                            Venta: {formatNum(sale, serviceCurrency)}
+                          </span>
+                          <span className={`${pillBase} ${pillNeutral}`}>
+                            Presupuesto: {formatNum(paymentBudget, paymentCurrency)}
+                          </span>
+                        </div>
+                        {paymentCurrencyWithoutPayment && (
+                          <p className="mt-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                            No hay pagos directos en {paymentCurrency}. Cargá
+                            contravalor y verificá que la conversión por servicio
+                            cierre contra cobros y conversión general.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {errors.service_allocations && (
+              <p className="text-xs text-red-600">{errors.service_allocations}</p>
+            )}
+          </div>
         </Section>
       )}
 

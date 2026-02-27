@@ -17,6 +17,7 @@ export type ServiceLite = {
   description?: string;
   currency: string; // "ARS" | "USD" | ...
   sale_price?: number; // sugerencia importe base
+  cost_price?: number;
   card_interest?: number; // sugerencia costo financiero
   taxableCardInterest?: number;
   vatOnCardInterest?: number;
@@ -54,6 +55,15 @@ export type FinancePicks = {
 
 export type ReceiptPaymentFeeMode = "FIXED" | "PERCENT";
 
+export type ReceiptServiceAllocationLine = {
+  service_id: number;
+  amount_service: number;
+  service_currency?: string | null;
+  amount_payment?: number | null;
+  payment_currency?: string | null;
+  fx_rate?: number | null;
+};
+
 /** ✅ línea de pago (para ReceiptPayment en backend) */
 export type ReceiptPaymentLine = {
   amount: number;
@@ -76,6 +86,8 @@ export type ReceiptPaymentLine = {
 export type ReceiptPayload = {
   booking?: { id_booking: number };
   serviceIds?: number[];
+  serviceAllocations?: ReceiptServiceAllocationLine[];
+  service_allocations?: ReceiptServiceAllocationLine[];
 
   concept: string;
   amount: number;

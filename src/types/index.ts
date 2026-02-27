@@ -361,6 +361,12 @@ export interface Receipt {
   bookingId_booking: number;
   booking?: Booking;
   serviceIds?: number[];
+  service_allocations?: Array<{
+    id_receipt_service_allocation?: number;
+    service_id: number;
+    amount_service: number | string;
+    service_currency?: string | null;
+  }>;
   clientIds?: number[];
 }
 

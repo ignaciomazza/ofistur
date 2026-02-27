@@ -26,6 +26,7 @@ import type {
   SubmitResult,
   ReceiptPaymentFeeMode,
   ReceiptPaymentLine,
+  ReceiptServiceAllocationLine,
 } from "@/types/receipts";
 
 import {
@@ -116,12 +117,31 @@ type ReceiptForDebt = {
   payment_fee_amount?: number | string | null;
   payment_fee_currency?: string | null;
   serviceIds?: number[] | null;
+  service_allocations?: Array<{
+    service_id?: number | string | null;
+    amount_service?: number | string | null;
+    service_currency?: string | null;
+    amount_payment?: number | string | null;
+    payment_currency?: string | null;
+    fx_rate?: number | string | null;
+  }> | null;
   payments?: Array<{
     amount?: number | string | null;
     payment_currency?: string | null;
     fee_amount?: number | string | null;
   }> | null;
 };
+
+type InitialReceiptServiceAllocation = {
+  service_id: number;
+  amount_service: number | string;
+  service_currency?: string | null;
+  amount_payment?: number | string | null;
+  payment_currency?: string | null;
+  fx_rate?: number | string | null;
+};
+
+type ServiceAllocationPresetMode = "manual" | "split_payment" | "use_costs";
 
 const uid = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -155,6 +175,13 @@ const normalizeCurrencyCodeLoose = (raw: string | null | undefined): string => {
   };
   return map[s] || s;
 };
+const normalizeOptionalCurrencyCodeLoose = (
+  raw: string | null | undefined,
+): string => {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "";
+  return normalizeCurrencyCodeLoose(trimmed);
+};
 
 const toNumberLoose = (value: unknown): number => {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -171,7 +198,25 @@ const toNumberLoose = (value: unknown): number => {
 const addReceiptToPaidByCurrency = (
   target: Record<string, number>,
   receipt: ReceiptForDebt,
+  options?: { selectedServiceIds?: Set<number> },
 ) => {
+  const selectedServiceIds = options?.selectedServiceIds;
+  const rawAllocations = Array.isArray(receipt.service_allocations)
+    ? receipt.service_allocations
+    : [];
+  if (selectedServiceIds && rawAllocations.length > 0) {
+    for (const alloc of rawAllocations) {
+      const serviceId = Number(alloc?.service_id);
+      if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+      if (!selectedServiceIds.has(Math.trunc(serviceId))) continue;
+      const amount = toNumberLoose(alloc?.amount_service ?? 0);
+      if (Math.abs(amount) <= DEBT_TOLERANCE) continue;
+      const currency = normalizeCurrencyCodeLoose(alloc?.service_currency || "ARS");
+      target[currency] = round2((target[currency] || 0) + amount);
+    }
+    return;
+  }
+
   const amountCurrency = normalizeCurrencyCodeLoose(
     receipt.amount_currency || "ARS",
   );
@@ -319,6 +364,7 @@ export interface ReceiptFormProps {
   initialFinanceAccountId?: number | null;
   initialClientIds?: number[];
   initialPayments?: ReceiptPaymentLine[];
+  initialServiceAllocations?: InitialReceiptServiceAllocation[];
 
   onSubmit: (payload: ReceiptPayload) => Promise<SubmitResult> | SubmitResult;
   onCancel?: () => void;
@@ -409,6 +455,7 @@ export default function ReceiptForm({
   initialFinanceAccountId = null,
   initialClientIds = [],
   initialPayments = [],
+  initialServiceAllocations = [],
   onSubmit,
   onCancel,
   enableAttachAction = false,
@@ -530,7 +577,8 @@ export default function ReceiptForm({
   const hideContextSection =
     receiptServiceSelectionMode === "booking" &&
     forcedBookingMode &&
-    mode === "booking";
+    mode === "booking" &&
+    action !== "create";
 
   const userSelectedServices = useMemo(
     () => services.filter((s) => selectedServiceIds.includes(s.id_service)),
@@ -541,6 +589,157 @@ export default function ReceiptForm({
     () => services.filter((s) => serviceIdsForContext.includes(s.id_service)),
     [services, serviceIdsForContext],
   );
+  const allocationServices = useMemo(() => {
+    if (mode !== "booking") return [] as ServiceLite[];
+    if (receiptServiceSelectionMode === "booking") return selectedServices;
+    return userSelectedServices;
+  }, [mode, receiptServiceSelectionMode, selectedServices, userSelectedServices]);
+  const [manualServiceAllocationsEnabled, setManualServiceAllocationsEnabled] =
+    useState(
+      Array.isArray(initialServiceAllocations) &&
+        initialServiceAllocations.length > 0,
+    );
+  const [serviceAllocationAmountsById, setServiceAllocationAmountsById] =
+    useState<Record<number, string>>(() => {
+      const out: Record<number, string> = {};
+      for (const alloc of initialServiceAllocations || []) {
+        const serviceId = Number(alloc?.service_id);
+        const amountRaw = Number(alloc?.amount_service ?? 0);
+        if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+        if (!Number.isFinite(amountRaw) || amountRaw <= 0) continue;
+        out[Math.trunc(serviceId)] = String(amountRaw);
+      }
+      return out;
+    });
+  const [serviceAllocationPaymentAmountsById, setServiceAllocationPaymentAmountsById] =
+    useState<Record<number, string>>(() => {
+      const out: Record<number, string> = {};
+      for (const alloc of initialServiceAllocations || []) {
+        const serviceId = Number(alloc?.service_id);
+        const amountRaw = Number(alloc?.amount_payment ?? 0);
+        if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+        if (!Number.isFinite(amountRaw) || amountRaw <= 0) continue;
+        out[Math.trunc(serviceId)] = String(amountRaw);
+      }
+      return out;
+    });
+  const [serviceAllocationPaymentCurrencyById, setServiceAllocationPaymentCurrencyById] =
+    useState<Record<number, string>>(() => {
+      const out: Record<number, string> = {};
+      for (const alloc of initialServiceAllocations || []) {
+        const serviceId = Number(alloc?.service_id);
+        const paymentCurrency = normalizeOptionalCurrencyCodeLoose(
+          alloc?.payment_currency || "",
+        );
+        if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+        if (!paymentCurrency) continue;
+        out[Math.trunc(serviceId)] = paymentCurrency;
+      }
+      return out;
+    });
+
+  useEffect(() => {
+    setServiceAllocationAmountsById((prev) => {
+      const validIds = new Set(
+        services
+          .map((service) => Number(service.id_service))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      );
+      const next: Record<number, string> = {};
+      for (const [key, value] of Object.entries(prev)) {
+        const id = Number(key);
+        if (!Number.isFinite(id) || !validIds.has(id)) continue;
+        next[id] = value;
+      }
+      return next;
+    });
+  }, [services]);
+  useEffect(() => {
+    setServiceAllocationPaymentAmountsById((prev) => {
+      const validIds = new Set(
+        services
+          .map((service) => Number(service.id_service))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      );
+      const next: Record<number, string> = {};
+      for (const [key, value] of Object.entries(prev)) {
+        const id = Number(key);
+        if (!Number.isFinite(id) || !validIds.has(id)) continue;
+        next[id] = value;
+      }
+      return next;
+    });
+  }, [services]);
+  useEffect(() => {
+    setServiceAllocationPaymentCurrencyById((prev) => {
+      const validIds = new Set(
+        services
+          .map((service) => Number(service.id_service))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      );
+      const next: Record<number, string> = {};
+      for (const [key, value] of Object.entries(prev)) {
+        const id = Number(key);
+        if (!Number.isFinite(id) || !validIds.has(id)) continue;
+        const currency = normalizeOptionalCurrencyCodeLoose(value || "");
+        if (!currency) continue;
+        next[id] = currency;
+      }
+      return next;
+    });
+  }, [services]);
+
+  const setServiceAllocationAmount = useCallback(
+    (serviceId: number, value: string) => {
+      if (!Number.isFinite(serviceId) || serviceId <= 0) return;
+      setServiceAllocationAmountsById((prev) => ({
+        ...prev,
+        [Math.trunc(serviceId)]: value,
+      }));
+    },
+    [],
+  );
+  const setServiceAllocationPaymentAmount = useCallback(
+    (serviceId: number, value: string) => {
+      if (!Number.isFinite(serviceId) || serviceId <= 0) return;
+      setServiceAllocationPaymentAmountsById((prev) => ({
+        ...prev,
+        [Math.trunc(serviceId)]: value,
+      }));
+    },
+    [],
+  );
+  const setServiceAllocationPaymentCurrency = useCallback(
+    (serviceId: number, currencyCode: string) => {
+      if (!Number.isFinite(serviceId) || serviceId <= 0) return;
+      const normalized = normalizeOptionalCurrencyCodeLoose(currencyCode || "");
+      if (!normalized) return;
+      setServiceAllocationPaymentCurrencyById((prev) => ({
+        ...prev,
+        [Math.trunc(serviceId)]: normalized,
+      }));
+    },
+    [],
+  );
+  const [serviceAllocationPresetMode, setServiceAllocationPresetMode] =
+    useState<ServiceAllocationPresetMode>("manual");
+  const selectedServiceCurrencies = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          allocationServices.map((service) =>
+            normalizeCurrencyCodeLoose(service.currency || "ARS"),
+          ),
+        ),
+      ),
+    [allocationServices],
+  );
+
+  useEffect(() => {
+    if (manualServiceAllocationsEnabled && allocationServices.length === 0) {
+      setManualServiceAllocationsEnabled(false);
+    }
+  }, [manualServiceAllocationsEnabled, allocationServices]);
 
   const selectedBookingDisplayId = useMemo(() => {
     if (!selectedBookingId) return null;
@@ -550,23 +749,13 @@ export default function ReceiptForm({
 
   const lockedCurrency = useMemo(() => {
     if (!userSelectedServices.length) return null;
-    return userSelectedServices[0].currency;
-  }, [userSelectedServices]);
-
-  useEffect(() => {
-    if (userSelectedServices.length <= 1) return;
     const first = userSelectedServices[0].currency;
-    if (!userSelectedServices.every((s) => s.currency === first)) {
-      setSelectedServiceIds(
-        userSelectedServices
-          .filter((s) => s.currency === first)
-          .map((s) => s.id_service),
-      );
-    }
+    return userSelectedServices.every((service) => service.currency === first)
+      ? first
+      : null;
   }, [userSelectedServices]);
 
   const toggleService = (svc: ServiceLite) => {
-    if (lockedCurrency && svc.currency !== lockedCurrency) return;
     setSelectedServiceIds((prev) =>
       prev.includes(svc.id_service)
         ? prev.filter((id) => id !== svc.id_service)
@@ -578,6 +767,15 @@ export default function ReceiptForm({
     setSelectedBookingId(null);
     setSelectedServiceIds([]);
   };
+
+  useEffect(() => {
+    if (editingReceiptId) return;
+    setManualServiceAllocationsEnabled(false);
+    setServiceAllocationAmountsById({});
+    setServiceAllocationPaymentAmountsById({});
+    setServiceAllocationPaymentCurrencyById({});
+    setServiceAllocationPresetMode("manual");
+  }, [selectedBookingId, mode, action, editingReceiptId]);
 
   /* ===== Concepto ===== */
   const [concept, setConcept] = useState(initialConcept);
@@ -634,6 +832,60 @@ export default function ReceiptForm({
       total: total > 0 ? total : null,
     };
   }, [selectedServices]);
+
+  const normalizedServiceAllocationsForPayload = useMemo(() => {
+    if (!manualServiceAllocationsEnabled) return [] as ReceiptServiceAllocationLine[];
+    if (!allocationServices.length) return [] as ReceiptServiceAllocationLine[];
+
+    const serviceById = new Map(
+      services.map((service) => [service.id_service, service]),
+    );
+    const out: ReceiptServiceAllocationLine[] = [];
+
+    for (const service of allocationServices) {
+      const serviceId = service.id_service;
+      const amount = parseAmountInput(
+        serviceAllocationAmountsById[serviceId] || "",
+      );
+      if (amount == null || amount <= 0) continue;
+      const resolvedService = serviceById.get(serviceId);
+      const serviceCurrency = normalizeCurrencyCodeLoose(
+        resolvedService?.currency || "ARS",
+      );
+      const paymentCurrency = normalizeCurrencyCodeLoose(
+        serviceAllocationPaymentCurrencyById[serviceId] || serviceCurrency,
+      );
+      const amountPayment = parseAmountInput(
+        serviceAllocationPaymentAmountsById[serviceId] || "",
+      );
+      const hasPaymentAmount =
+        amountPayment != null && Number.isFinite(amountPayment) && amountPayment > 0;
+      out.push({
+        service_id: serviceId,
+        amount_service: round2(amount),
+        service_currency: serviceCurrency,
+        ...(paymentCurrency ? { payment_currency: paymentCurrency } : {}),
+        ...(hasPaymentAmount
+          ? {
+              amount_payment: round2(amountPayment),
+              fx_rate:
+                serviceCurrency !== paymentCurrency
+                  ? round2(amountPayment / amount)
+                  : undefined,
+            }
+          : {}),
+      });
+    }
+
+    return out;
+  }, [
+    manualServiceAllocationsEnabled,
+    allocationServices,
+    services,
+    serviceAllocationAmountsById,
+    serviceAllocationPaymentAmountsById,
+    serviceAllocationPaymentCurrencyById,
+  ]);
 
   /* ===== Payments (múltiples líneas) ===== */
   const [paymentLines, setPaymentLines] = useState<PaymentDraft[]>(() => {
@@ -795,6 +1047,40 @@ export default function ReceiptForm({
   const currencyOverride =
     lockedCurrency != null &&
     (hasMixedPaymentCurrencies || effectiveCurrency !== lockedCurrency);
+  const allocationPaymentCurrencyOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const line of paymentLines) {
+      const code = normalizeCurrencyCodeLoose(line.payment_currency);
+      if (!code) continue;
+      set.add(code);
+    }
+    if (!set.size && effectiveCurrency) set.add(effectiveCurrency);
+    return Array.from(set);
+  }, [paymentLines, effectiveCurrency]);
+
+  useEffect(() => {
+    if (!allocationServices.length) return;
+    setServiceAllocationPaymentCurrencyById((prev) => {
+      const fallback =
+        allocationPaymentCurrencyOptions[0] || effectiveCurrency || "ARS";
+      const next = { ...prev };
+      for (const service of allocationServices) {
+        const serviceId = service.id_service;
+        const existing = normalizeOptionalCurrencyCodeLoose(next[serviceId] || "");
+        if (existing) continue;
+        const serviceCurrency = normalizeCurrencyCodeLoose(
+          service.currency || "ARS",
+        );
+        const preferred = allocationPaymentCurrencyOptions.includes(
+          serviceCurrency,
+        )
+          ? serviceCurrency
+          : fallback;
+        next[serviceId] = normalizeCurrencyCodeLoose(preferred);
+      }
+      return next;
+    });
+  }, [allocationServices, allocationPaymentCurrencyOptions, effectiveCurrency]);
 
   const addPaymentLine = () => {
     setPaymentLines((prev) => [
@@ -1492,6 +1778,122 @@ export default function ReceiptForm({
         : inheritedUseBookingSaleTotal
       : false;
   const manualCalcMode = billingBreakdownMode === "manual" || bookingSaleMode;
+  const paymentAvailableForAllocationByCurrency = useMemo(() => {
+    const out: Record<string, number> = {};
+    addReceiptToPaidByCurrency(out, {
+      amount: paymentsTotalNum || (suggestions?.base ?? 0),
+      amount_currency: effectiveCurrency,
+      payment_fee_amount: paymentsFeeTotalNum,
+      base_amount: parseAmountInput(baseAmount),
+      base_currency: baseCurrency || null,
+      payments: paymentLines.map((line) => ({
+        amount: parseAmountInput(line.amount) ?? 0,
+        payment_currency: line.payment_currency || effectiveCurrency,
+        fee_amount: paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line),
+      })),
+    });
+    return out;
+  }, [
+    paymentsTotalNum,
+    suggestions,
+    effectiveCurrency,
+    paymentsFeeTotalNum,
+    baseAmount,
+    baseCurrency,
+    paymentLines,
+    paymentLineFeeByKey,
+  ]);
+  const applyServiceAllocationPreset = useCallback(
+    (preset: ServiceAllocationPresetMode) => {
+      if (!allocationServices.length) {
+        toast.error("Seleccioná servicios para poder asignar montos.");
+        return;
+      }
+
+      if (preset === "manual") {
+        setServiceAllocationPresetMode("manual");
+        setManualServiceAllocationsEnabled(true);
+        return;
+      }
+
+      const nextAmounts: Record<number, string> = {};
+      const nextPaymentAmounts: Record<number, string> = {};
+      const nextPaymentCurrencies: Record<number, string> = {};
+      const fallbackPaymentCurrency =
+        allocationPaymentCurrencyOptions[0] || effectiveCurrency || "ARS";
+
+      if (preset === "use_costs") {
+        let hasAnyCost = false;
+        for (const service of allocationServices) {
+          const cost = round2(Math.max(0, toNum(service.cost_price)));
+          if (cost <= 0) continue;
+          hasAnyCost = true;
+          nextAmounts[service.id_service] = String(cost);
+          const serviceCurrency = normalizeCurrencyCodeLoose(
+            service.currency || "ARS",
+          );
+          const paymentCurrency = normalizeCurrencyCodeLoose(
+            serviceAllocationPaymentCurrencyById[service.id_service] ||
+              fallbackPaymentCurrency,
+          );
+          nextPaymentCurrencies[service.id_service] = paymentCurrency;
+          if (serviceCurrency === paymentCurrency) {
+            nextPaymentAmounts[service.id_service] = String(cost);
+          }
+        }
+        if (!hasAnyCost) {
+          toast.error(
+            "No hay costos cargados para los servicios seleccionados.",
+          );
+          return;
+        }
+      } else if (preset === "split_payment") {
+        const currency = fallbackPaymentCurrency;
+        const total = round2(
+          Math.max(0, paymentAvailableForAllocationByCurrency[currency] || 0),
+        );
+        if (total <= 0) {
+          toast.error("No hay monto de pago disponible para dividir.");
+          return;
+        }
+
+        let remaining = total;
+        allocationServices.forEach((service, idx) => {
+          const isLast = idx === allocationServices.length - 1;
+          const amount = isLast
+            ? remaining
+            : round2(total / allocationServices.length);
+          if (!isLast) remaining = round2(remaining - amount);
+          nextAmounts[service.id_service] = String(Math.max(0, amount));
+          nextPaymentAmounts[service.id_service] = String(Math.max(0, amount));
+          nextPaymentCurrencies[service.id_service] = currency;
+        });
+      }
+
+      setServiceAllocationAmountsById((prev) => ({
+        ...prev,
+        ...nextAmounts,
+      }));
+      setServiceAllocationPaymentAmountsById((prev) => ({
+        ...prev,
+        ...nextPaymentAmounts,
+      }));
+      setServiceAllocationPaymentCurrencyById((prev) => ({
+        ...prev,
+        ...nextPaymentCurrencies,
+      }));
+      setServiceAllocationPresetMode(preset);
+      setManualServiceAllocationsEnabled(true);
+    },
+    [
+      allocationServices,
+      allocationPaymentCurrencyOptions,
+      effectiveCurrency,
+      paymentAvailableForAllocationByCurrency,
+      serviceAllocationPaymentCurrencyById,
+      toNum,
+    ],
+  );
 
   const relevantReceipts = useMemo(() => {
     if (!bookingReceipts.length) return [];
@@ -1499,6 +1901,19 @@ export default function ReceiptForm({
     if (!serviceIdsForContext.length) return [];
     const svcSet = new Set(serviceIdsForContext);
     return bookingReceipts.filter((r) => {
+      const allocIds = Array.isArray(r.service_allocations)
+        ? Array.from(
+            new Set(
+              r.service_allocations
+                .map((alloc) => Number(alloc?.service_id))
+                .filter((id) => Number.isFinite(id) && id > 0)
+                .map((id) => Math.trunc(id)),
+            ),
+          )
+        : [];
+      if (allocIds.length > 0) {
+        return allocIds.some((id) => svcSet.has(id));
+      }
       const ids = Array.isArray(r.serviceIds) ? r.serviceIds : [];
       if (!ids.length) return true;
       return ids.some((id) => svcSet.has(id));
@@ -1550,11 +1965,22 @@ export default function ReceiptForm({
   ]);
 
   const paidByCurrency = useMemo(() => {
+    const selectedServiceIdSet = bookingSaleMode
+      ? undefined
+      : new Set(serviceIdsForContext);
     return relevantReceipts.reduce<Record<string, number>>((acc, receipt) => {
-      addReceiptToPaidByCurrency(acc, receipt);
+      addReceiptToPaidByCurrency(
+        acc,
+        receipt,
+        selectedServiceIdSet
+          ? {
+              selectedServiceIds: selectedServiceIdSet,
+            }
+          : undefined,
+      );
       return acc;
     }, {});
-  }, [relevantReceipts]);
+  }, [relevantReceipts, serviceIdsForContext, bookingSaleMode]);
 
   const bookingDebtContextReady =
     mode !== "booking" ||
@@ -1564,6 +1990,22 @@ export default function ReceiptForm({
 
   const currentPaidByCurrency = useMemo(() => {
     const acc: Record<string, number> = {};
+    if (
+      !bookingSaleMode &&
+      manualServiceAllocationsEnabled &&
+      normalizedServiceAllocationsForPayload.length > 0
+    ) {
+      for (const alloc of normalizedServiceAllocationsForPayload) {
+        const currency = normalizeCurrencyCode(
+          alloc.service_currency || "ARS",
+        );
+        acc[currency] = round2(
+          (acc[currency] || 0) + toNum(alloc.amount_service),
+        );
+      }
+      return acc;
+    }
+
     const baseVal = parseAmountInput(baseAmount);
     const baseCur = baseCurrency
       ? normalizeCurrencyCode(baseCurrency)
@@ -1591,6 +2033,9 @@ export default function ReceiptForm({
 
     return acc;
   }, [
+    bookingSaleMode,
+    manualServiceAllocationsEnabled,
+    normalizedServiceAllocationsForPayload,
     baseAmount,
     baseCurrency,
     paymentLines,
@@ -1598,6 +2043,7 @@ export default function ReceiptForm({
     paymentsFeeByCurrency,
     effectiveCurrency,
     normalizeCurrencyCode,
+    toNum,
   ]);
 
   const debtByCurrency = useMemo(() => {
@@ -1739,6 +2185,92 @@ export default function ReceiptForm({
         serviceIdsForContext.length === 0
       )
         e.services = "Seleccioná al menos un servicio.";
+      if (
+        selectedServiceCurrencies.length > 1 &&
+        !manualServiceAllocationsEnabled
+      ) {
+        e.service_allocations =
+          "Con servicios en múltiples monedas activá \"Ajuste por servicio\" y cargá la conversión por servicio.";
+      }
+      if (manualServiceAllocationsEnabled) {
+        if (allocationServices.length === 0) {
+          e.service_allocations =
+            "Seleccioná servicios para poder asignar montos.";
+        } else if (normalizedServiceAllocationsForPayload.length === 0) {
+          e.service_allocations =
+            "Cargá al menos un monto por servicio o desactivá el ajuste manual.";
+        } else {
+          const missingConversionService = normalizedServiceAllocationsForPayload.find(
+            (alloc) => {
+              const serviceCurrency = normalizeCurrencyCodeLoose(
+                alloc.service_currency || "ARS",
+              );
+              const paymentCurrency = normalizeCurrencyCodeLoose(
+                alloc.payment_currency || serviceCurrency,
+              );
+              if (serviceCurrency === paymentCurrency) return false;
+              const amountPayment = toNum(alloc.amount_payment);
+              return !Number.isFinite(amountPayment) || amountPayment <= 0;
+            },
+          );
+          if (missingConversionService) {
+            const service = allocationServices.find(
+              (item) => item.id_service === missingConversionService.service_id,
+            );
+            const serviceLabel =
+              service?.agency_service_id != null
+                ? service.agency_service_id
+                : "sin número interno";
+            e.service_allocations = `Completá el contravalor del servicio N° ${serviceLabel} para validar la conversión por servicio.`;
+          }
+
+          const availableByCurrency: Record<string, number> = {};
+          addReceiptToPaidByCurrency(availableByCurrency, {
+            amount: paymentsTotalNum || (suggestions?.base ?? 0),
+            amount_currency: effectiveCurrency,
+            payment_fee_amount: paymentsFeeTotalNum,
+            base_amount: parseAmountInput(baseAmount),
+            base_currency: baseCurrency || null,
+            payments: paymentLines.map((line) => ({
+              amount: parseAmountInput(line.amount) ?? 0,
+              payment_currency: line.payment_currency || effectiveCurrency,
+              fee_amount: paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line),
+            })),
+          });
+
+          if (!e.service_allocations) {
+            const allocatedByCurrency =
+              normalizedServiceAllocationsForPayload.reduce<Record<string, number>>(
+                (acc, alloc) => {
+                  const serviceCurrency = normalizeCurrencyCodeLoose(
+                    alloc.service_currency || "ARS",
+                  );
+                  const paymentCurrency = normalizeCurrencyCodeLoose(
+                    alloc.payment_currency || serviceCurrency,
+                  );
+                  const amountPayment = toNum(alloc.amount_payment);
+                  const amountService = toNum(alloc.amount_service);
+                  const amount =
+                    Number.isFinite(amountPayment) && amountPayment > 0
+                      ? amountPayment
+                      : amountService;
+                  const code = paymentCurrency || serviceCurrency;
+                  acc[code] = round2((acc[code] || 0) + amount);
+                  return acc;
+                },
+                {},
+              );
+
+            for (const [code, allocated] of Object.entries(allocatedByCurrency)) {
+              const available = availableByCurrency[code] || 0;
+              if (allocated - available > DEBT_TOLERANCE) {
+                e.service_allocations = `Los montos por servicio exceden el monto disponible en ${code}.`;
+                break;
+              }
+            }
+          }
+        }
+      }
     }
 
     if (!paymentLines.length) {
@@ -2051,6 +2583,12 @@ export default function ReceiptForm({
         ? {
             booking: { id_booking: selectedBookingId },
             serviceIds: serviceIdsForContext,
+            serviceAllocations: manualServiceAllocationsEnabled
+              ? normalizedServiceAllocationsForPayload
+              : [],
+            service_allocations: manualServiceAllocationsEnabled
+              ? normalizedServiceAllocationsForPayload
+              : [],
             ...(allowClientCreditExcess
               ? {
                   allow_client_credit_excess: true,
@@ -2388,6 +2926,37 @@ export default function ReceiptForm({
                   setCounterAmount={setCounterAmount}
                   counterCurrency={counterCurrency}
                   setCounterCurrency={setCounterCurrency}
+                  showServiceAllocationSection={mode === "booking"}
+                  allocationServices={allocationServices}
+                  manualServiceAllocationsEnabled={
+                    manualServiceAllocationsEnabled
+                  }
+                  setManualServiceAllocationsEnabled={
+                    setManualServiceAllocationsEnabled
+                  }
+                  serviceAllocationAmountsById={serviceAllocationAmountsById}
+                  setServiceAllocationAmount={setServiceAllocationAmount}
+                  serviceAllocationPaymentAmountsById={
+                    serviceAllocationPaymentAmountsById
+                  }
+                  setServiceAllocationPaymentAmount={
+                    setServiceAllocationPaymentAmount
+                  }
+                  serviceAllocationPaymentCurrencyById={
+                    serviceAllocationPaymentCurrencyById
+                  }
+                  setServiceAllocationPaymentCurrency={
+                    setServiceAllocationPaymentCurrency
+                  }
+                  allocationPaymentCurrencyOptions={
+                    allocationPaymentCurrencyOptions
+                  }
+                  selectedServiceCurrencies={selectedServiceCurrencies}
+                  serviceAllocationPresetMode={serviceAllocationPresetMode}
+                  applyServiceAllocationPreset={applyServiceAllocationPreset}
+                  paymentAvailableForAllocationByCurrency={
+                    paymentAvailableForAllocationByCurrency
+                  }
                   errors={errors}
                 />
               )}

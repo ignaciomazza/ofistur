@@ -233,26 +233,23 @@ export default function ContextSection(props: {
                     <div className="space-y-2">
                       {services.map((svc) => {
                         const checked = selectedServiceIds.includes(svc.id_service);
-                        const disabled =
-                          !!lockedCurrency && svc.currency !== lockedCurrency && !checked;
 
                         return (
                           <label
                             key={svc.id_service}
                             className={`flex items-start gap-3 rounded-2xl border px-3 py-2 ${
                               checked ? "border-white/20 bg-white/10" : "border-white/10"
-                            } ${disabled ? "opacity-50" : ""}`}
+                            }`}
                           >
                             <input
                               type="checkbox"
                               className="mt-1 size-4"
                               checked={checked}
-                              disabled={disabled}
                               onChange={() => toggleService(svc)}
                             />
                             <div className="flex-1">
                               <div className="text-sm font-medium">
-                                N° {svc.agency_service_id ?? svc.id_service}{" "}
+                                N° {svc.agency_service_id ?? "—"}{" "}
                                 {svc.type
                                   ? `· ${svc.type}`
                                   : svc.description || "Servicio"}

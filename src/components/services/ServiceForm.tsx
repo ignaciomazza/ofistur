@@ -485,6 +485,13 @@ type ServiceTypePresetLite = {
   items: ServiceTypePresetItemLite[];
 };
 
+type OpenDataCache = {
+  token: string | null;
+  serviceTypesLoaded: boolean;
+  agencyCfgLoaded: boolean;
+  currenciesLoaded: boolean;
+};
+
 type CalcConfigResponse = {
   billing_breakdown_mode: "auto" | "manual";
   transfer_fee_pct: number; // proporción (0.024 = 2.4%)
@@ -800,14 +807,6 @@ export default function ServiceForm({
   >(null);
   const [loadingCurrencies, setLoadingCurrencies] = useState(false);
 
-  const formReady =
-    transferFeeReady &&
-    !loadingTypes &&
-    !loadingAgencyCfg &&
-    !loadingCurrencies &&
-    !presetLoading &&
-    (operatorsReady ?? true);
-
   /* ==========================================
    * Pipeline al ABRIR el formulario (secuencial)
    * tipos → config agencia → monedas
@@ -815,6 +814,57 @@ export default function ServiceForm({
   const openPipelineRef = useRef<{ ac: AbortController; id: number } | null>(
     null,
   );
+  const openDataCacheRef = useRef<OpenDataCache>({
+    token: token ?? null,
+    serviceTypesLoaded: false,
+    agencyCfgLoaded: false,
+    currenciesLoaded: false,
+  });
+  const typeCfgCacheRef = useRef<Map<string, ServiceCalcCfg | null>>(new Map());
+  const presetCacheRef = useRef<Map<string, ServiceTypePresetLite | null>>(
+    new Map(),
+  );
+
+  useEffect(() => {
+    if (!token) {
+      openDataCacheRef.current = {
+        token: null,
+        serviceTypesLoaded: false,
+        agencyCfgLoaded: false,
+        currenciesLoaded: false,
+      };
+      typeCfgCacheRef.current.clear();
+      presetCacheRef.current.clear();
+      setServiceTypes([]);
+      setTypesError(null);
+      setAgencyBillingMode("auto");
+      setAgencyFeePctFromApi(undefined);
+      setAgencyAdjustments([]);
+      setFinanceCurrencies(null);
+      setCalcCfg(null);
+      setActivePreset(null);
+      return;
+    }
+
+    if (openDataCacheRef.current.token !== token) {
+      openDataCacheRef.current = {
+        token,
+        serviceTypesLoaded: false,
+        agencyCfgLoaded: false,
+        currenciesLoaded: false,
+      };
+      typeCfgCacheRef.current.clear();
+      presetCacheRef.current.clear();
+      setServiceTypes([]);
+      setTypesError(null);
+      setAgencyBillingMode("auto");
+      setAgencyFeePctFromApi(undefined);
+      setAgencyAdjustments([]);
+      setFinanceCurrencies(null);
+      setCalcCfg(null);
+      setActivePreset(null);
+    }
+  }, [token]);
 
   useEffect(() => {
     if (!isFormVisible || !token) return;
@@ -832,80 +882,98 @@ export default function ServiceForm({
       !ac.signal.aborted;
 
     (async () => {
+      const cache = openDataCacheRef.current;
+      if (cache.serviceTypesLoaded) setLoadingTypes(false);
+      if (cache.agencyCfgLoaded) setLoadingAgencyCfg(false);
+      if (cache.currenciesLoaded) setLoadingCurrencies(false);
+
       // 1) Tipos
-      try {
-        setLoadingTypes(true);
-        setTypesError(null);
-        const res = await authFetch(
-          "/api/service-types",
-          { cache: "no-store", signal: ac.signal },
-          token,
-        );
-        if (!res.ok) throw new Error("No se pudo obtener tipos de servicio.");
-        const json = await res.json();
-        const raw = pickArrayFromJson<RawServiceType>(json);
-        const norm = raw
-          .filter((r) => r?.is_active == null || toBool(r.is_active) !== false)
-          .map(normalizeServiceType)
-          .filter(Boolean) as NormalizedServiceType[];
-        if (isActive()) setServiceTypes(norm);
-      } catch (e) {
-        if (isActive()) {
-          setServiceTypes([]);
-          setTypesError(
-            e instanceof Error
-              ? e.message
-              : "Error cargando tipos de servicio.",
+      if (!cache.serviceTypesLoaded) {
+        try {
+          setLoadingTypes(true);
+          setTypesError(null);
+          const res = await authFetch(
+            "/api/service-types",
+            { cache: "no-store", signal: ac.signal },
+            token,
           );
+          if (!res.ok) throw new Error("No se pudo obtener tipos de servicio.");
+          const json = await res.json();
+          const raw = pickArrayFromJson<RawServiceType>(json);
+          const norm = raw
+            .filter((r) => r?.is_active == null || toBool(r.is_active) !== false)
+            .map(normalizeServiceType)
+            .filter(Boolean) as NormalizedServiceType[];
+          if (isActive()) {
+            setServiceTypes(norm);
+            cache.serviceTypesLoaded = true;
+          }
+        } catch (e) {
+          if (isActive()) {
+            setServiceTypes([]);
+            setTypesError(
+              e instanceof Error
+                ? e.message
+                : "Error cargando tipos de servicio.",
+            );
+          }
+        } finally {
+          if (isActive()) setLoadingTypes(false);
         }
-      } finally {
-        if (isActive()) setLoadingTypes(false);
       }
 
       // 2) Config de agencia (modo + fee)
       if (!isActive()) return;
-      try {
-        setLoadingAgencyCfg(true);
-        const res = await authFetch(
-          "/api/service-calc-config",
-          { cache: "no-store", signal: ac.signal },
-          token,
-        );
-        if (!res.ok) throw new Error("No se pudo obtener service-calc-config.");
-        const data = (await res.json()) as CalcConfigResponse;
-        if (!isActive()) return;
-        setAgencyBillingMode(
-          data.billing_breakdown_mode === "manual" ? "manual" : "auto",
-        );
-        setAgencyFeePctFromApi(
-          typeof data.transfer_fee_pct === "number"
-            ? data.transfer_fee_pct
-            : undefined,
-        );
-        setAgencyAdjustments(
-          Array.isArray(data.billing_adjustments) ? data.billing_adjustments : [],
-        );
-      } catch {
-        if (isActive()) {
-          setAgencyBillingMode("auto");
-          setAgencyFeePctFromApi(undefined);
-          setAgencyAdjustments([]);
+      if (!cache.agencyCfgLoaded) {
+        try {
+          setLoadingAgencyCfg(true);
+          const res = await authFetch(
+            "/api/service-calc-config",
+            { cache: "no-store", signal: ac.signal },
+            token,
+          );
+          if (!res.ok) throw new Error("No se pudo obtener service-calc-config.");
+          const data = (await res.json()) as CalcConfigResponse;
+          if (!isActive()) return;
+          setAgencyBillingMode(
+            data.billing_breakdown_mode === "manual" ? "manual" : "auto",
+          );
+          setAgencyFeePctFromApi(
+            typeof data.transfer_fee_pct === "number"
+              ? data.transfer_fee_pct
+              : undefined,
+          );
+          setAgencyAdjustments(
+            Array.isArray(data.billing_adjustments)
+              ? data.billing_adjustments
+              : [],
+          );
+          cache.agencyCfgLoaded = true;
+        } catch {
+          if (isActive()) {
+            setAgencyBillingMode("auto");
+            setAgencyFeePctFromApi(undefined);
+            setAgencyAdjustments([]);
+          }
+        } finally {
+          if (isActive()) setLoadingAgencyCfg(false);
         }
-      } finally {
-        if (isActive()) setLoadingAgencyCfg(false);
       }
 
       // 3) Monedas
       if (!isActive()) return;
-      try {
-        setLoadingCurrencies(true);
-        const picks = await loadFinancePicks(token);
-        if (!isActive()) return;
-        setFinanceCurrencies(picks?.currencies ?? null);
-      } catch {
-        if (isActive()) setFinanceCurrencies(null);
-      } finally {
-        if (isActive()) setLoadingCurrencies(false);
+      if (!cache.currenciesLoaded) {
+        try {
+          setLoadingCurrencies(true);
+          const picks = await loadFinancePicks(token);
+          if (!isActive()) return;
+          setFinanceCurrencies(picks?.currencies ?? null);
+          cache.currenciesLoaded = true;
+        } catch {
+          if (isActive()) setFinanceCurrencies(null);
+        } finally {
+          if (isActive()) setLoadingCurrencies(false);
+        }
       }
     })();
 
@@ -929,10 +997,21 @@ export default function ServiceForm({
   const typeCfgRef = useRef<{ ac: AbortController; id: number } | null>(null);
 
   useEffect(() => {
-    if (!isFormVisible || !token || !formData.type) {
+    if (!token || !formData.type) {
       setCalcCfg(null);
+      setLoadingCfg(false);
       return;
     }
+
+    const typeKey = formData.type;
+    if (typeCfgCacheRef.current.has(typeKey)) {
+      setCalcCfg(typeCfgCacheRef.current.get(typeKey) ?? null);
+      setLoadingCfg(false);
+      return;
+    }
+
+    setCalcCfg(null);
+    if (!isFormVisible) return;
 
     if (typeCfgRef.current) typeCfgRef.current.ac.abort();
     const ac = new AbortController();
@@ -945,8 +1024,11 @@ export default function ServiceForm({
     (async () => {
       try {
         setLoadingCfg(true);
-        const cfg = await fetchServiceCalcCfg(token, formData.type);
-        if (isActive()) setCalcCfg(cfg);
+        const cfg = await fetchServiceCalcCfg(token, typeKey);
+        if (isActive()) {
+          typeCfgCacheRef.current.set(typeKey, cfg);
+          setCalcCfg(cfg);
+        }
       } catch {
         if (isActive()) setCalcCfg(null);
       } finally {
@@ -959,18 +1041,29 @@ export default function ServiceForm({
 
   /* ========== Presets por tipo/operador ========== */
   useEffect(() => {
-    if (!isFormVisible || !token) {
+    if (!token) {
       setActivePreset(null);
+      setPresetLoading(false);
       return;
     }
     const typeId = selectedTypeFromList?.id;
     if (!typeId) {
       setActivePreset(null);
+      setPresetLoading(false);
       return;
     }
+    const operatorId = formData.id_operator || 0;
+    const cacheKey = `${typeId}:${operatorId}`;
+    if (presetCacheRef.current.has(cacheKey)) {
+      setActivePreset(presetCacheRef.current.get(cacheKey) ?? null);
+      setPresetLoading(false);
+      return;
+    }
+    setActivePreset(null);
+    if (!isFormVisible) return;
+
     const controller = new AbortController();
     let alive = true;
-    const operatorId = formData.id_operator || 0;
     const fetchPresets = async (withOperator: boolean) => {
       const qs = new URLSearchParams();
       qs.set("service_type_id", String(typeId));
@@ -1003,6 +1096,7 @@ export default function ServiceForm({
           .filter((p) => p && p.items && p.items.length > 0 && p.enabled !== false)
           .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
         const selected = sorted[0] || null;
+        presetCacheRef.current.set(cacheKey, selected);
         setActivePreset(selected);
       } catch {
         if (alive) setActivePreset(null);
@@ -1542,6 +1636,13 @@ export default function ServiceForm({
     const fee = Number(baseBillingData.transferFeeAmount || 0);
     return base - fee - adjustmentTotals.total;
   }, [adjustmentTotals.total, baseBillingData]);
+  const [internalNotesOpen, setInternalNotesOpen] = useState(false);
+
+  useEffect(() => {
+    if ((formData.note || "").trim()) {
+      setInternalNotesOpen(true);
+    }
+  }, [formData.note, editingServiceId]);
 
   useEffect(() => {
     if (!useBookingSaleTotal || hasPrices) return;
@@ -1565,6 +1666,7 @@ export default function ServiceForm({
     loadingAgencyCfg ||
     loadingCurrencies ||
     loadingCfg ||
+    !(operatorsReady ?? true) ||
     !transferFeeReady;
 
   const missingDestination =
@@ -1635,7 +1737,8 @@ export default function ServiceForm({
               {(loadingTypes ||
                 loadingCfg ||
                 loadingAgencyCfg ||
-                loadingCurrencies) && (
+                loadingCurrencies ||
+                presetLoading) && (
                 <p className="text-xs text-sky-950/70 dark:text-white/70">
                   {loadingTypes
                     ? "Cargando tipos..."
@@ -1643,6 +1746,8 @@ export default function ServiceForm({
                       ? "Aplicando configuración del tipo..."
                       : loadingCurrencies
                         ? "Cargando monedas..."
+                        : presetLoading
+                          ? "Cargando preset..."
                         : "Leyendo configuración de la agencia..."}
                 </p>
               )}
@@ -1672,22 +1777,11 @@ export default function ServiceForm({
             exit={{ opacity: 0 }}
             className="relative"
           >
-            {!formReady ? (
-              <div className="flex min-h-[280px] flex-col items-center justify-center gap-3 px-6 py-8 text-sm text-sky-950/70 dark:text-white/70">
-                <Spinner />
-                <div className="text-center">
-                  <p className="text-sm font-medium">Preparando formulario</p>
-                  <p className="text-xs">
-                    Cargando tipos, operadores y configuraciones…
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <motion.form
-                id="service-form-body"
-                onSubmit={onLocalSubmit}
-                className="space-y-5 px-4 pb-6 pt-4 md:px-6"
-              >
+            <motion.form
+              id="service-form-body"
+              onSubmit={onLocalSubmit}
+              className="space-y-5 px-4 pb-6 pt-4 md:px-6"
+            >
               {/* DATOS BÁSICOS */}
               <Section
                 title="Datos básicos"
@@ -1949,23 +2043,65 @@ export default function ServiceForm({
               </Section>
 
               {/* NOTAS INTERNAS */}
-              <Section
-                title="Notas internas"
-                desc="Solo para uso interno del equipo."
-              >
-                <div className="md:col-span-2">
-                  <Field id="note" label="Nota">
-                    <NoteComposer
-                      id="note"
-                      name="note"
-                      value={formData.note || ""}
-                      onChange={(next) => updateField("note", next)}
-                      placeholder="Notas internas del servicio…"
-                      rows={3}
-                    />
-                  </Field>
-                </div>
-              </Section>
+              <section className="rounded-2xl border border-sky-900/10 bg-white/35 p-4 shadow-sm shadow-sky-950/5 dark:border-white/10 dark:bg-white/[0.04]">
+                <button
+                  type="button"
+                  onClick={() => setInternalNotesOpen((prev) => !prev)}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                  aria-expanded={internalNotesOpen}
+                  aria-controls="service-internal-notes"
+                >
+                  <div>
+                    <h3 className="text-base font-semibold tracking-tight text-sky-950 dark:text-white">
+                      Notas internas
+                    </h3>
+                    <p className="mt-1 text-xs font-light text-sky-950/70 dark:text-white/70">
+                      Solo para uso interno del equipo.
+                    </p>
+                  </div>
+                  <span className="grid size-8 place-items-center rounded-full border border-sky-900/10 bg-white/70 dark:border-white/10 dark:bg-white/10">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className={`size-4 transition-transform ${internalNotesOpen ? "rotate-180" : ""}`}
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.8}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M5 8l5 5 5-5"
+                      />
+                    </svg>
+                  </span>
+                </button>
+
+                <AnimatePresence initial={false}>
+                  {internalNotesOpen && (
+                    <motion.div
+                      id="service-internal-notes"
+                      key="service-internal-notes"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2, ease: "easeOut" }}
+                      className="mt-4 overflow-hidden"
+                    >
+                      <Field id="note" label="Nota">
+                        <NoteComposer
+                          id="note"
+                          name="note"
+                          value={formData.note || ""}
+                          onChange={(next) => updateField("note", next)}
+                          placeholder="Notas internas del servicio…"
+                          rows={3}
+                        />
+                      </Field>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </section>
 
               {/* PRECIOS */}
               <Section
@@ -2230,6 +2366,7 @@ export default function ServiceForm({
                     moneda={displayCurrency}
                     onBillingUpdate={handleBaseBillingUpdate}
                     transferFeePct={pctToShow}
+                    showNetCommissionTotal={!useBookingSaleTotal}
                   />
                 ) : (
                   <BillingBreakdown
@@ -2246,6 +2383,7 @@ export default function ServiceForm({
                     transferFeePct={pctToShow}
                     allowBreakdownOverrideEdit={canOverrideBillingMode}
                     initialBreakdownOverride={formData.billing_override}
+                    showNetCommissionTotal={!useBookingSaleTotal}
                   />
                 ))}
 
@@ -2285,8 +2423,7 @@ export default function ServiceForm({
                   )}
                 </button>
               </div>
-              </motion.form>
-            )}
+            </motion.form>
           </motion.div>
         )}
       </AnimatePresence>

@@ -11,6 +11,7 @@ interface Props {
   moneda?: string;
   onBillingUpdate?: (data: BillingData) => void;
   transferFeePct?: number; // fracción: 0.02 = 2%
+  showNetCommissionTotal?: boolean;
 }
 
 const round = (v: number, d = 8) => parseFloat(v.toFixed(d));
@@ -42,6 +43,7 @@ export default function BillingBreakdownManual({
   moneda = "ARS",
   onBillingUpdate,
   transferFeePct = 0.024,
+  showNetCommissionTotal = true,
 }: Props) {
   const lastPayloadRef = useRef<BillingData | null>(null);
   const onBillingUpdateRef = useRef(onBillingUpdate);
@@ -125,14 +127,16 @@ export default function BillingBreakdownManual({
         <Row label="Costos bancarios" value={transferFee} />
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/20 p-3">
-        <div className="text-sm opacity-70">
-          Total Comisión (sin IVA) – neta de Costos Bancarios
+      {showNetCommissionTotal && (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/20 p-3">
+          <div className="text-sm opacity-70">
+            Total Comisión (sin IVA) – neta de Costos Bancarios
+          </div>
+          <div className="text-lg font-semibold tabular-nums">
+            {f(commissionNet)}
+          </div>
         </div>
-        <div className="text-lg font-semibold tabular-nums">
-          {f(commissionNet)}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

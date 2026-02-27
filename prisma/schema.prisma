@@ -953,6 +953,7 @@ model Receipt {
   account_id        Int?
 
   payments          ReceiptPayment[]
+  service_allocations ReceiptServiceAllocation[]
   clientPayments    ClientPayment[]
   bookingId_booking Int?
   booking           Booking?         @relation("BookingReceipt", fields: [bookingId_booking], references: [id_booking], onDelete: SetNull)
@@ -984,6 +985,22 @@ model ReceiptPayment {
   receipt Receipt @relation(fields: [receipt_id], references: [id_receipt], onDelete: Cascade)
 
   @@index([receipt_id])
+}
+
+model ReceiptServiceAllocation {
+  id_receipt_service_allocation Int      @id @default(autoincrement())
+  receipt_id                    Int
+  service_id                    Int
+  amount_service                Decimal  @db.Decimal(18, 2)
+  service_currency              String
+  created_at                    DateTime @default(now())
+  updated_at                    DateTime @updatedAt
+
+  receipt Receipt @relation(fields: [receipt_id], references: [id_receipt], onDelete: Cascade)
+
+  @@unique([receipt_id, service_id], name: "receipt_service_allocation_unique")
+  @@index([receipt_id])
+  @@index([service_id])
 }
 
 model OtherIncome {

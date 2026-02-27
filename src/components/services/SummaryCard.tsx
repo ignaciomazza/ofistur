@@ -93,6 +93,11 @@ type ReceiptWithConversion = Receipt &
       payment_currency?: string | null;
       fee_amount?: number | string | null;
     }>;
+    service_allocations?: Array<{
+      service_id?: number | string | null;
+      amount_service?: number | string | null;
+      service_currency?: string | null;
+    }> | null;
   }>;
 
 type AdjustmentLabelTotal = {
@@ -856,6 +861,41 @@ export default function SummaryCard({
       receipts.forEach((rawReceipt) => {
         const receipt = rawReceipt as ReceiptWithConversion;
         const amounts = extractReceiptPaidByCurrency(receipt);
+        const manualAllocations = Array.isArray(receipt.service_allocations)
+          ? receipt.service_allocations
+          : [];
+
+        if (manualAllocations.length > 0) {
+          const allocatedByCurrency: Record<string, number> = {};
+          for (const allocRaw of manualAllocations) {
+            const serviceId = Number(allocRaw?.service_id);
+            const amountService = toNum(allocRaw?.amount_service ?? 0);
+            if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+            if (Math.abs(amountService) <= PAYMENT_TOLERANCE) continue;
+            if (!paidByService.has(serviceId)) continue;
+
+            const serviceCur =
+              serviceCurrency.get(serviceId) ||
+              normalizeCurrencyCode(
+                String(allocRaw?.service_currency || "ARS"),
+              );
+            paidByService.set(
+              serviceId,
+              (paidByService.get(serviceId) || 0) + amountService,
+            );
+            allocatedByCurrency[serviceCur] =
+              (allocatedByCurrency[serviceCur] || 0) + amountService;
+          }
+
+          Object.entries(amounts).forEach(([cur, amount]) => {
+            const remainder = amount - (allocatedByCurrency[cur] || 0);
+            if (Math.abs(remainder) <= PAYMENT_TOLERANCE) return;
+            unallocatedByCurrency[cur] =
+              (unallocatedByCurrency[cur] || 0) + remainder;
+          });
+          return;
+        }
+
         const selectedIds = Array.isArray(receipt.serviceIds) && receipt.serviceIds.length
           ? receipt.serviceIds
               .map((id) => Number(id))
@@ -2015,7 +2055,9 @@ export default function SummaryCard({
           <header className="mb-4 flex items-center justify-between gap-3 px-2">
             <h3 className="text-lg font-semibold tracking-tight">Deudas</h3>
             <span className="rounded-full border border-white/10 bg-white/20 px-2.5 py-1 text-xs font-medium">
-              Desglose por moneda y servicio
+              {bookingSaleMode
+                ? "Desglose por moneda"
+                : "Desglose por moneda y servicio"}
             </span>
           </header>
 
@@ -2054,7 +2096,7 @@ export default function SummaryCard({
                         value={fmt(debtSummary.paid, code)}
                       />
                       <Row label="Deuda" value={fmt(debtSummary.debt, code)} />
-                      {paxDebtRows.length > 0 && (
+                      {!bookingSaleMode && paxDebtRows.length > 0 && (
                         <div className="space-y-1 py-3">
                           <p className="text-xs font-semibold uppercase tracking-wide opacity-60">
                             Por servicio

@@ -319,17 +319,15 @@ export default function ServiceCard({
           </Chip>
         </div>
 
-        <Stat label="Venta" value={fmtMoney(service.sale_price)} />
+        {!effectiveUseBookingSaleTotal && (
+          <Stat label="Venta" value={fmtMoney(service.sale_price)} />
+        )}
         <Stat label="Costo" value={fmtMoney(service.cost_price)} />
-        {!isExpanded && (
+        {!isExpanded && !effectiveUseBookingSaleTotal && (
           <div className="col-span-2 flex h-full items-center">
             <Stat
               label="Total Comisión neta"
-              value={
-                effectiveUseBookingSaleTotal
-                  ? "Se calcula por reserva"
-                  : fmtMoney(netCommission)
-              }
+              value={fmtMoney(netCommission)}
             />
           </div>
         )}
@@ -438,25 +436,18 @@ export default function ServiceCard({
             </Section>
           )}
 
-          <Section title="Totales">
-            {effectiveUseBookingSaleTotal ? (
+          {!effectiveUseBookingSaleTotal && (
+            <Section title="Totales">
+              <Row
+                label={`Costos bancarios · ${(Number(feePct || 0) * 100).toFixed(2)}%`}
+                value={fmtMoney(feeAmount)}
+              />
               <Row
                 label="Total Comisión neta"
-                value="Se calcula por reserva"
+                value={fmtMoney(netCommission)}
               />
-            ) : (
-              <>
-                <Row
-                  label={`Costos bancarios · ${(Number(feePct || 0) * 100).toFixed(2)}%`}
-                  value={fmtMoney(feeAmount)}
-                />
-                <Row
-                  label="Total Comisión neta"
-                  value={fmtMoney(netCommission)}
-                />
-              </>
-            )}
-          </Section>
+            </Section>
+          )}
 
           <ServiceFilesPanel
             serviceId={service.id_service}
