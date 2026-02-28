@@ -39,14 +39,22 @@ const CONTROL_BAR_CLASS = "transition-colors";
 const CONTROL_CHIP_CLASS =
   "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] shadow-sm backdrop-blur transition";
 
+const WRAP_SAFE: React.CSSProperties = {
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
 const WS_PRESERVE: React.CSSProperties = {
+  ...WRAP_SAFE,
   whiteSpace: "break-spaces",
   tabSize: 4,
 };
 
 function wsFor(multiline: boolean): React.CSSProperties {
   // Para single-line (título, subtítulo) evitamos break-spaces
-  return multiline ? WS_PRESERVE : { whiteSpace: "pre-wrap", tabSize: 4 };
+  return multiline
+    ? WS_PRESERVE
+    : { ...WRAP_SAFE, whiteSpace: "pre-wrap", tabSize: 4 };
 }
 
 /** Normaliza saltos/espacios problemáticos */
@@ -125,6 +133,57 @@ function placeCaretAtEnd(el: HTMLElement) {
     sel?.removeAllRanges();
     sel?.addRange(range);
   } catch {}
+}
+
+function insertPlainTextAtCursor(
+  text: string,
+  options?: { multiline?: boolean },
+): void {
+  const multiline = options?.multiline ?? true;
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0) {
+    document.execCommand?.("insertText", false, text);
+    return;
+  }
+
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+
+  let lastInserted: Node | null = null;
+  if (!multiline) {
+    const node = document.createTextNode(text.replace(/\r\n?/g, " "));
+    range.insertNode(node);
+    lastInserted = node;
+  } else {
+    const normalized = text.replace(/\r\n?/g, "\n");
+    const lines = normalized.split("\n");
+    const fragment = document.createDocumentFragment();
+    lines.forEach((line, index) => {
+      if (line.length > 0) {
+        const node = document.createTextNode(line);
+        fragment.appendChild(node);
+        lastInserted = node;
+      }
+      if (index < lines.length - 1) {
+        const br = document.createElement("br");
+        fragment.appendChild(br);
+        lastInserted = br;
+      }
+    });
+    if (!lastInserted) {
+      const placeholder = document.createTextNode("");
+      fragment.appendChild(placeholder);
+      lastInserted = placeholder;
+    }
+    range.insertNode(fragment);
+  }
+
+  if (lastInserted) {
+    range.setStartAfter(lastInserted);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
 }
 
 /* ============================================================================
@@ -307,7 +366,13 @@ const EditableText = forwardRef<HTMLDivElement, EditableProps>(
       e.preventDefault();
       let text = e.clipboardData.getData("text/plain") || "";
       if (!multiline) text = text.replace(/\s*\n+\s*/g, " ");
-      document.execCommand("insertText", false, sanitizeText(text));
+      const normalized = sanitizeText(text);
+      insertPlainTextAtCursor(normalized, { multiline: !!multiline });
+      onChange(
+        sanitizeText(
+          readEditableText(e.currentTarget, !!multiline),
+        ),
+      );
     };
 
     const handleKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (e) => {
@@ -322,7 +387,7 @@ const EditableText = forwardRef<HTMLDivElement, EditableProps>(
         });
       };
       const insertAndSync = (text: string) => {
-        document.execCommand?.("insertText", false, text);
+        insertPlainTextAtCursor(text, { multiline: !!multiline });
         syncAfterInput();
       };
 
@@ -1031,7 +1096,9 @@ function ParagraphEditor({
       placeholder="Párrafo… (Enter para salto de línea, Tab para tabular)"
       readOnly={readOnly}
       multiline
-      onShiftEnter={() => document.execCommand?.("insertText", false, "\n")}
+      onShiftEnter={() =>
+        insertPlainTextAtCursor("\n", { multiline: true })
+      }
     />
   );
 }

@@ -318,10 +318,23 @@ export default function TemplatesPage() {
       setCreatingQuote(true);
       setQuoteCreateError(null);
 
+      const leadName = cleanInput(quickLeadName);
+      const leadPhone = cleanInput(quickLeadPhone);
+      const leadEmail = cleanInput(quickLeadEmail);
+      const missing: string[] = [];
+      if (!leadName) missing.push("nombre");
+      if (!leadPhone) missing.push("teléfono");
+      if (!leadEmail) missing.push("email");
+      if (missing.length > 0) {
+        throw new Error(
+          `Completá ${missing.join(", ")} para guardar la cotización.`,
+        );
+      }
+
       const payload = {
-        lead_name: cleanInput(quickLeadName),
-        lead_phone: cleanInput(quickLeadPhone),
-        lead_email: cleanInput(quickLeadEmail),
+        lead_name: leadName,
+        lead_phone: leadPhone,
+        lead_email: leadEmail,
         note: "Creada desde Estudio PDF (Templates).",
         pdf_draft: formValue,
         pdf_draft_saved_at: new Date().toISOString(),
@@ -419,6 +432,11 @@ export default function TemplatesPage() {
   const selectedRadius = formValue.styles?.ui?.radius ?? cfg.styles?.ui?.radius ?? "2xl";
   const selectedDividers = formValue.styles?.ui?.dividers ?? cfg.styles?.ui?.dividers ?? true;
   const selectedLayout = formValue.layout ?? cfg.layout ?? "layoutA";
+  const canCreateQuoteFromStudy = Boolean(
+    cleanInput(quickLeadName) &&
+      cleanInput(quickLeadPhone) &&
+      cleanInput(quickLeadEmail),
+  );
 
   const patchStyleOverrides = useCallback(
     (patch: { colors?: Partial<StyleOverrideColors>; ui?: Partial<StyleOverrideUi> }) => {
@@ -900,36 +918,39 @@ export default function TemplatesPage() {
           {docType === "quote_budget" ? (
             <div className={PANEL_CLASS}>
               <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Crear cotización desde este estudio</h3>
-              <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Completá datos mínimos y abrila en `/quotes` para seguir el flujo comercial.</p>
+              <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Completá nombre, teléfono y email para guardarla y abrirla en `/quotes`.</p>
 
               <div className="mt-3 grid gap-2">
                 <input
                   type="text"
                   value={quickLeadName}
                   onChange={(e) => setQuickLeadName(e.target.value)}
-                  placeholder="Cliente (opcional)"
+                  placeholder="Nombre del cliente"
                   className={INPUT_CLASS}
+                  required
                 />
                 <input
                   type="text"
                   value={quickLeadPhone}
                   onChange={(e) => setQuickLeadPhone(e.target.value)}
-                  placeholder="Teléfono (opcional)"
+                  placeholder="Teléfono"
                   className={INPUT_CLASS}
+                  required
                 />
                 <input
                   type="email"
                   value={quickLeadEmail}
                   onChange={(e) => setQuickLeadEmail(e.target.value)}
-                  placeholder="Email (opcional)"
+                  placeholder="Email"
                   className={INPUT_CLASS}
+                  required
                 />
               </div>
 
               <button
                 type="button"
                 onClick={createQuoteFromTemplate}
-                disabled={creatingQuote || loading}
+                disabled={creatingQuote || loading || !canCreateQuoteFromStudy}
                 className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full border border-emerald-100 bg-emerald-50/90 px-5 py-2 text-sm font-medium text-emerald-900 shadow-sm shadow-emerald-900/10 transition hover:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-100/70 dark:bg-emerald-500/20 dark:text-emerald-100"
               >
                 {creatingQuote ? "Guardando..." : "Guardar y abrir cotización"}

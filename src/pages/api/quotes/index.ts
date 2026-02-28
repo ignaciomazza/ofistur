@@ -105,6 +105,51 @@ function sanitizePdfDraft(value: unknown): Prisma.InputJsonValue | null {
   return payload as Prisma.InputJsonValue;
 }
 
+const QUOTE_COUNTER_RETRY_LIMIT = 5000;
+
+async function getNextAvailableAgencyQuoteId(
+  tx: Prisma.TransactionClient,
+  id_agency: number,
+): Promise<number> {
+  let tries = 0;
+  while (tries < QUOTE_COUNTER_RETRY_LIMIT) {
+    const candidate = await getNextAgencyCounter(tx, id_agency, "quote");
+    const exists = await tx.quote.findFirst({
+      where: { id_agency, agency_quote_id: candidate },
+      select: { id_quote: true },
+    });
+    if (!exists) return candidate;
+    tries += 1;
+  }
+  throw new Error(
+    "No se pudo asignar un número de cotización de agencia disponible.",
+  );
+}
+
+async function getNextAvailableUserQuoteId(args: {
+  tx: Prisma.TransactionClient;
+  id_agency: number;
+  id_user: number;
+}): Promise<number> {
+  const { tx, id_agency, id_user } = args;
+  let tries = 0;
+  const key = `quote_user_${id_user}`;
+  while (tries < QUOTE_COUNTER_RETRY_LIMIT) {
+    const candidate = await getNextAgencyCounterByKey(tx, id_agency, key);
+    const exists = await tx.quote.findFirst({
+      where: {
+        id_agency,
+        id_user,
+        user_quote_id: candidate,
+      },
+      select: { id_quote: true },
+    });
+    if (!exists) return candidate;
+    tries += 1;
+  }
+  throw new Error("No se pudo asignar un número de cotización de usuario disponible.");
+}
+
 async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   const auth = await resolveQuoteAuth(req);
   if (!auth) return res.status(401).json({ error: "No autenticado" });
@@ -358,16 +403,15 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     const pdfLastFileName = cleanString(body.pdf_last_file_name, 180) ?? null;
 
     const created = await prisma.$transaction(async (tx) => {
-      const agencyQuoteId = await getNextAgencyCounter(
+      const agencyQuoteId = await getNextAvailableAgencyQuoteId(
         tx,
         auth.id_agency,
-        "quote",
       );
-      const userQuoteId = await getNextAgencyCounterByKey(
+      const userQuoteId = await getNextAvailableUserQuoteId({
         tx,
-        auth.id_agency,
-        `quote_user_${usedUserId}`,
-      );
+        id_agency: auth.id_agency,
+        id_user: usedUserId,
+      });
       return tx.quote.create({
         data: {
           user_quote_id: userQuoteId,
@@ -407,6 +451,15 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
 
     return res.status(201).json({ ...created, public_id });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return res.status(409).json({
+        error:
+          "No se pudo asignar un correlativo de cotización disponible. Reintentá.",
+      });
+    }
     console.error("[quotes][POST]", error);
     return res.status(500).json({ error: "Error creando cotización" });
   }

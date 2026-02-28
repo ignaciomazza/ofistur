@@ -4,11 +4,25 @@ import { Text, Font } from "@react-pdf/renderer";
 import type { TextProps } from "@react-pdf/renderer";
 import { NBSP, stripZeroWidth, expandTabs, preserveSpaces } from "@/lib/whitespace";
 
-// Desactiva hyphenation (evita cortes raros)
+const LONG_WORD_BREAK_CHUNK = 16;
+
+function splitLongWord(word: string): string[] {
+  if (word.length <= LONG_WORD_BREAK_CHUNK) return [word];
+  const chunks: string[] = [];
+  for (let i = 0; i < word.length; i += LONG_WORD_BREAK_CHUNK) {
+    chunks.push(word.slice(i, i + LONG_WORD_BREAK_CHUNK));
+  }
+  return chunks;
+}
+
+// Evita guiones automáticos, pero habilita quiebres en palabras muy largas
+// para que no desborden fuera del ancho del PDF.
 type FontHyph = {
   registerHyphenationCallback?: (cb: (w: string) => string[]) => void;
 };
-(Font as unknown as FontHyph).registerHyphenationCallback?.((w) => [w]);
+(Font as unknown as FontHyph).registerHyphenationCallback?.((w) =>
+  splitLongWord(String(w ?? "")),
+);
 
 const MAX_LEN = 120_000;
 
