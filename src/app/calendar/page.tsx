@@ -13,16 +13,25 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { authFetch } from "@/utils/authFetch";
 import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
 import {
+  canAccessFinanceSection,
   canManageResourceSection,
+  normalizeFinanceSectionRules,
   normalizeResourceSectionRules,
   resolveCalendarVisibility,
+  type FinanceSectionKey,
   type ResourceSectionAccessRule,
 } from "@/utils/permissions";
 
 type ClientStatus = "Todas" | "Pendiente" | "Pago" | "Facturado";
 type ViewOption = "dayGridMonth" | "dayGridWeek" | "dayGridDay";
 type NoteMode = "create" | "view" | "edit";
-type FilterMode = "bookings" | "services";
+type CalendarContext =
+  | "trips"
+  | "notes"
+  | "payment_plans"
+  | "operator_dues";
+type OperationsMode = "bookings" | "services";
+type FinanceStatus = "PENDIENTE" | "VENCIDA" | "PAGADA" | "CANCELADA";
 type DetailMode = "name" | "detail";
 
 interface User {
@@ -35,7 +44,12 @@ interface User {
 
 interface CalendarEvent extends EventInput {
   extendedProps?: {
-    kind?: "booking" | "service" | "note";
+    kind?:
+      | "booking"
+      | "service"
+      | "note"
+      | "client_payment"
+      | "operator_due";
     content?: string;
     creator?: string;
     bookingPublicId?: number | string;
@@ -51,6 +65,12 @@ interface CalendarEvent extends EventInput {
     reference?: string;
     description?: string;
     note?: string;
+    amount?: number;
+    currency?: string;
+    paymentId?: number;
+    paymentPublicId?: number;
+    operatorDueId?: number;
+    operatorDuePublicId?: number;
   };
 }
 
@@ -77,13 +97,39 @@ export default function CalendarPage() {
   const [selectedVendor, setSelectedVendor] = useState(0);
   const [selectedClientStatus, setSelectedClientStatus] =
     useState<ClientStatus>("Todas");
-  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
+  const [travelDateRange, setTravelDateRange] = useState<{
+    from: string;
+    to: string;
+  }>({
     from: "",
     to: "",
   });
+  const [notesDateRange, setNotesDateRange] = useState<{ from: string; to: string }>(
+    {
+      from: "",
+      to: "",
+    },
+  );
+  const [dueDateRange, setDueDateRange] = useState<{ from: string; to: string }>(
+    {
+      from: "",
+      to: "",
+    },
+  );
+  const [calendarContext, setCalendarContext] =
+    useState<CalendarContext>("trips");
+  const [operationsMode, setOperationsMode] =
+    useState<OperationsMode>("bookings");
+  const [selectedFinanceStatuses, setSelectedFinanceStatuses] = useState<
+    FinanceStatus[]
+  >(["PENDIENTE", "VENCIDA"]);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [currentView, setCurrentView] = useState<ViewOption>("dayGridMonth");
-  const [filterMode, setFilterMode] = useState<FilterMode>("bookings");
   const [detailMode, setDetailMode] = useState<DetailMode>("name");
+  const [financeSectionGrants, setFinanceSectionGrants] = useState<
+    FinanceSectionKey[]
+  >([]);
+  const [financeSectionLoaded, setFinanceSectionLoaded] = useState(false);
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
@@ -112,6 +158,12 @@ export default function CalendarPage() {
     "Pago",
     "Facturado",
   ];
+  const financeStatusOptions: FinanceStatus[] = [
+    "PENDIENTE",
+    "VENCIDA",
+    "PAGADA",
+    "CANCELADA",
+  ];
 
   const canManageCalendarNotes = useMemo(
     () =>
@@ -128,6 +180,80 @@ export default function CalendarPage() {
     () => resolveCalendarVisibility(role, resourceRule, resourceHasCustomRule),
     [resourceHasCustomRule, resourceRule, role],
   );
+
+  const canAccessPaymentPlansContext = useMemo(
+    () =>
+      canAccessFinanceSection(
+        role,
+        financeSectionGrants,
+        "payment_plans",
+      ),
+    [financeSectionGrants, role],
+  );
+
+  const canAccessOperatorDuesContext = useMemo(
+    () =>
+      canAccessFinanceSection(
+        role,
+        financeSectionGrants,
+        "operator_payments",
+      ),
+    [financeSectionGrants, role],
+  );
+
+  const availableContexts = useMemo(() => {
+    const options: Array<{ value: CalendarContext; label: string }> = [
+      { value: "trips", label: "Viajes" },
+      { value: "notes", label: "Notas" },
+    ];
+    if (canAccessPaymentPlansContext) {
+      options.push({ value: "payment_plans", label: "Planes pago" });
+    }
+    if (canAccessOperatorDuesContext) {
+      options.push({ value: "operator_dues", label: "Venc. operador" });
+    }
+    return options;
+  }, [canAccessOperatorDuesContext, canAccessPaymentPlansContext]);
+
+  const calendarContextLabel = useMemo(() => {
+    const match = availableContexts.find((item) => item.value === calendarContext);
+    return match?.label ?? "Viajes";
+  }, [availableContexts, calendarContext]);
+
+  const activeRangeLabel = useMemo(() => {
+    if (calendarContext === "trips") return "Rango fechas de viaje";
+    if (calendarContext === "notes") return "Rango de notas";
+    return "Rango vencimientos";
+  }, [calendarContext]);
+
+  const canShowFinanceStatusFilter =
+    calendarContext === "payment_plans" || calendarContext === "operator_dues";
+
+  const canShowPaxStatusFilter = calendarContext === "trips";
+
+  const canShowTripsMode = calendarContext === "trips";
+
+  const canShowNotesInfo = calendarContext === "notes";
+
+  const canShowVendorFilter = calendarVisibility === "all";
+
+  const activeDateRange = useMemo(() => {
+    if (calendarContext === "trips") return travelDateRange;
+    if (calendarContext === "notes") return notesDateRange;
+    return dueDateRange;
+  }, [calendarContext, dueDateRange, notesDateRange, travelDateRange]);
+
+  const setActiveDateRange = (field: "from" | "to", value: string) => {
+    if (calendarContext === "trips") {
+      setTravelDateRange((prev) => ({ ...prev, [field]: value }));
+      return;
+    }
+    if (calendarContext === "notes") {
+      setNotesDateRange((prev) => ({ ...prev, [field]: value }));
+      return;
+    }
+    setDueDateRange((prev) => ({ ...prev, [field]: value }));
+  };
 
   // Perfil + vendors + teams
   useEffect(() => {
@@ -204,6 +330,51 @@ export default function CalendarPage() {
     };
   }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await authFetch(
+          "/api/finance/section-access",
+          { cache: "no-store" },
+          token,
+        );
+        if (!res.ok) {
+          if (!alive) return;
+          setFinanceSectionGrants([]);
+          setFinanceSectionLoaded(true);
+          return;
+        }
+        const payload = (await res.json()) as {
+          rules?: unknown;
+        };
+        const rules = normalizeFinanceSectionRules(payload?.rules);
+        if (!alive) return;
+        setFinanceSectionGrants(rules[0]?.sections ?? []);
+      } catch {
+        if (!alive) return;
+        setFinanceSectionGrants([]);
+      } finally {
+        if (!alive) return;
+        setFinanceSectionLoaded(true);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (!financeSectionLoaded) return;
+    const allowed = new Set(availableContexts.map((item) => item.value));
+    if (!allowed.has(calendarContext)) {
+      setCalendarContext(availableContexts[0]?.value ?? "trips");
+    }
+  }, [availableContexts, calendarContext, financeSectionLoaded]);
+
   // Vendedores permitidos según rol
   const allowedVendors = useMemo(() => {
     if (!profile) return [];
@@ -229,6 +400,14 @@ export default function CalendarPage() {
   // Cargar eventos de calendario
   useEffect(() => {
     if (!token || !profile) return;
+    if (
+      (calendarContext === "payment_plans" && !canAccessPaymentPlansContext) ||
+      (calendarContext === "operator_dues" && !canAccessOperatorDuesContext)
+    ) {
+      setEvents([]);
+      setLoadingEvents(false);
+      return;
+    }
 
     const qs = new URLSearchParams();
     if (calendarVisibility === "own") {
@@ -237,12 +416,34 @@ export default function CalendarPage() {
       qs.append("userId", String(selectedVendor));
     }
 
-    if (selectedClientStatus !== "Todas") {
-      qs.append("clientStatus", selectedClientStatus);
+    if (
+      calendarContext === "payment_plans" ||
+      calendarContext === "operator_dues"
+    ) {
+      qs.append("context", "finance");
+      if (calendarContext === "payment_plans") {
+        qs.append("financeKinds", "client_payments");
+      } else {
+        qs.append("financeKinds", "operator_dues");
+      }
+      if (dueDateRange.from) qs.append("dueFrom", dueDateRange.from);
+      if (dueDateRange.to) qs.append("dueTo", dueDateRange.to);
+      qs.append("financeStatuses", selectedFinanceStatuses.join(","));
+    } else if (calendarContext === "trips") {
+      qs.append("context", "operations");
+      qs.append("operationsKinds", "trips");
+      if (selectedClientStatus !== "Todas") {
+        qs.append("clientStatus", selectedClientStatus);
+      }
+      if (travelDateRange.from) qs.append("from", travelDateRange.from);
+      if (travelDateRange.to) qs.append("to", travelDateRange.to);
+      if (operationsMode === "services") qs.append("mode", "services");
+    } else {
+      qs.append("context", "operations");
+      qs.append("operationsKinds", "notes");
+      if (notesDateRange.from) qs.append("from", notesDateRange.from);
+      if (notesDateRange.to) qs.append("to", notesDateRange.to);
     }
-    if (dateRange.from) qs.append("from", dateRange.from);
-    if (dateRange.to) qs.append("to", dateRange.to);
-    if (filterMode === "services") qs.append("mode", "services");
 
     setLoadingEvents(true);
     authFetch(`/api/calendar?${qs.toString()}`, { cache: "no-store" }, token)
@@ -259,6 +460,10 @@ export default function CalendarPage() {
                 ? "note"
                 : String(ev.id).startsWith("s-")
                   ? "service"
+                  : String(ev.id).startsWith("cp-")
+                    ? "client_payment"
+                    : String(ev.id).startsWith("od-")
+                      ? "operator_due"
                   : "booking"),
           },
         }));
@@ -271,10 +476,15 @@ export default function CalendarPage() {
     profile,
     calendarVisibility,
     selectedVendor,
+    calendarContext,
+    canAccessPaymentPlansContext,
+    canAccessOperatorDuesContext,
     selectedClientStatus,
-    dateRange,
-    allowedVendors,
-    filterMode,
+    travelDateRange,
+    notesDateRange,
+    dueDateRange,
+    operationsMode,
+    selectedFinanceStatuses,
   ]);
 
   const handleViewChange = (view: ViewOption) => {
@@ -287,6 +497,8 @@ export default function CalendarPage() {
     if (kind) return kind;
     if (event.id.startsWith("n-")) return "note";
     if (event.id.startsWith("s-")) return "service";
+    if (event.id.startsWith("cp-")) return "client_payment";
+    if (event.id.startsWith("od-")) return "operator_due";
     return "booking";
   };
 
@@ -304,6 +516,14 @@ export default function CalendarPage() {
   }) => {
     const kind = getEventKind(event);
     const props = event.extendedProps as CalendarEvent["extendedProps"];
+    const amountLabel =
+      props?.amount != null && props?.currency
+        ? `${new Intl.NumberFormat("es-AR", {
+            style: "currency",
+            currency: String(props.currency || "ARS").toUpperCase(),
+            minimumFractionDigits: 2,
+          }).format(props.amount)}`
+        : null;
     const tooltip =
       kind === "note"
         ? `Nota: ${event.title}`
@@ -317,6 +537,27 @@ export default function CalendarPage() {
             ]
               .filter(Boolean)
               .join(" · ")
+          : kind === "client_payment"
+            ? [
+                event.title,
+                props?.paymentPublicId != null &&
+                  `Cuota ${props.paymentPublicId}`,
+                amountLabel,
+                props?.status && `Estado: ${props.status}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            : kind === "operator_due"
+              ? [
+                  event.title,
+                  props?.operatorDuePublicId != null &&
+                    `Venc. ${props.operatorDuePublicId}`,
+                  props?.details && `Concepto: ${props.details}`,
+                  amountLabel,
+                  props?.status && `Estado: ${props.status}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
           : [
               event.title,
               props?.details && `Detalle: ${props.details}`,
@@ -350,12 +591,23 @@ export default function CalendarPage() {
       return;
     }
 
+    if (kind === "client_payment") {
+      router.push("/finance/payment-plans");
+      return;
+    }
+
     const bookingId = getBookingRouteId(event);
+    if (!bookingId) {
+      if (kind === "operator_due") {
+        router.push("/operators/payments");
+      }
+      return;
+    }
     router.push(`/bookings/services/${bookingId}`);
   };
 
   const handleDateClick = (arg: DateClickArg) => {
-    if (canManageCalendarNotes) {
+    if (calendarContext === "notes" && canManageCalendarNotes) {
       setNoteModal({
         open: true,
         mode: "create",
@@ -547,6 +799,45 @@ export default function CalendarPage() {
     return "bg-white/40 text-sky-950/70 ring-1 ring-sky-100/70 hover:bg-white/60 dark:bg-white/5 dark:text-white/60 dark:ring-white/10 dark:hover:bg-white/10";
   };
 
+  const getFinanceStatusPillClass = (
+    status: FinanceStatus,
+    selected: boolean,
+  ) => {
+    if (selected) {
+      if (status === "PENDIENTE") {
+        return "bg-amber-100/70 text-amber-950 ring-1 ring-amber-200/80 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-300/30";
+      }
+      if (status === "VENCIDA") {
+        return "bg-red-100/70 text-red-950 ring-1 ring-red-200/80 dark:bg-red-400/15 dark:text-red-100 dark:ring-red-300/30";
+      }
+      if (status === "PAGADA") {
+        return "bg-emerald-100/70 text-emerald-950 ring-1 ring-emerald-200/80 dark:bg-emerald-400/15 dark:text-emerald-100 dark:ring-emerald-300/30";
+      }
+      return "bg-zinc-100/70 text-zinc-950 ring-1 ring-zinc-200/80 dark:bg-zinc-400/15 dark:text-zinc-100 dark:ring-zinc-300/30";
+    }
+
+    if (status === "PENDIENTE") {
+      return "bg-amber-50/70 text-amber-900/70 ring-1 ring-amber-100/80 hover:bg-amber-100/60 dark:bg-amber-400/5 dark:text-amber-100/70 dark:ring-amber-300/20 dark:hover:bg-amber-400/10";
+    }
+    if (status === "VENCIDA") {
+      return "bg-red-50/70 text-red-900/70 ring-1 ring-red-100/80 hover:bg-red-100/60 dark:bg-red-400/5 dark:text-red-100/70 dark:ring-red-300/20 dark:hover:bg-red-400/10";
+    }
+    if (status === "PAGADA") {
+      return "bg-emerald-50/70 text-emerald-900/70 ring-1 ring-emerald-100/80 hover:bg-emerald-100/60 dark:bg-emerald-400/5 dark:text-emerald-100/70 dark:ring-emerald-300/20 dark:hover:bg-emerald-400/10";
+    }
+    return "bg-zinc-50/70 text-zinc-900/70 ring-1 ring-zinc-100/80 hover:bg-zinc-100/60 dark:bg-zinc-400/5 dark:text-zinc-100/70 dark:ring-zinc-300/20 dark:hover:bg-zinc-400/10";
+  };
+
+  const toggleFinanceStatus = (status: FinanceStatus) => {
+    setSelectedFinanceStatuses((prev) => {
+      if (prev.includes(status)) {
+        const next = prev.filter((item) => item !== status);
+        return next.length > 0 ? next : prev;
+      }
+      return [...prev, status];
+    });
+  };
+
   const eventClassNames = ({ event }: { event: EventApi }) => {
     const kind = getEventKind(event);
     const base = [
@@ -585,6 +876,30 @@ export default function CalendarPage() {
       ];
     }
 
+    if (kind === "client_payment") {
+      return [
+        ...base,
+        "!bg-violet-100/70",
+        "!text-sky-950",
+        "border-violet-200/70",
+        "dark:!bg-violet-400/10",
+        "dark:!text-violet-100",
+        "dark:border-violet-300/20",
+      ];
+    }
+
+    if (kind === "operator_due") {
+      return [
+        ...base,
+        "!bg-rose-100/70",
+        "!text-sky-950",
+        "border-rose-200/70",
+        "dark:!bg-rose-400/10",
+        "dark:!text-rose-100",
+        "dark:border-rose-300/20",
+      ];
+    }
+
     return [
       ...base,
       "!bg-sky-100/70",
@@ -605,6 +920,14 @@ export default function CalendarPage() {
       props?.content && props.content.length > 80
         ? `${props.content.slice(0, 80)}…`
         : props?.content;
+    const amountLabel =
+      props?.amount != null && props?.currency
+        ? new Intl.NumberFormat("es-AR", {
+            style: "currency",
+            currency: String(props.currency || "ARS").toUpperCase(),
+            minimumFractionDigits: 2,
+          }).format(props.amount)
+        : null;
 
     const secondaryLine =
       kind === "booking"
@@ -613,6 +936,12 @@ export default function CalendarPage() {
           ? [props?.serviceType, props?.destination, props?.description]
               .filter(Boolean)
               .join(" · ")
+          : kind === "client_payment"
+            ? [props?.serviceType, props?.description].filter(Boolean).join(" · ")
+            : kind === "operator_due"
+              ? [props?.details, props?.serviceType, props?.description]
+                  .filter(Boolean)
+                  .join(" · ")
           : noteSnippet;
 
     const badges: { label: string; tone: "sky" | "emerald" | "amber" }[] = [];
@@ -649,6 +978,28 @@ export default function CalendarPage() {
     if (kind === "note" && props?.creator) {
       badges.push({ label: props.creator, tone: "sky" });
     }
+    if (kind === "client_payment") {
+      if (props?.paymentPublicId != null) {
+        badges.push({ label: `Cuota ${props.paymentPublicId}`, tone: "sky" });
+      }
+      if (amountLabel) {
+        badges.push({ label: amountLabel, tone: "emerald" });
+      }
+      if (props?.status) {
+        badges.push({ label: props.status, tone: "amber" });
+      }
+    }
+    if (kind === "operator_due") {
+      if (props?.operatorDuePublicId != null) {
+        badges.push({ label: `Venc. ${props.operatorDuePublicId}`, tone: "sky" });
+      }
+      if (amountLabel) {
+        badges.push({ label: amountLabel, tone: "emerald" });
+      }
+      if (props?.status) {
+        badges.push({ label: props.status, tone: "amber" });
+      }
+    }
 
     const icon = isDay ? (
       kind === "note" ? (
@@ -664,6 +1015,36 @@ export default function CalendarPage() {
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M16.862 4.487 19.5 7.125m-2.638-2.638L7.5 13.85l-1 4.15 4.15-1 9.212-9.213a2.121 2.121 0 0 0-3-3Z"
+          />
+        </svg>
+      ) : kind === "client_payment" ? (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.6}
+          className="size-3"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3.75 8.25h16.5m-15 0 1.5-3h10.5l1.5 3m-12 0V18a1.5 1.5 0 0 0 1.5 1.5h8.25a1.5 1.5 0 0 0 1.5-1.5V8.25M9 12h6"
+          />
+        </svg>
+      ) : kind === "operator_due" ? (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.6}
+          className="size-3"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 6v6l3.75 2.25M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
           />
         </svg>
       ) : kind === "service" ? (
@@ -778,12 +1159,35 @@ export default function CalendarPage() {
         </div>
 
         <div className="rounded-3xl border border-sky-200/60 bg-white/20 p-4 text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-white">
-          <div className="grid grid-cols-1 items-end gap-4 lg:grid-cols-2 xl:grid-cols-3">
-            <div className="flex flex-col gap-1">
+          <div className="grid grid-cols-1 items-end gap-4 lg:grid-cols-6 xl:grid-cols-12">
+            <div className="flex flex-col gap-1 lg:col-span-4 xl:col-span-5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                Contexto
+              </span>
+              <div className="flex flex-wrap items-center gap-1 rounded-full border border-indigo-200/70 bg-indigo-100/20 p-1 shadow-inner shadow-indigo-950/5 dark:border-indigo-300/20 dark:bg-indigo-400/5 dark:shadow-none">
+                {availableContexts.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    title={option.label}
+                    onClick={() => setCalendarContext(option.value)}
+                    className={`h-10 min-w-[108px] flex-1 cursor-pointer justify-center whitespace-nowrap rounded-full px-2 text-[11px] transition sm:px-3 sm:text-xs ${
+                      calendarContext === option.value
+                        ? "bg-indigo-100/5 text-indigo-950 shadow-sm shadow-indigo-950/10 ring-1 ring-indigo-200/80 dark:bg-indigo-400/5 dark:text-indigo-100 dark:ring-indigo-300/30"
+                        : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1 lg:col-span-2 xl:col-span-3">
               <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
                 Vista
               </span>
-              <div className="flex flex-wrap items-center gap-1 rounded-full border border-sky-200/70 bg-sky-100/20 p-1 shadow-inner shadow-sky-950/5 dark:border-white/10 dark:bg-white/5 dark:shadow-none">
+              <div className="grid grid-cols-3 items-center gap-1 rounded-full border border-sky-200/70 bg-sky-100/20 p-1 shadow-inner shadow-sky-950/5 dark:border-white/10 dark:bg-white/5 dark:shadow-none">
                 {(
                   ["dayGridMonth", "dayGridWeek", "dayGridDay"] as ViewOption[]
                 ).map((v) => (
@@ -791,263 +1195,202 @@ export default function CalendarPage() {
                     key={v}
                     type="button"
                     onClick={() => handleViewChange(v)}
-                    className={`flex-1 cursor-pointer justify-center rounded-full px-4 py-2 text-xs transition ${
+                    className={`h-9 min-w-0 cursor-pointer justify-center whitespace-nowrap rounded-full px-2 text-xs transition ${
                       currentView === v
                         ? "bg-white/80 text-sky-950 shadow-sm shadow-sky-950/10 ring-1 ring-sky-200/80 dark:bg-white/10 dark:text-white dark:ring-white/10"
                         : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
                     }`}
                   >
-                    <span className="flex items-center gap-2">
-                      {v === "dayGridMonth" ? (
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                          className="size-4"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M6.75 3v1.5m10.5-1.5V4.5M3.75 8.25h16.5M4.5 6h15a1.5 1.5 0 0 1 1.5 1.5v12a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5v-12A1.5 1.5 0 0 1 4.5 6Z"
-                          />
-                        </svg>
-                      ) : v === "dayGridWeek" ? (
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                          className="size-4"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M3 8.25h18M3 12h18M3 15.75h18M6.75 4.5h10.5"
-                          />
-                        </svg>
-                      ) : (
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                          className="size-4"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M6 4.5h12M6 9h12M6 13.5h12M6 18h12"
-                          />
-                        </svg>
-                      )}
-                      {v === "dayGridMonth"
-                        ? "Mes"
-                        : v === "dayGridWeek"
-                          ? "Semana"
-                          : "Día"}
-                    </span>
+                    {v === "dayGridMonth"
+                      ? "Mes"
+                      : v === "dayGridWeek"
+                        ? "Semana"
+                        : "Día"}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                Mostrar
-              </span>
-              <div className="flex flex-wrap items-center gap-1 rounded-full border border-emerald-200/70 bg-emerald-100/20 p-1 shadow-inner shadow-emerald-950/5 dark:border-emerald-300/20 dark:bg-emerald-400/5 dark:shadow-none">
-                <button
-                  onClick={() => setFilterMode("bookings")}
-                  type="button"
-                  className={`flex-1 cursor-pointer justify-center rounded-full px-4 py-2 text-xs transition ${
-                    filterMode === "bookings"
-                      ? "bg-emerald-100/5 text-emerald-950 shadow-sm shadow-emerald-950/10 ring-1 ring-emerald-200/80 dark:bg-emerald-400/5 dark:text-emerald-100 dark:ring-emerald-300/30"
-                      : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                      className="size-4"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M6.75 3.75h10.5A2.25 2.25 0 0 1 19.5 6v12a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 18V6a2.25 2.25 0 0 1 2.25-2.25ZM9 8.25h6M9 12h6M9 15.75h4.5"
-                      />
-                    </svg>
-                    Reservas
-                  </span>
-                </button>
-                <button
-                  onClick={() => setFilterMode("services")}
-                  type="button"
-                  className={`flex-1 cursor-pointer justify-center rounded-full px-4 py-2 text-xs transition ${
-                    filterMode === "services"
-                      ? "bg-emerald-100/5 text-emerald-950 shadow-sm shadow-emerald-950/10 ring-1 ring-emerald-200/80 dark:bg-emerald-400/5 dark:text-emerald-100 dark:ring-emerald-300/30"
-                      : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                      className="size-4"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M21 7.5 14.25 14.25m0 0-3-3m3 3L7.5 21M14.25 14.25l2.25-2.25M7.5 21H3v-4.5l9.75-9.75a2.121 2.121 0 1 1 3 3L7.5 21Z"
-                      />
-                    </svg>
-                    Servicios
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                Detalle
-              </span>
-              <div className="flex flex-wrap items-center gap-1 rounded-full border border-amber-200/70 bg-amber-100/20 p-1 shadow-inner shadow-amber-950/5 dark:border-amber-300/20 dark:bg-amber-400/5 dark:shadow-none">
-                <button
-                  type="button"
-                  onClick={() => setDetailMode("name")}
-                  className={`flex-1 cursor-pointer justify-center rounded-full px-4 py-2 text-xs transition ${
-                    detailMode === "name"
-                      ? "bg-amber-100/5 text-amber-950 shadow-sm shadow-amber-950/10 ring-1 ring-amber-200/80 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-300/30"
-                      : "text-amber-900/70 hover:bg-amber-100/50 dark:text-amber-100/70 dark:hover:bg-amber-400/10"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                      className="size-4"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M15.75 7.5a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 19.5a7.5 7.5 0 0 1 15 0v.75H4.5v-.75Z"
-                      />
-                    </svg>
-                    Solo nombre
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDetailMode("detail")}
-                  className={`flex-1 cursor-pointer justify-center rounded-full px-4 py-2 text-xs transition ${
-                    detailMode === "detail"
-                      ? "bg-amber-100/5 text-amber-950 shadow-sm shadow-amber-950/10 ring-1 ring-amber-200/80 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-300/30"
-                      : "text-amber-900/70 hover:bg-amber-100/50 dark:text-amber-100/70 dark:hover:bg-amber-400/10"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                      className="size-4"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M8.25 6.75h7.5m-7.5 3.75h7.5m-7.5 3.75h4.5M5.25 3.75h10.5A2.25 2.25 0 0 1 18 6v12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18V6a2.25 2.25 0 0 1 2.25-2.25Z"
-                      />
-                    </svg>
-                    Nombre + detalle
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            {calendarVisibility === "all" && (
-              <div className="min-w-[200px] flex-1">
-                <label className="block cursor-text text-sm font-medium dark:text-white">
-                  Vendedor
-                </label>
-                <input
-                  list="vendors-list"
-                  value={vendorInput}
-                  onChange={(e) => setVendorInput(e.target.value)}
-                  placeholder="Buscar vendedor..."
-                  className="mt-1 w-full appearance-none rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
-                />
-                <datalist id="vendors-list">
-                  {allowedVendors.map((v) => (
-                    <option
-                      key={v.id_user}
-                      value={`${v.first_name} ${v.last_name}`}
-                    />
-                  ))}
-                </datalist>
-              </div>
-            )}
-
-            <div>
-              <label className="block cursor-text text-sm font-medium dark:text-white">
-                Rango fechas
+            <div className="lg:col-span-6 xl:col-span-4">
+              <label className="block cursor-text text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                {activeRangeLabel}
               </label>
               <div className="mt-1 flex items-center gap-2">
                 <input
                   type="date"
-                  value={dateRange.from}
-                  onChange={(e) =>
-                    setDateRange((r) => ({ ...r, from: e.target.value }))
-                  }
+                  value={activeDateRange.from}
+                  onChange={(e) => setActiveDateRange("from", e.target.value)}
                   className="cursor-text rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
                 />
                 <span className="text-sky-950 dark:text-white">–</span>
                 <input
                   type="date"
-                  value={dateRange.to}
-                  onChange={(e) =>
-                    setDateRange((r) => ({ ...r, to: e.target.value }))
-                  }
+                  value={activeDateRange.to}
+                  onChange={(e) => setActiveDateRange("to", e.target.value)}
                   className="cursor-text rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
                 />
               </div>
             </div>
-
-            <div>
-              <label className="block cursor-text text-sm font-medium dark:text-white">
-                Estado pax
-              </label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {clientStatusOptions.map((status) => (
-                  <button
-                    key={status}
-                    type="button"
-                    onClick={() => setSelectedClientStatus(status)}
-                    className={`rounded-full px-3 py-1 text-xs transition ${getStatusPillClass(
-                      status,
-                      selectedClientStatus === status,
-                    )}`}
-                  >
-                    {status}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-sky-200/60 pt-3 dark:border-white/10">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-sky-950/70 dark:text-white/70">
+              <span className="rounded-full border border-white/20 bg-white/30 px-3 py-1 dark:bg-white/10">
+                Contexto activo: {calendarContextLabel}
+              </span>
+              {canShowNotesInfo && (
+                <span className="rounded-full border border-white/20 bg-white/30 px-3 py-1 dark:bg-white/10">
+                  {canManageCalendarNotes
+                    ? "Click en una fecha para crear nota"
+                    : "Notas en modo solo lectura"}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvancedFilters((prev) => !prev)}
+              className="rounded-full border border-sky-200/80 bg-white/40 px-4 py-2 text-xs font-medium transition hover:bg-white/60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+            >
+              {showAdvancedFilters
+                ? "Ocultar filtros avanzados"
+                : "Mostrar filtros avanzados"}
+            </button>
+          </div>
+
+          {showAdvancedFilters && (
+            <div className="mt-4 grid grid-cols-1 items-end gap-4 border-t border-sky-200/60 pt-4 dark:border-white/10 md:grid-cols-2">
+              {canShowTripsMode && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                    Tipo de viaje
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1 rounded-full border border-emerald-200/70 bg-emerald-100/20 p-1 shadow-inner shadow-emerald-950/5 dark:border-emerald-300/20 dark:bg-emerald-400/5 dark:shadow-none">
+                    <button
+                      onClick={() => setOperationsMode("bookings")}
+                      type="button"
+                      className={`flex-1 cursor-pointer justify-center rounded-full px-4 py-2 text-xs transition ${
+                        operationsMode === "bookings"
+                          ? "bg-emerald-100/5 text-emerald-950 shadow-sm shadow-emerald-950/10 ring-1 ring-emerald-200/80 dark:bg-emerald-400/5 dark:text-emerald-100 dark:ring-emerald-300/30"
+                          : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
+                      }`}
+                    >
+                      Reservas
+                    </button>
+                    <button
+                      onClick={() => setOperationsMode("services")}
+                      type="button"
+                      className={`flex-1 cursor-pointer justify-center rounded-full px-4 py-2 text-xs transition ${
+                        operationsMode === "services"
+                          ? "bg-emerald-100/5 text-emerald-950 shadow-sm shadow-emerald-950/10 ring-1 ring-emerald-200/80 dark:bg-emerald-400/5 dark:text-emerald-100 dark:ring-emerald-300/30"
+                          : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
+                      }`}
+                    >
+                      Servicios
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                  Detalle
+                </span>
+                <div className="grid grid-cols-2 items-center gap-1 rounded-full border border-amber-200/70 bg-amber-100/20 p-1 shadow-inner shadow-amber-950/5 dark:border-amber-300/20 dark:bg-amber-400/5 dark:shadow-none">
+                  <button
+                    type="button"
+                    onClick={() => setDetailMode("name")}
+                    className={`h-10 min-w-0 cursor-pointer justify-center whitespace-nowrap rounded-full px-2 text-[11px] transition sm:text-xs ${
+                      detailMode === "name"
+                        ? "bg-amber-100/5 text-amber-950 shadow-sm shadow-amber-950/10 ring-1 ring-amber-200/80 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-300/30"
+                        : "text-amber-900/70 hover:bg-amber-100/50 dark:text-amber-100/70 dark:hover:bg-amber-400/10"
+                    }`}
+                  >
+                    Solo nombre
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailMode("detail")}
+                    className={`h-10 min-w-0 cursor-pointer justify-center whitespace-nowrap rounded-full px-2 text-[11px] transition sm:text-xs ${
+                      detailMode === "detail"
+                        ? "bg-amber-100/5 text-amber-950 shadow-sm shadow-amber-950/10 ring-1 ring-amber-200/80 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-300/30"
+                        : "text-amber-900/70 hover:bg-amber-100/50 dark:text-amber-100/70 dark:hover:bg-amber-400/10"
+                    }`}
+                  >
+                    Nombre + detalle
+                  </button>
+                </div>
+              </div>
+
+              {canShowVendorFilter && (
+                <div className="min-w-[200px]">
+                  <label className="block cursor-text text-sm font-medium dark:text-white">
+                    Vendedor
+                  </label>
+                  <input
+                    list="vendors-list"
+                    value={vendorInput}
+                    onChange={(e) => setVendorInput(e.target.value)}
+                    placeholder="Buscar vendedor..."
+                    className="mt-1 w-full appearance-none rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
+                  />
+                  <datalist id="vendors-list">
+                    {allowedVendors.map((v) => (
+                      <option
+                        key={v.id_user}
+                        value={`${v.first_name} ${v.last_name}`}
+                      />
+                    ))}
+                  </datalist>
+                </div>
+              )}
+
+              {canShowPaxStatusFilter && (
+                <div>
+                  <label className="block cursor-text text-sm font-medium dark:text-white">
+                    Estado pax
+                  </label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {clientStatusOptions.map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setSelectedClientStatus(status)}
+                        className={`rounded-full px-3 py-1 text-xs transition ${getStatusPillClass(
+                          status,
+                          selectedClientStatus === status,
+                        )}`}
+                      >
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {canShowFinanceStatusFilter && (
+                <div>
+                  <label className="block cursor-text text-sm font-medium dark:text-white">
+                    Estado financiero
+                  </label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {financeStatusOptions.map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => toggleFinanceStatus(status)}
+                        className={`rounded-full px-3 py-1 text-xs transition ${getFinanceStatusPillClass(
+                          status,
+                          selectedFinanceStatuses.includes(status),
+                        )}`}
+                      >
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="">

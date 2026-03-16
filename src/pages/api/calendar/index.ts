@@ -5,6 +5,17 @@ import { jwtVerify, type JWTPayload } from "jose";
 import { encodePublicId } from "@/lib/publicIds";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { resolveCalendarVisibilityByUser } from "@/lib/resourceAccess";
+import { getFinanceSectionGrants } from "@/lib/accessControl";
+import {
+  canAccessFinanceSection,
+  normalizeRole,
+} from "@/utils/permissions";
+import {
+  endOfDayUtcFromDateKeyInBuenosAires,
+  startOfDayUtcFromDateKeyInBuenosAires,
+  todayDateKeyInBuenosAires,
+  toDateKeyInBuenosAiresLegacySafe,
+} from "@/lib/buenosAiresDate";
 
 /** ====== Auth local al endpoint (sin helpers externos) ====== */
 type TokenPayload = JWTPayload & {
@@ -17,6 +28,12 @@ type TokenPayload = JWTPayload & {
   aid?: number;
   email?: string;
 };
+
+type CalendarContext = "operations" | "finance";
+type OperationsKind = "trips" | "notes";
+type FinanceKind = "client_payments" | "operator_dues";
+type FinanceStatus = "PENDIENTE" | "VENCIDA" | "PAGADA" | "CANCELADA";
+type PersistedFinanceStatus = "PENDIENTE" | "PAGADA" | "CANCELADA";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
@@ -107,6 +124,103 @@ function toDateAtEnd(v?: string): Date | undefined {
   return d;
 }
 
+function toDateAtStartInBuenosAires(v?: string): Date | undefined {
+  if (!v) return undefined;
+  return startOfDayUtcFromDateKeyInBuenosAires(v) ?? toDateAtStart(v);
+}
+
+function toDateAtEndInBuenosAires(v?: string): Date | undefined {
+  if (!v) return undefined;
+  return endOfDayUtcFromDateKeyInBuenosAires(v) ?? toDateAtEnd(v);
+}
+
+function parseCsvValues(input: unknown): string[] {
+  if (typeof input !== "string") return [];
+  return input
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseFinanceKinds(input: unknown): Set<FinanceKind> {
+  const values = parseCsvValues(input).map((value) => value.toLowerCase());
+  const selected = new Set<FinanceKind>();
+  for (const value of values) {
+    if (value === "client_payments" || value === "clientpayments") {
+      selected.add("client_payments");
+    }
+    if (value === "operator_dues" || value === "operatordues") {
+      selected.add("operator_dues");
+    }
+  }
+  if (selected.size === 0) {
+    selected.add("client_payments");
+    selected.add("operator_dues");
+  }
+  return selected;
+}
+
+function parseOperationsKinds(input: unknown): Set<OperationsKind> {
+  const values = parseCsvValues(input).map((value) => value.toLowerCase());
+  const selected = new Set<OperationsKind>();
+  for (const value of values) {
+    if (value === "trips" || value === "viajes") {
+      selected.add("trips");
+    }
+    if (value === "notes" || value === "notas") {
+      selected.add("notes");
+    }
+  }
+  if (selected.size === 0) {
+    selected.add("trips");
+    selected.add("notes");
+  }
+  return selected;
+}
+
+function parseFinanceStatuses(input: unknown): Set<FinanceStatus> {
+  const values = parseCsvValues(input).map((value) => value.toUpperCase());
+  const selected = new Set<FinanceStatus>();
+  for (const value of values) {
+    if (
+      value === "PENDIENTE" ||
+      value === "VENCIDA" ||
+      value === "PAGADA" ||
+      value === "CANCELADA"
+    ) {
+      selected.add(value);
+    }
+  }
+
+  if (selected.size === 0) {
+    selected.add("PENDIENTE");
+    selected.add("VENCIDA");
+  }
+  return selected;
+}
+
+function normalizePersistedStatus(raw: unknown): PersistedFinanceStatus {
+  const value = String(raw || "")
+    .trim()
+    .toUpperCase();
+  if (value === "PAGO" || value === "PAGADA") return "PAGADA";
+  if (value === "CANCELADO" || value === "CANCELADA") return "CANCELADA";
+  return "PENDIENTE";
+}
+
+function deriveFinanceStatus(
+  statusRaw: unknown,
+  dueDate: Date,
+  todayKey: string,
+): FinanceStatus {
+  const persisted = normalizePersistedStatus(statusRaw);
+  if (persisted === "PAGADA") return "PAGADA";
+  if (persisted === "CANCELADA") return "CANCELADA";
+  const dueKey = toDateKeyInBuenosAiresLegacySafe(dueDate);
+  if (dueKey && todayKey && dueKey < todayKey) return "VENCIDA";
+  return "PENDIENTE";
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
@@ -139,7 +253,23 @@ export default async function handler(
     });
 
     // --------- parámetros ---------
-    const { userId, userIds, clientStatus, from, to, mode } = req.query;
+    const {
+      userId,
+      userIds,
+      clientStatus,
+      from,
+      to,
+      mode,
+      operationsKinds,
+      context,
+      dueFrom,
+      dueTo,
+      financeKinds,
+      financeStatuses,
+    } = req.query;
+    const calendarContext: CalendarContext =
+      context === "finance" ? "finance" : "operations";
+    const selectedOperationsKinds = parseOperationsKinds(operationsKinds);
     const calendarMode =
       typeof mode === "string" && mode === "services" ? "services" : "bookings";
 
@@ -161,9 +291,13 @@ export default async function handler(
       }
     }
 
+    const bookingOperationFilter: Prisma.BookingWhereInput = {
+      ...baseBookingFilter,
+    };
+
     // estado de pax (siempre dentro de la agencia)
     if (typeof clientStatus === "string" && clientStatus !== "Todas") {
-      baseBookingFilter.clientStatus = clientStatus;
+      bookingOperationFilter.clientStatus = clientStatus;
     }
 
     // rango por fecha de partida — extremos independientes
@@ -181,10 +315,12 @@ export default async function handler(
 
     // --------- datos ---------
     const bookingEvents =
+      calendarContext === "operations" &&
+      selectedOperationsKinds.has("trips") &&
       calendarMode === "bookings"
         ? (
             await prisma.booking.findMany({
-              where: { ...baseBookingFilter, ...bookingDateFilter },
+              where: { ...bookingOperationFilter, ...bookingDateFilter },
               include: {
                 titular: true,
                 _count: { select: { services: true } },
@@ -218,6 +354,8 @@ export default async function handler(
         : [];
 
     const serviceEvents =
+      calendarContext === "operations" &&
+      selectedOperationsKinds.has("trips") &&
       calendarMode === "services"
         ? (
             await prisma.service.findMany({
@@ -231,7 +369,7 @@ export default async function handler(
                       },
                     }
                   : {}),
-                booking: baseBookingFilter,
+                booking: bookingOperationFilter,
               },
               include: {
                 booking: {
@@ -277,25 +415,273 @@ export default async function handler(
           })
         : [];
 
-    // Notas de la misma agencia (se une por el creador)
-    const notes = await prisma.calendarNote.findMany({
-      where:
-        calendarVisibility === "own"
-          ? { creator: { id_agency, id_user: auth.id_user } }
-          : { creator: { id_agency } },
-      include: { creator: { select: { first_name: true, last_name: true } } },
-    });
+    if (calendarContext === "finance") {
+      const financeGrants = await getFinanceSectionGrants(
+        auth.id_agency,
+        auth.id_user,
+      );
+      const normalizedRole = normalizeRole(auth.role);
+      const canAccessPaymentPlans = canAccessFinanceSection(
+        normalizedRole,
+        financeGrants,
+        "payment_plans",
+      );
+      const canAccessOperatorPayments = canAccessFinanceSection(
+        normalizedRole,
+        financeGrants,
+        "operator_payments",
+      );
 
-    const noteEvents = notes.map((n) => ({
-      id: `n-${n.id}`,
-      title: n.title,
-      start: n.date,
-      extendedProps: {
-        kind: "note",
-        content: n.content,
-        creator: `${n.creator.first_name} ${n.creator.last_name}`,
-      },
-    }));
+      if (!canAccessPaymentPlans && !canAccessOperatorPayments) {
+        return res
+          .status(403)
+          .json({ error: "Sin permisos para el calendario financiero" });
+      }
+
+      const selectedKinds = parseFinanceKinds(financeKinds);
+      const selectedStatuses = parseFinanceStatuses(financeStatuses);
+      // El calendario financiero opera solo sobre flujos no-grupales.
+      const financeBookingFilter: Prisma.BookingWhereInput = {
+        ...baseBookingFilter,
+        travel_group_id: null,
+      };
+      const todayKey = todayDateKeyInBuenosAires();
+      const fallbackTodayStart = new Date();
+      fallbackTodayStart.setUTCHours(0, 0, 0, 0);
+      const todayStart =
+        startOfDayUtcFromDateKeyInBuenosAires(todayKey) ?? fallbackTodayStart;
+      const dueGte = toDateAtStartInBuenosAires(
+        typeof dueFrom === "string" ? dueFrom : undefined,
+      );
+      const dueLte = toDateAtEndInBuenosAires(
+        typeof dueTo === "string" ? dueTo : undefined,
+      );
+
+      const dueDateFilter =
+        dueGte || dueLte
+          ? {
+              due_date: {
+                ...(dueGte ? { gte: dueGte } : {}),
+                ...(dueLte ? { lte: dueLte } : {}),
+              },
+            }
+          : {};
+
+      const clientPaymentStatusClauses: Prisma.ClientPaymentWhereInput[] = [];
+      if (selectedStatuses.has("PENDIENTE")) {
+        clientPaymentStatusClauses.push({
+          status: "PENDIENTE",
+          ...(todayStart ? { due_date: { gte: todayStart } } : {}),
+        });
+      }
+      if (selectedStatuses.has("VENCIDA")) {
+        clientPaymentStatusClauses.push({
+          status: "PENDIENTE",
+          ...(todayStart ? { due_date: { lt: todayStart } } : {}),
+        });
+      }
+      if (selectedStatuses.has("PAGADA")) {
+        clientPaymentStatusClauses.push({ status: "PAGADA" });
+      }
+      if (selectedStatuses.has("CANCELADA")) {
+        clientPaymentStatusClauses.push({ status: "CANCELADA" });
+      }
+
+      const clientPaymentEvents =
+        selectedKinds.has("client_payments") && canAccessPaymentPlans
+          ? (
+              await prisma.clientPayment.findMany({
+                where: {
+                  id_agency,
+                  booking: financeBookingFilter,
+                  ...dueDateFilter,
+                  ...(clientPaymentStatusClauses.length > 0
+                    ? { OR: clientPaymentStatusClauses }
+                    : {}),
+                },
+                include: {
+                  client: {
+                    select: { first_name: true, last_name: true },
+                  },
+                  booking: {
+                    select: {
+                      id_booking: true,
+                      agency_booking_id: true,
+                    },
+                  },
+                  service: {
+                    select: {
+                      type: true,
+                      description: true,
+                    },
+                  },
+                },
+              })
+            )
+              .map((payment) => {
+                const derivedStatus = deriveFinanceStatus(
+                  payment.status,
+                  payment.due_date,
+                  todayKey,
+                );
+                if (!selectedStatuses.has(derivedStatus)) return null;
+                const publicId =
+                  payment.booking.agency_booking_id != null
+                    ? encodePublicId({
+                        t: "booking",
+                        a: id_agency,
+                        i: payment.booking.agency_booking_id,
+                      })
+                    : null;
+                return {
+                  id: `cp-${payment.id_payment}`,
+                  title: `${payment.client.first_name} ${payment.client.last_name}`,
+                  start: payment.due_date,
+                  extendedProps: {
+                    kind: "client_payment",
+                    bookingPublicId: publicId ?? payment.booking.id_booking,
+                    bookingId: payment.booking.id_booking,
+                    status: derivedStatus,
+                    details: payment.service?.description || undefined,
+                    serviceType: payment.service?.type || undefined,
+                    amount: Number(payment.amount),
+                    currency: payment.currency,
+                    paymentId: payment.id_payment,
+                    paymentPublicId:
+                      payment.agency_client_payment_id ?? payment.id_payment,
+                  },
+                };
+              })
+              .filter((event): event is NonNullable<typeof event> => !!event)
+          : [];
+
+      const operatorDueEvents =
+        selectedKinds.has("operator_dues") && canAccessOperatorPayments
+          ? (
+              await prisma.operatorDue.findMany({
+                where: {
+                  id_agency,
+                  booking: financeBookingFilter,
+                  ...dueDateFilter,
+                },
+                include: {
+                  booking: {
+                    select: {
+                      id_booking: true,
+                      agency_booking_id: true,
+                      titular: { select: { first_name: true, last_name: true } },
+                    },
+                  },
+                  service: {
+                    select: {
+                      type: true,
+                      description: true,
+                      reference: true,
+                    },
+                  },
+                },
+              })
+            )
+              .map((due) => {
+                const derivedStatus = deriveFinanceStatus(
+                  due.status,
+                  due.due_date,
+                  todayKey,
+                );
+                if (!selectedStatuses.has(derivedStatus)) return null;
+                const publicId =
+                  due.booking.agency_booking_id != null
+                    ? encodePublicId({
+                        t: "booking",
+                        a: id_agency,
+                        i: due.booking.agency_booking_id,
+                      })
+                    : null;
+                return {
+                  id: `od-${due.id_due}`,
+                  title: `${due.booking.titular.first_name} ${due.booking.titular.last_name}`,
+                  start: due.due_date,
+                  extendedProps: {
+                    kind: "operator_due",
+                    bookingPublicId: publicId ?? due.booking.id_booking,
+                    bookingId: due.booking.id_booking,
+                    details: due.concept,
+                    serviceType: due.service.type,
+                    description: due.service.description,
+                    reference: due.service.reference,
+                    status: derivedStatus,
+                    amount: Number(due.amount),
+                    currency: due.currency,
+                    operatorDueId: due.id_due,
+                    operatorDuePublicId: due.agency_operator_due_id ?? due.id_due,
+                  },
+                };
+              })
+              .filter((event): event is NonNullable<typeof event> => !!event)
+          : [];
+
+      return res.status(200).json([...clientPaymentEvents, ...operatorDueEvents]);
+    }
+
+    const bookingUserFilter = baseBookingFilter.id_user;
+    const noteCreatorUserFilter =
+      typeof bookingUserFilter === "number"
+        ? { id_user: bookingUserFilter }
+        : bookingUserFilter &&
+            typeof bookingUserFilter === "object" &&
+            "in" in bookingUserFilter &&
+            Array.isArray(bookingUserFilter.in) &&
+            bookingUserFilter.in.length > 0
+          ? { id_user: { in: bookingUserFilter.in } }
+          : {};
+
+    const notes =
+      calendarContext === "operations" && selectedOperationsKinds.has("notes")
+        ? await prisma.calendarNote.findMany({
+            where:
+              calendarVisibility === "own"
+                ? {
+                    creator: { id_agency, id_user: auth.id_user },
+                    ...(gte || lte
+                      ? {
+                          date: {
+                            ...(gte ? { gte } : {}),
+                            ...(lte ? { lte } : {}),
+                          },
+                        }
+                      : {}),
+                  }
+                : {
+                    creator: {
+                      id_agency,
+                      ...noteCreatorUserFilter,
+                    },
+                    ...(gte || lte
+                      ? {
+                          date: {
+                            ...(gte ? { gte } : {}),
+                            ...(lte ? { lte } : {}),
+                          },
+                        }
+                      : {}),
+                  },
+            include: { creator: { select: { first_name: true, last_name: true } } },
+          })
+        : [];
+
+    const noteEvents =
+      calendarContext === "operations" && selectedOperationsKinds.has("notes")
+        ? notes.map((n) => ({
+            id: `n-${n.id}`,
+            title: n.title,
+            start: n.date,
+            extendedProps: {
+              kind: "note",
+              content: n.content,
+              creator: `${n.creator.first_name} ${n.creator.last_name}`,
+            },
+          }))
+        : [];
 
     return res
       .status(200)
