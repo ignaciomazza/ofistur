@@ -3316,6 +3316,53 @@ export default function QuotesPage() {
                             </div>
                             <div>
                               <label className="mb-1 block text-xs opacity-75">
+                                Operador
+                              </label>
+                              <select
+                                className={SELECT}
+                                value={
+                                  typeof s.operator_id === "number" &&
+                                  Number.isFinite(s.operator_id)
+                                    ? String(s.operator_id)
+                                    : ""
+                                }
+                                disabled={loadingOperators}
+                                onChange={(e) =>
+                                  updateServiceDraft(idx, {
+                                    operator_id: e.target.value
+                                      ? Number(e.target.value)
+                                      : null,
+                                  })
+                                }
+                              >
+                                <option value="">
+                                  {loadingOperators
+                                    ? "Cargando operadores..."
+                                    : "Seleccionar operador"}
+                                </option>
+                                {operators.map((operator) => (
+                                  <option
+                                    key={operator.id_operator}
+                                    value={operator.id_operator}
+                                  >
+                                    {operator.name || "Operador"}
+                                  </option>
+                                ))}
+                                {typeof s.operator_id === "number" &&
+                                Number.isFinite(s.operator_id) &&
+                                s.operator_id > 0 &&
+                                !operators.some(
+                                  (operator) =>
+                                    operator.id_operator === s.operator_id,
+                                ) ? (
+                                  <option value={s.operator_id}>
+                                    Operador sin número interno (no listado)
+                                  </option>
+                                ) : null}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs opacity-75">
                                 Precio de venta
                               </label>
                               <input
@@ -5884,8 +5931,8 @@ export default function QuotesPage() {
                                   >
                                     {operator.name || "Operador"}{" "}
                                     {operator.agency_operator_id
-                                      ? `· Nº ${operator.agency_operator_id}`
-                                      : "· Sin Nº interno"}
+                                      ? `· ${operator.agency_operator_id}`
+                                      : "· Sin número interno"}
                                   </option>
                                 ))}
                                 {typeof s.operator_id === "number" &&
@@ -5896,7 +5943,7 @@ export default function QuotesPage() {
                                     operator.id_operator === s.operator_id,
                                 ) ? (
                                   <option value={s.operator_id}>
-                                    Operador sin Nº interno (no listado)
+                                    Operador sin número interno (no listado)
                                   </option>
                                 ) : null}
                               </select>

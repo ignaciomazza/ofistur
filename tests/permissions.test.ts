@@ -43,11 +43,19 @@ describe("permissions role normalization", () => {
     expect(
       canManageResourceSection(
         "administrativo",
+        ["calendar"],
+        "resources_notes",
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      canManageResourceSection(
+        "administrativo",
         ["resources_notes"],
         "calendar",
         true,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("resolves calendar visibility by role or custom rule", () => {

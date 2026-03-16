@@ -30,10 +30,18 @@ type Totals = Record<string, number>;
 type MyEarningsResponse = {
   totals: { seller: Totals; beneficiary: Totals; grandTotal: Totals };
 };
+type AgencyEarningsResponse = {
+  totals?: {
+    sellerComm?: Totals;
+    leaderComm?: Totals;
+    agencyShare?: Totals;
+  };
+};
 type ServiceCalcConfigResponse = {
   billing_breakdown_mode?: string | null;
   use_booking_sale_total?: boolean | null;
 };
+type EarningsScope = "personal" | "agency";
 
 type UserLite = {
   id_user: number;
@@ -220,6 +228,23 @@ const normCurrency = (raw: string | null | undefined): "ARS" | "USD" => {
   return "ARS";
 };
 
+const normalizeDashboardRole = (raw?: string | null): string => {
+  const normalized = String(raw || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return "";
+  if (normalized.startsWith("gerent")) return "gerente";
+  if (normalized === "admin" || normalized.startsWith("administr")) {
+    return "administrativo";
+  }
+  return normalized;
+};
+
+const isMacroDashboardRole = (role: string) =>
+  role === "gerente" || role === "administrativo";
+
 /* ===================== UI helpers ===================== */
 const glass =
   "rounded-3xl border border-white/10 bg-white/10 backdrop-blur shadow-lg shadow-sky-900/10 dark:bg-white/10 dark:border-white/5";
@@ -236,6 +261,14 @@ export default function DashboardShortcuts() {
   const { token, setToken } = useAuth();
 
   const [profile, setProfile] = useState<UserLite | null>(null);
+  const normalizedProfileRole = useMemo(
+    () => normalizeDashboardRole(profile?.role),
+    [profile?.role],
+  );
+  const isMacroView = useMemo(
+    () => isMacroDashboardRole(normalizedProfileRole),
+    [normalizedProfileRole],
+  );
   const [enabledCurrencies, setEnabledCurrencies] = useState<FinanceCurrency[]>(
     [],
   );
@@ -295,27 +328,62 @@ export default function DashboardShortcuts() {
   }, [token]);
 
   const fetchEarnings = useCallback(
-    async (curCodes: string[]) => {
-      const r = await authFetch(
-        `/api/earnings/my?from=${monthFrom}&to=${monthTo}&tz=${encodeURIComponent(
-          timeZone,
-        )}`,
-        { cache: "no-store" },
-        token || undefined,
-      );
-      if (!r.ok) {
-        console.error("[dashboard] earnings status:", r.status);
-        throw new Error("Error comisiones");
-      }
-      const { totals } = (await r.json()) as MyEarningsResponse;
-      const pool = totals.grandTotal;
+    async (curCodes: string[], scope: EarningsScope) => {
+      const toCurrencyMap = (pool?: Totals): Record<string, number> => {
+        const out: Record<string, number> = {};
+        for (const code of curCodes) {
+          const val = pool?.[code] ?? 0;
+          out[code] = Number.isFinite(val) ? Number(val) : 0;
+        }
+        return out;
+      };
 
-      const out: Record<string, number> = {};
-      for (const code of curCodes) {
-        const val = pool[code] ?? 0;
-        out[code] = Number.isFinite(val) ? Number(val) : 0;
+      const fetchPersonal = async () => {
+        const r = await authFetch(
+          `/api/earnings/my?from=${monthFrom}&to=${monthTo}&tz=${encodeURIComponent(
+            timeZone,
+          )}`,
+          { cache: "no-store" },
+          token || undefined,
+        );
+        if (!r.ok) {
+          console.error("[dashboard] earnings/my status:", r.status);
+          throw new Error("Error comisiones");
+        }
+        const { totals } = (await r.json()) as MyEarningsResponse;
+        return toCurrencyMap(totals?.grandTotal);
+      };
+
+      if (scope === "agency") {
+        try {
+          const r = await authFetch(
+            `/api/earnings?from=${monthFrom}&to=${monthTo}`,
+            { cache: "no-store" },
+            token || undefined,
+          );
+          if (!r.ok) {
+            console.error("[dashboard] earnings status:", r.status);
+            throw new Error("Error comisiones agencia");
+          }
+          const data = (await r.json()) as AgencyEarningsResponse;
+          const out: Record<string, number> = {};
+          for (const code of curCodes) {
+            const seller = Number(data?.totals?.sellerComm?.[code] ?? 0);
+            const leader = Number(data?.totals?.leaderComm?.[code] ?? 0);
+            const agency = Number(data?.totals?.agencyShare?.[code] ?? 0);
+            out[code] = [seller, leader, agency].reduce(
+              (acc, val) => acc + (Number.isFinite(val) ? val : 0),
+              0,
+            );
+          }
+          return out;
+        } catch (err) {
+          console.error("[dashboard] earnings agency fallback:", err);
+          return fetchPersonal();
+        }
       }
-      return out;
+
+      return fetchPersonal();
     },
     [token, monthFrom, monthTo, timeZone],
   );
@@ -438,6 +506,8 @@ export default function DashboardShortcuts() {
         setEnabledCurrencies(enabled);
         setCalcMode(calcCfg.calcMode);
         setUseBookingSaleTotal(calcCfg.useBookingSaleTotal);
+        const profileRole = normalizeDashboardRole(p.role);
+        const macroScope = isMacroDashboardRole(profileRole);
 
         // Preparo monedas a consultar (fallback ARS/USD)
         const curCodes =
@@ -450,7 +520,7 @@ export default function DashboardShortcuts() {
 
         // 2.a) Comisiones
         tasks.push(
-          fetchEarnings(curCodes)
+          fetchEarnings(curCodes, macroScope ? "agency" : "personal")
             .then((commission) => {
               if (!abortedRef.current) setCommissionByCur(commission);
             })
@@ -468,11 +538,11 @@ export default function DashboardShortcuts() {
         tasks.push(
           (async () => {
             const qs = new URLSearchParams({
-              userId: String(p.id_user),
               creationFrom: monthFrom,
               creationTo: monthTo,
               take: "60",
             });
+            if (!macroScope) qs.set("userId", String(p.id_user));
             const page = await fetchBookingsPage(qs);
             if (abortedRef.current) return;
             setTotalBookings(page.items.length);
@@ -486,10 +556,8 @@ export default function DashboardShortcuts() {
         // 2.c) Deuda por reserva (top 6)
         tasks.push(
           (async () => {
-            const qs = new URLSearchParams({
-              userId: String(p.id_user),
-              take: "120",
-            });
+            const qs = new URLSearchParams({ take: "120" });
+            if (!macroScope) qs.set("userId", String(p.id_user));
             const { items } = await fetchBookingsPage(qs);
             if (abortedRef.current) return;
 
@@ -527,11 +595,11 @@ export default function DashboardShortcuts() {
 
             for (let i = 0; i < 8; i++) {
               const qs = new URLSearchParams({
-                userId: String(p.id_user),
                 from: weekFrom,
                 to: weekTo,
                 take: "100",
               });
+              if (!macroScope) qs.set("userId", String(p.id_user));
               if (cursor) qs.append("cursor", String(cursor));
 
               const page = await fetchBookingsPage(qs);
@@ -605,10 +673,10 @@ export default function DashboardShortcuts() {
             let cursor: number | null = null;
             for (let i = 0; i < 8; i++) {
               const qs = new URLSearchParams({
-                userId: String(p.id_user),
                 agencyId: String(p.id_agency),
                 take: "100",
               });
+              if (!macroScope) qs.set("userId", String(p.id_user));
               if (cursor) qs.append("cursor", String(cursor));
               const r = await authFetch(
                 `/api/clients?${qs}`,
@@ -644,10 +712,12 @@ export default function DashboardShortcuts() {
               return;
             }
             const teams = (await r.json()) as SalesTeam[];
-            const mine = teams.filter((t) =>
-              t.user_teams.some((ut) => ut.user.id_user === p.id_user),
-            );
-            if (!abortedRef.current) setTeamsMine(mine);
+            const visibleTeams = macroScope
+              ? teams
+              : teams.filter((t) =>
+                  t.user_teams.some((ut) => ut.user.id_user === p.id_user),
+                );
+            if (!abortedRef.current) setTeamsMine(visibleTeams);
           })().catch((e) => console.error("[dashboard] equipos:", e)),
         );
 
@@ -711,10 +781,12 @@ export default function DashboardShortcuts() {
         >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium text-sky-900/80 dark:text-sky-100">
-              Comisiones (mes actual)
+              {isMacroView
+                ? "Comisiones de la agencia (mes actual)"
+                : "Comisiones (mes actual)"}
             </p>
             <Link
-              href="/earnings/my"
+              href={isMacroView ? "/earnings" : "/earnings/my"}
               className="rounded-full bg-emerald-600/10 px-3 py-1 text-xs font-medium text-emerald-800 shadow-sm shadow-emerald-900/10 hover:bg-emerald-600/20 dark:text-emerald-200"
             >
               Ver más
@@ -747,7 +819,9 @@ export default function DashboardShortcuts() {
         >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium text-sky-900/80 dark:text-sky-100">
-              Deuda de mis reservas
+              {isMacroView
+                ? "Deuda de reservas de la agencia"
+                : "Deuda de mis reservas"}
             </p>
             <Link
               href="/balances"
@@ -815,7 +889,11 @@ export default function DashboardShortcuts() {
           }}
           className={`${glass} ${spanCls(1, 1)} p-6`}
         >
-          <p className="text-sm font-medium">Nuevos pasajeros</p>
+          <p className="text-sm font-medium">
+            {isMacroView
+              ? "Nuevos pasajeros (agencia)"
+              : "Nuevos pasajeros"}
+          </p>
           <div className="mt-2 text-3xl font-semibold">{newClientsCount}</div>
         </motion.div>
 
@@ -829,7 +907,9 @@ export default function DashboardShortcuts() {
           className={`${glass} ${spanCls(1, 1)} p-6`}
         >
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium">Reservas (mes)</p>
+            <p className="text-sm font-medium">
+              {isMacroView ? "Reservas de la agencia (mes)" : "Reservas (mes)"}
+            </p>
             <Link
               href={`/bookings?creationFrom=${monthFrom}&creationTo=${monthTo}`}
               className="rounded-full bg-sky-600/10 px-3 py-1 text-xs font-medium text-sky-900 shadow-sm hover:bg-sky-600/20 dark:text-white"
@@ -850,7 +930,11 @@ export default function DashboardShortcuts() {
           className={`${glass} ${spanCls(2, 1)} p-6`}
         >
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium">Reservas pendientes</p>
+            <p className="text-sm font-medium">
+              {isMacroView
+                ? "Reservas pendientes de la agencia"
+                : "Reservas pendientes"}
+            </p>
             <Link
               href="/bookings?clientStatus=Pendiente"
               className="rounded-full bg-amber-600/10 px-3 py-1 text-xs font-medium text-amber-800 shadow-sm shadow-amber-900/10 hover:bg-amber-600/20 dark:text-amber-200"
@@ -889,10 +973,16 @@ export default function DashboardShortcuts() {
           className={`${glass} ${spanCls(2, 1)} p-6`}
         >
           <p className="mb-1 text-sm font-medium">
-            Mi equipo{profile?.first_name ? ` — ${profile.first_name}` : ""}
+            {isMacroView
+              ? "Equipos visibles de la agencia"
+              : `Mi equipo${profile?.first_name ? ` — ${profile.first_name}` : ""}`}
           </p>
           {teamsMine.length === 0 ? (
-            <p className="text-sm opacity-70">No estás asignado a un equipo.</p>
+            <p className="text-sm opacity-70">
+              {isMacroView
+                ? "No hay equipos visibles para este usuario."
+                : "No estás asignado a un equipo."}
+            </p>
           ) : (
             <div className="space-y-3">
               {teamsMine.map((t) => (
@@ -935,7 +1025,11 @@ export default function DashboardShortcuts() {
         >
           <div className="mb-2 flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium">Movimientos de viaje</p>
+              <p className="text-sm font-medium">
+                {isMacroView
+                  ? "Movimientos de viaje de la agencia"
+                  : "Movimientos de viaje"}
+              </p>
               <p className="text-xs opacity-70">
                 Semana: {humanDate(weekFrom)} - {humanDate(weekTo)}
               </p>

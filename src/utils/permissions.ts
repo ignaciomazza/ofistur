@@ -406,11 +406,17 @@ export function canManageResourceSection(
   key: ResourceSectionKey,
   hasCustomRule = false,
 ): boolean {
-  if (hasCustomRule) return !!granted?.includes(key);
-
   const section = resourceByKey.get(key);
   if (!section) return false;
   const normalized = normalizeRole(role);
+
+  // Calendario: gerencia/administracion/desarrollo siempre pueden gestionar
+  // notas, incluso si existe una regla personalizada sin ese toggle.
+  if (key === "calendar" && hasRole(section.manageRoles, normalized)) {
+    return true;
+  }
+
+  if (hasCustomRule) return !!granted?.includes(key);
   if (hasRole(section.manageRoles, normalized)) return true;
 
   // Compat: si llega una lista de grants (sin regla explicita), respetarla.
