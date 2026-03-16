@@ -305,6 +305,74 @@ function buildTotalPriceValue(
   return formatTotalsByCurrency(sums);
 }
 
+function normalizeInlineText(value: string): string {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function splitDestinationParts(value: string): string[] {
+  const normalized = normalizeInlineText(value);
+  if (!normalized) return [];
+  return normalized
+    .split(/\s*(?:\||\/|·|•|>|→)\s*/g)
+    .map((part) => normalizeInlineText(part))
+    .filter(Boolean);
+}
+
+function buildDestinationSummary(services: ServiceWithOperator[]): string {
+  const uniqueRaw: string[] = [];
+  const seenRaw = new Set<string>();
+
+  services.forEach((service) => {
+    const raw = normalizeInlineText(String(service.destination || ""));
+    if (!raw) return;
+    const key = raw.toLowerCase();
+    if (seenRaw.has(key)) return;
+    seenRaw.add(key);
+    uniqueRaw.push(raw);
+  });
+
+  if (uniqueRaw.length === 0) return "—";
+  if (uniqueRaw.length === 1) return uniqueRaw[0];
+
+  const uniqueParts: string[] = [];
+  const seenParts = new Set<string>();
+
+  uniqueRaw.forEach((raw) => {
+    const parts = splitDestinationParts(raw);
+    if (parts.length <= 1) {
+      const key = raw.toLowerCase();
+      if (seenParts.has(key)) return;
+      seenParts.add(key);
+      uniqueParts.push(raw);
+      return;
+    }
+    parts.forEach((part) => {
+      const key = part.toLowerCase();
+      if (seenParts.has(key)) return;
+      seenParts.add(key);
+      uniqueParts.push(part);
+    });
+  });
+
+  if (uniqueParts.length === 0) return uniqueRaw.join(" | ");
+  return uniqueParts.join(" · ");
+}
+
+function formatUserFullName(
+  user?: Pick<BookingPayload["user"], "first_name" | "last_name"> | null,
+): string {
+  const first = String(user?.first_name || "").trim();
+  const last = String(user?.last_name || "").trim();
+  return [first, last].filter(Boolean).join(" ") || "—";
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const clean = String(value || "").trim();
+  if (clean.length <= maxLength) return clean;
+  if (maxLength <= 1) return "…";
+  return `${clean.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 function contentBlockToOrdered(
   b: ContentBlock,
   forceEditable = false,
@@ -608,6 +676,7 @@ type DesignMenuSection =
   | "payment"
   | "services"
   | "signature";
+type ServicesViewMode = "compact" | "detailed";
 
 export default function BookingVoucherPage() {
   const params = useParams();
@@ -633,6 +702,8 @@ export default function BookingVoucherPage() {
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<number>>(
     new Set(),
   );
+  const [servicesViewMode, setServicesViewMode] =
+    useState<ServicesViewMode>("compact");
   const [studioPanel, setStudioPanel] = useState<StudioPanel>("design");
   const [designMenuSection, setDesignMenuSection] =
     useState<DesignMenuSection>("cover");
@@ -781,6 +852,26 @@ export default function BookingVoucherPage() {
     if (!booking) return [];
     const blocks: ContentBlock[] = [];
     const makeId = (suffix: string) => `v_${suffix}`;
+    const isCompactView = servicesViewMode === "compact";
+    const reservationNumber =
+      booking.agency_booking_id != null
+        ? String(booking.agency_booking_id)
+        : booking.id_booking != null
+          ? String(booking.id_booking)
+          : "—";
+    const titularName = formatPassengerName(booking.titular);
+    const titularRow = buildTitularRow(booking);
+    const companionRows = buildCompanionRows(booking);
+    const paxRaw = Number(booking.pax_count);
+    const passengerCount =
+      Number.isFinite(paxRaw) && paxRaw >= 0
+        ? Math.trunc(paxRaw)
+        : (titularRow ? 1 : 0) + companionRows.length;
+    const totalPriceValue = buildTotalPriceValue(booking, services);
+    const sellerName = formatUserFullName(booking.user);
+    const destinationSourceServices =
+      selectedServices.length > 0 ? selectedServices : services;
+    const destinationSummary = buildDestinationSummary(destinationSourceServices);
 
     blocks.push({
       id: makeId("title"),
@@ -797,41 +888,68 @@ export default function BookingVoucherPage() {
         text: booking.details,
       });
     }
-    // Resumen inicial de la reserva
-    const reservationNumber =
-      booking.agency_booking_id != null
-        ? String(booking.agency_booking_id)
-        : booking.id_booking != null
-          ? String(booking.id_booking)
-          : "—";
-    blocks.push({
-      id: makeId("summary_title"),
-      type: "subtitle",
-      mode: "fixed",
-      text: `Detalle de la reserva · N° ${reservationNumber}`,
-    });
-    const titularName = formatPassengerName(booking.titular);
-    blocks.push({
-      id: makeId("summary_meta"),
-      type: "keyValue",
-      mode: "fixed",
-      pairs: [
-        {
-          key: "Cliente",
-          value: titularName || "—",
-        },
-        {
-          key: "Salida",
-          value: formatDate(booking.departure_date),
-        },
-        {
-          key: "Regreso",
-          value: formatDate(booking.return_date),
-        },
-      ],
-    });
 
-    if (booking.observation) {
+    if (isCompactView) {
+      const summaryLeft = [
+        `Reserva: N° ${reservationNumber}`,
+        `Vendedor: ${sellerName}`,
+      ].join("\n");
+      const summaryRight = [
+        `Cliente: ${titularName || "—"}`,
+        `Pasajeros: ${String(passengerCount)}`,
+      ].join("\n");
+      blocks.push({
+        id: makeId("compact_overview"),
+        type: "twoColumns",
+        mode: "fixed",
+        left: summaryLeft,
+        right: summaryRight,
+        textStyle: { size: "xs", weight: "normal" },
+      });
+      blocks.push({
+        id: makeId("compact_context_line"),
+        type: "paragraph",
+        mode: "fixed",
+        text: [
+          `Destino: ${destinationSummary}`,
+          `Salida: ${formatDate(booking.departure_date)}`,
+          `Regreso: ${formatDate(booking.return_date)}`,
+        ].join("  |  "),
+        textStyle: { size: "xs", weight: "normal" },
+      });
+    } else {
+      blocks.push({
+        id: makeId("summary_title"),
+        type: "subtitle",
+        mode: "fixed",
+        text: `Detalle de la reserva · N° ${reservationNumber}`,
+      });
+      blocks.push({
+        id: makeId("summary_meta"),
+        type: "keyValue",
+        mode: "fixed",
+        pairs: [
+          {
+            key: "Cliente",
+            value: titularName || "—",
+          },
+          {
+            key: "Salida",
+            value: formatDate(booking.departure_date),
+          },
+          {
+            key: "Regreso",
+            value: formatDate(booking.return_date),
+          },
+          {
+            key: "Total de venta",
+            value: totalPriceValue,
+          },
+        ],
+      });
+    }
+
+    if (!isCompactView && booking.observation) {
       blocks.push({
         id: makeId("obs_title"),
         type: "subtitle",
@@ -846,79 +964,77 @@ export default function BookingVoucherPage() {
       });
     }
 
-    blocks.push({
-      id: makeId("pax_title"),
-      type: "subtitle",
-      mode: "fixed",
-      text: `Pasajeros (${
-        Number.isFinite(Number(booking.pax_count))
-          ? String(Math.max(0, Math.trunc(Number(booking.pax_count))))
-          : "—"
-      })`,
-    });
-    const titularRow = buildTitularRow(booking);
-    const companionRows = buildCompanionRows(booking);
-
-    blocks.push({
-      id: makeId("pax_titular_title"),
-      type: "heading",
-      mode: "fixed",
-      text: "Titular",
-      level: 3,
-    });
-    if (titularRow) {
+    if (!isCompactView) {
       blocks.push({
-        id: makeId("pax_titular"),
-        type: "threeColumns",
+        id: makeId("pax_title"),
+        type: "subtitle",
         mode: "fixed",
-        left: titularRow.name,
-        center: titularRow.birth,
-        right: titularRow.extra,
+        text: `Pasajeros (${String(passengerCount)})`,
       });
-    } else {
-      blocks.push({
-        id: makeId("pax_titular_empty"),
-        type: "paragraph",
-        mode: "fixed",
-        text: "Sin titular cargado.",
-      });
-    }
 
-    blocks.push({
-      id: makeId("pax_companions_title"),
-      type: "heading",
-      mode: "fixed",
-      text: "Acompañantes",
-      level: 3,
-    });
-
-    if (companionRows.length === 0) {
       blocks.push({
-        id: makeId("pax_companions_empty"),
-        type: "paragraph",
+        id: makeId("pax_titular_title"),
+        type: "heading",
         mode: "fixed",
-        text: "Sin acompañantes cargados.",
+        text: "Titular",
+        level: 3,
       });
-    } else {
-      companionRows.forEach((pax, idx) => {
+      if (titularRow) {
         blocks.push({
-          id: makeId(`pax_companion_${idx}`),
+          id: makeId("pax_titular"),
           type: "threeColumns",
           mode: "fixed",
-          left: pax.name,
-          center: pax.birth,
-          right: pax.extra,
+          left: titularRow.name,
+          center: titularRow.birth,
+          right: titularRow.extra,
         });
+      } else {
+        blocks.push({
+          id: makeId("pax_titular_empty"),
+          type: "paragraph",
+          mode: "fixed",
+          text: "Sin titular cargado.",
+        });
+      }
+
+      blocks.push({
+        id: makeId("pax_companions_title"),
+        type: "heading",
+        mode: "fixed",
+        text: "Acompañantes",
+        level: 3,
       });
+
+      if (companionRows.length === 0) {
+        blocks.push({
+          id: makeId("pax_companions_empty"),
+          type: "paragraph",
+          mode: "fixed",
+          text: "Sin acompañantes cargados.",
+        });
+      } else {
+        companionRows.forEach((pax, idx) => {
+          blocks.push({
+            id: makeId(`pax_companion_${idx}`),
+            type: "threeColumns",
+            mode: "fixed",
+            left: pax.name,
+            center: pax.birth,
+            right: pax.extra,
+          });
+        });
+      }
     }
 
-    blocks.push({
-      id: makeId("srv_title"),
-      type: "heading",
-      mode: "fixed",
-      text: "Servicios",
-      level: 2,
-    });
+    if (!isCompactView) {
+      blocks.push({
+        id: makeId("srv_title"),
+        type: "heading",
+        mode: "fixed",
+        text: "Servicios",
+        level: 2,
+      });
+    }
 
     if (selectedServices.length === 0) {
       blocks.push({
@@ -926,6 +1042,39 @@ export default function BookingVoucherPage() {
         type: "paragraph",
         mode: "fixed",
         text: "Sin servicios seleccionados.",
+      });
+    } else if (isCompactView) {
+      blocks.push({
+        id: makeId("srv_compact_title"),
+        type: "subtitle",
+        mode: "fixed",
+        text: "Servicios resumidos",
+        textStyle: { size: "sm", weight: "semibold" },
+      });
+      blocks.push({
+        id: makeId("srv_compact_head"),
+        type: "threeColumns",
+        mode: "fixed",
+        left: "Prestador",
+        center: "Categoría",
+        right: "Fechas",
+        textStyle: { size: "xs", weight: "semibold" },
+      });
+      selectedServices.forEach((service, idx) => {
+        const provider =
+          truncateText(String(service.operator?.name || "").trim(), 28) || "—";
+        const categoryLabel =
+          truncateText(String(service.type || "").trim(), 72) || "—";
+        const schedule = `${formatDate(service.departure_date)} - ${formatDate(service.return_date)}`;
+        blocks.push({
+          id: makeId(`srv_compact_row_${idx}`),
+          type: "threeColumns",
+          mode: "fixed",
+          left: `${idx + 1}. ${provider}`,
+          center: categoryLabel,
+          right: schedule,
+          textStyle: { size: "xs", weight: "normal" },
+        });
       });
     } else {
       const descriptions = selectedServices
@@ -948,20 +1097,45 @@ export default function BookingVoucherPage() {
       }
     }
 
-    blocks.push({
-      id: makeId("total_price"),
-      type: "keyValue",
-      mode: "fixed",
-      pairs: [
-        {
-          key: "Precio final",
-          value: buildTotalPriceValue(booking, services),
-        },
-      ],
-    });
+    if (isCompactView) {
+      blocks.push({
+        id: makeId("total_price_compact"),
+        type: "twoColumns",
+        mode: "fixed",
+        left: "Total de venta",
+        right: totalPriceValue,
+        textStyle: { size: "sm", weight: "semibold" },
+      });
+      if (booking.observation) {
+        blocks.push({
+          id: makeId("obs_title"),
+          type: "subtitle",
+          mode: "fixed",
+          text: "Observaciones",
+        });
+        blocks.push({
+          id: makeId("obs"),
+          type: "paragraph",
+          mode: "fixed",
+          text: booking.observation,
+        });
+      }
+    } else {
+      blocks.push({
+        id: makeId("total_price"),
+        type: "keyValue",
+        mode: "fixed",
+        pairs: [
+          {
+            key: "Total de venta",
+            value: totalPriceValue,
+          },
+        ],
+      });
+    }
 
     return blocks;
-  }, [booking, selectedServices, services]);
+  }, [booking, selectedServices, services, servicesViewMode]);
 
   const signatureBlocks = useMemo<ContentBlock[]>(() => {
     if (!includeSignature) return [];
@@ -1525,6 +1699,51 @@ export default function BookingVoucherPage() {
                   </button>
                 </div>
               </div>
+              <div className="mb-3 rounded-xl border border-white/10 bg-white/10 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                      Vista PDF
+                    </p>
+                    <p className="text-xs text-slate-600 dark:text-slate-300">
+                      {servicesViewMode === "compact"
+                        ? "Compacta: resumen + tabla comprimida."
+                        : "Detallada: estructura completa con pasajeros."}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                      {servicesViewMode === "compact" ? "Compacta" : "Detallada"}
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={servicesViewMode === "compact"}
+                      aria-label="Alternar vista compacta o detallada"
+                      onClick={() =>
+                        setServicesViewMode((prev) =>
+                          prev === "compact" ? "detailed" : "compact",
+                        )
+                      }
+                      className={cx(
+                        "relative inline-flex h-6 w-11 items-center rounded-full border transition-colors",
+                        servicesViewMode === "compact"
+                          ? "border-sky-400/60 bg-sky-500/20"
+                          : "border-white/20 bg-white/10",
+                      )}
+                    >
+                      <span
+                        className={cx(
+                          "inline-block size-5 rounded-full bg-white shadow-sm transition-transform",
+                          servicesViewMode === "compact"
+                            ? "translate-x-5"
+                            : "translate-x-1",
+                        )}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
               {services.length === 0 ? (
                 <p className="text-sm text-slate-500 dark:text-slate-300">
                   No hay servicios cargados.
@@ -1697,6 +1916,10 @@ export default function BookingVoucherPage() {
                 <b>Servicios:</b> {selectedServices.length}/{services.length}
               </p>
               <p>
+                <b>Vista:</b>{" "}
+                {servicesViewMode === "compact" ? "Compacta" : "Detallada"}
+              </p>
+              <p>
                 <b>Bloques:</b> {editableBlocks.length}
               </p>
               <p>
@@ -1734,6 +1957,13 @@ export default function BookingVoucherPage() {
               {
                 label: `Servicios ${selectedServices.length}/${services.length}`,
                 tone: "sky",
+              },
+              {
+                label:
+                  servicesViewMode === "compact"
+                    ? "Vista compacta"
+                    : "Vista detallada",
+                tone: "slate",
               },
               {
                 label: `Bloques ${editableBlocks.length}`,
