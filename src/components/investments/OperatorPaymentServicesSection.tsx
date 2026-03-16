@@ -28,6 +28,7 @@ type OperatorServiceLite = {
   cost_price?: number | null;
   type?: string;
   destination?: string;
+  description?: string | null;
   paid_amount?: number | null;
   pending_amount?: number | null;
   overpaid_amount?: number | null;
@@ -561,6 +562,9 @@ export default function OperatorPaymentServicesSection({
           ]
             .join(" ")
             .trim();
+          const bookingDetails = String(svc.booking?.details || "").trim();
+          const serviceDetails = String(svc.description || "").trim();
+          const serviceCurrency = (svc.currency || "ARS").toUpperCase();
 
           return (
             <label
@@ -583,32 +587,32 @@ export default function OperatorPaymentServicesSection({
                   {svc.destination ? ` · ${svc.destination}` : ""}
                 </div>
                 <div className="text-xs text-sky-950/70 dark:text-white/70">
-                  Operador: <b>{opName}</b> • Moneda:{" "}
-                  <b>{(svc.currency || "ARS").toUpperCase()}</b> • Costo:{" "}
-                  {formatMoney(
-                    Number(svc.cost_price || 0),
-                    (svc.currency || "ARS").toUpperCase(),
-                  )}
+                  Operador: <b>{opName}</b> • Costo:{" "}
+                  {formatMoney(Number(svc.cost_price || 0), serviceCurrency)}
                   {hasPendingInfo && (
                     <>
                       {" "}
                       • Pagado:{" "}
                       <b>
-                        {formatMoney(
-                          paidAmount,
-                          (svc.currency || "ARS").toUpperCase(),
-                        )}
+                        {formatMoney(paidAmount, serviceCurrency)}
                       </b>{" "}
                       • Pendiente:{" "}
                       <b>
-                        {formatMoney(
-                          pendingAmount,
-                          (svc.currency || "ARS").toUpperCase(),
-                        )}
+                        {formatMoney(pendingAmount, serviceCurrency)}
                       </b>
                     </>
                   )}
                 </div>
+                {bookingDetails && (
+                  <div className="text-xs text-sky-950/70 dark:text-white/70">
+                    Detalle reserva: {bookingDetails}
+                  </div>
+                )}
+                {serviceDetails && (
+                  <div className="text-xs text-sky-950/70 dark:text-white/70">
+                    Detalle servicio: {serviceDetails}
+                  </div>
+                )}
                 {bookingTitular && (
                   <div className="text-xs text-sky-950/70 dark:text-white/70">
                     Titular: {bookingTitular}

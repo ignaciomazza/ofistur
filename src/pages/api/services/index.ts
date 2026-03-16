@@ -109,12 +109,17 @@ export default async function handler(
             cost_price: true,
             type: true,
             destination: true,
+            description: true,
             booking: {
               select: {
                 id_booking: true,
                 agency_booking_id: true,
+                details: true,
                 id_agency: true,
                 id_user: true,
+                titular: {
+                  select: { first_name: true, last_name: true },
+                },
               },
             },
             operator: {
