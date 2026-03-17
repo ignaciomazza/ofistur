@@ -157,16 +157,6 @@ function formatMoney(
   }
 }
 
-function joinPieces(items: Array<string | null | undefined>) {
-  return items.filter((item) => item && String(item).trim()).join(" | ");
-}
-
-type PassengerRow = {
-  name: string;
-  birth: string;
-  extra: string;
-};
-
 function formatPassengerName(p: Client) {
   const last = String(p.last_name || "").trim();
   const first = String(p.first_name || "").trim();
@@ -176,51 +166,38 @@ function formatPassengerName(p: Client) {
   return company || "Pasajero";
 }
 
-function formatNamedPassenger(p: Client): PassengerRow {
-  const name = formatPassengerName(p);
-  const birth = p.birth_date ? formatDate(p.birth_date) : "—";
-  const extra = joinPieces([
-    p.dni_number ? `DNI: ${p.dni_number}` : "",
-    p.passport_number ? `Pasaporte: ${p.passport_number}` : "",
-  ]);
-  return {
-    name: name || "Pasajero",
-    birth,
-    extra: extra || "—",
-  };
-}
+type PassengerSummary = {
+  count: number;
+  lines: string[];
+};
 
-function formatSimpleCompanionPassenger(
+function formatSimpleCompanionLine(
   companion: NonNullable<BookingPayload["simple_companions"]>[number],
-  fallbackName: string,
-): PassengerRow {
+): string {
   const categoryName = String(companion.category?.name || "").trim();
-  const categoryCode = String(companion.category?.code || "").trim();
   const notes = String(companion.notes || "").trim();
   const ageRaw = Number(companion.age);
   const hasAge = Number.isFinite(ageRaw) && ageRaw >= 0;
-
-  const name = categoryName || fallbackName;
-  const birth = hasAge ? `Edad: ${Math.trunc(ageRaw)}` : "—";
-  const extra = joinPieces([
-    categoryCode ? `Cat: ${categoryCode}` : "",
-    notes ? `Obs: ${notes}` : "",
-  ]);
-
-  return {
-    name,
-    birth,
-    extra: extra || "—",
-  };
+  const details = [
+    categoryName,
+    hasAge ? `${Math.trunc(ageRaw)} años` : "",
+    notes,
+  ].filter((item) => item && String(item).trim());
+  return details.length > 0
+    ? `Acompañante simple (${details.join(" · ")})`
+    : "Acompañante simple";
 }
 
-function buildCompanionRows(booking: BookingPayload): PassengerRow[] {
-  const rows: PassengerRow[] = [];
+function buildPassengerSummary(booking: BookingPayload): PassengerSummary {
+  const lines: string[] = [];
   const seenClientIds = new Set<number>();
 
-  const titularId = Number(booking.titular?.id_client);
-  if (Number.isFinite(titularId)) {
-    seenClientIds.add(titularId);
+  if (booking.titular) {
+    lines.push(`${formatPassengerName(booking.titular)} (Titular)`);
+    const titularId = Number(booking.titular.id_client);
+    if (Number.isFinite(titularId)) {
+      seenClientIds.add(titularId);
+    }
   }
 
   const pushCompanionClient = (client?: Client | null) => {
@@ -228,7 +205,7 @@ function buildCompanionRows(booking: BookingPayload): PassengerRow[] {
     const id = Number(client.id_client);
     if (Number.isFinite(id) && seenClientIds.has(id)) return;
     if (Number.isFinite(id)) seenClientIds.add(id);
-    rows.push(formatNamedPassenger(client));
+    lines.push(formatPassengerName(client));
   };
 
   if (Array.isArray(booking.clients)) {
@@ -236,16 +213,14 @@ function buildCompanionRows(booking: BookingPayload): PassengerRow[] {
   }
   if (Array.isArray(booking.simple_companions)) {
     booking.simple_companions.forEach((companion) => {
-      const fallbackName = `Pasajero ${rows.length + 1}`;
-      rows.push(formatSimpleCompanionPassenger(companion, fallbackName));
+      lines.push(formatSimpleCompanionLine(companion));
     });
   }
 
-  return rows;
-}
-
-function buildTitularRow(booking: BookingPayload): PassengerRow | null {
-  return booking.titular ? formatNamedPassenger(booking.titular) : null;
+  return {
+    count: lines.length,
+    lines,
+  };
 }
 
 function normalizeSaleTotals(input: unknown): Record<string, number> {
@@ -860,13 +835,9 @@ export default function BookingVoucherPage() {
           ? String(booking.id_booking)
           : "—";
     const titularName = formatPassengerName(booking.titular);
-    const titularRow = buildTitularRow(booking);
-    const companionRows = buildCompanionRows(booking);
-    const paxRaw = Number(booking.pax_count);
-    const passengerCount =
-      Number.isFinite(paxRaw) && paxRaw >= 0
-        ? Math.trunc(paxRaw)
-        : (titularRow ? 1 : 0) + companionRows.length;
+    const passengerSummary = buildPassengerSummary(booking);
+    const passengerCount = passengerSummary.count;
+    const passengerLines = passengerSummary.lines;
     const totalPriceValue = buildTotalPriceValue(booking, services);
     const sellerName = formatUserFullName(booking.user);
     const destinationSourceServices =
@@ -895,8 +866,8 @@ export default function BookingVoucherPage() {
         `Vendedor: ${sellerName}`,
       ].join("\n");
       const summaryRight = [
-        `Cliente: ${titularName || "—"}`,
         `Pasajeros: ${String(passengerCount)}`,
+        ...(passengerLines.length > 0 ? passengerLines : ["Sin pasajeros cargados."]),
       ].join("\n");
       blocks.push({
         id: makeId("compact_overview"),
@@ -967,60 +938,25 @@ export default function BookingVoucherPage() {
     if (!isCompactView) {
       blocks.push({
         id: makeId("pax_title"),
-        type: "subtitle",
+        type: "paragraph",
         mode: "fixed",
-        text: `Pasajeros (${String(passengerCount)})`,
+        text: `Pasajeros: ${String(passengerCount)}`,
       });
 
-      blocks.push({
-        id: makeId("pax_titular_title"),
-        type: "heading",
-        mode: "fixed",
-        text: "Titular",
-        level: 3,
-      });
-      if (titularRow) {
+      if (passengerLines.length === 0) {
         blocks.push({
-          id: makeId("pax_titular"),
-          type: "threeColumns",
-          mode: "fixed",
-          left: titularRow.name,
-          center: titularRow.birth,
-          right: titularRow.extra,
-        });
-      } else {
-        blocks.push({
-          id: makeId("pax_titular_empty"),
+          id: makeId("pax_empty"),
           type: "paragraph",
           mode: "fixed",
-          text: "Sin titular cargado.",
-        });
-      }
-
-      blocks.push({
-        id: makeId("pax_companions_title"),
-        type: "heading",
-        mode: "fixed",
-        text: "Acompañantes",
-        level: 3,
-      });
-
-      if (companionRows.length === 0) {
-        blocks.push({
-          id: makeId("pax_companions_empty"),
-          type: "paragraph",
-          mode: "fixed",
-          text: "Sin acompañantes cargados.",
+          text: "Sin pasajeros cargados.",
         });
       } else {
-        companionRows.forEach((pax, idx) => {
+        passengerLines.forEach((line, idx) => {
           blocks.push({
-            id: makeId(`pax_companion_${idx}`),
-            type: "threeColumns",
+            id: makeId(`pax_line_${idx}`),
+            type: "paragraph",
             mode: "fixed",
-            left: pax.name,
-            center: pax.birth,
-            right: pax.extra,
+            text: line,
           });
         });
       }
