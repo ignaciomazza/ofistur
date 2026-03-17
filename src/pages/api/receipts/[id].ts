@@ -591,9 +591,13 @@ function addUnallocatedReceiptPaidByCurrencyForSelection(args: {
   serviceWeightById: Map<number, number>;
 }) {
   const rawScopeIds = normalizeIdList(args.receipt.serviceIds);
-  const scopeIds = (rawScopeIds.length > 0 ? rawScopeIds : args.allServiceIds).filter(
-    (id) => args.serviceCurrencyById.has(id),
+  const validScopedIds = rawScopeIds.filter((id) =>
+    args.serviceCurrencyById.has(id),
   );
+  const scopeIds =
+    validScopedIds.length > 0
+      ? validScopedIds
+      : args.allServiceIds.filter((id) => args.serviceCurrencyById.has(id));
   if (scopeIds.length === 0) return;
 
   const selectedScopeIds = scopeIds.filter((id) => args.selectedServiceIds.has(id));
@@ -1135,6 +1139,7 @@ export default async function handler(
         const allocationScopeServiceIds = bookingSaleMode
           ? undefined
           : selectedServiceIdSet;
+        const allBookingServiceIdSet = new Set(allBookingServiceIds);
         const serviceCurrencyById = new Map(
           bookingServices.map((service) => [
             service.id_service,
@@ -1200,13 +1205,18 @@ export default async function handler(
             ? Array.from(
                 new Set(
                   receipt.service_allocations
+                    .filter(
+                      (alloc) => Math.abs(toNum(alloc?.amount_service ?? 0)) > DEBT_TOLERANCE,
+                    )
                     .map((alloc) => Number(alloc?.service_id))
                     .filter((sid) => Number.isFinite(sid) && sid > 0)
                     .map((sid) => Math.trunc(sid)),
                 ),
               )
             : [];
-          const receiptServiceIds = normalizeIdList(receipt.serviceIds);
+          const receiptServiceIds = normalizeIdList(receipt.serviceIds).filter(
+            (id) => allBookingServiceIdSet.has(id),
+          );
           const hasAllocations = receiptAllocationIds.length > 0;
           const appliesToSelection =
             bookingSaleMode ||
@@ -1407,6 +1417,7 @@ export default async function handler(
           ? serviceAllocations
           : service_allocations,
       );
+      let normalizedServiceIdsForSave: number[] | undefined = undefined;
       let normalizedServiceAllocationsForSave: ReceiptServiceAllocationNormalized[] =
         [];
       const normalizedExistingServiceAllocations: ReceiptServiceAllocationNormalized[] =
@@ -1440,11 +1451,25 @@ export default async function handler(
           where: { booking_id: existing.bookingId_booking },
           select: { id_service: true, currency: true },
         });
+        const allBookingServiceIds = bookingServices.map(
+          (service) => service.id_service,
+        );
         const serviceMap = new Map(
           bookingServices.map((service) => [service.id_service, service]),
         );
-        const receiptServiceIds = normalizeIdList(existing.serviceIds);
-        const receiptServiceSet = new Set(receiptServiceIds);
+        const receiptServiceIdsRaw = normalizeIdList(existing.serviceIds);
+        const receiptServiceIds = receiptServiceIdsRaw.filter((id) =>
+          serviceMap.has(id),
+        );
+        if (receiptServiceIdsRaw.length !== receiptServiceIds.length) {
+          normalizedServiceIdsForSave =
+            receiptServiceIds.length > 0
+              ? receiptServiceIds
+              : allBookingServiceIds;
+        }
+        const receiptServiceSet = new Set(
+          receiptServiceIds.length > 0 ? receiptServiceIds : allBookingServiceIds,
+        );
         const deduped = new Map<number, ReceiptServiceAllocationNormalized>();
 
         for (const alloc of parsedServiceAllocations) {
@@ -1756,7 +1781,17 @@ export default async function handler(
           },
         });
         const allBookingServiceIds = bookingServices.map((service) => service.id_service);
-        const receiptServiceIds = normalizeIdList(existing.serviceIds);
+        const allBookingServiceIdSet = new Set(allBookingServiceIds);
+        const receiptServiceIdsRaw = normalizeIdList(existing.serviceIds);
+        const receiptServiceIds = receiptServiceIdsRaw.filter((id) =>
+          allBookingServiceIdSet.has(id),
+        );
+        if (receiptServiceIdsRaw.length !== receiptServiceIds.length) {
+          normalizedServiceIdsForSave =
+            receiptServiceIds.length > 0
+              ? receiptServiceIds
+              : allBookingServiceIds;
+        }
         const inheritedUseBookingSaleTotal = Boolean(calcConfig?.use_booking_sale_total);
         const bookingSaleMode =
           typeof bookingData?.use_booking_sale_total_override === "boolean"
@@ -1844,13 +1879,18 @@ export default async function handler(
             ? Array.from(
                 new Set(
                   receipt.service_allocations
+                    .filter(
+                      (alloc) => Math.abs(toNum(alloc?.amount_service ?? 0)) > DEBT_TOLERANCE,
+                    )
                     .map((alloc) => Number(alloc?.service_id))
                     .filter((sid) => Number.isFinite(sid) && sid > 0)
                     .map((sid) => Math.trunc(sid)),
                 ),
               )
             : [];
-          const scopedReceiptServiceIds = normalizeIdList(receipt.serviceIds);
+          const scopedReceiptServiceIds = normalizeIdList(receipt.serviceIds).filter(
+            (id) => allBookingServiceIdSet.has(id),
+          );
           const hasAllocations = receiptAllocationIds.length > 0;
           const appliesToSelection =
             bookingSaleMode ||
@@ -1899,7 +1939,10 @@ export default async function handler(
             payment_fee_amount: existing.payment_fee_amount,
             base_amount: existing.base_amount,
             base_currency: existing.base_currency,
-            serviceIds: existing.serviceIds,
+            serviceIds:
+              normalizedServiceIdsForSave !== undefined
+                ? normalizedServiceIdsForSave
+                : existing.serviceIds,
             service_allocations: normalizedExistingServiceAllocations,
             payments: existingPaymentsForDebt,
           },
@@ -1919,7 +1962,10 @@ export default async function handler(
             payment_fee_amount: candidatePaymentFeeAmountForDebt,
             base_amount: candidateBaseAmountForDebt,
             base_currency: candidateBaseCurrencyForDebt,
-            serviceIds: existing.serviceIds,
+            serviceIds:
+              normalizedServiceIdsForSave !== undefined
+                ? normalizedServiceIdsForSave
+                : existing.serviceIds,
             service_allocations: serviceAllocationsForValidation,
             payments: candidatePaymentsForDebt,
           },
@@ -2006,6 +2052,9 @@ export default async function handler(
 
         ...(parsedIssueDate ? { issue_date: parsedIssueDate } : {}),
         ...(nextClientIds !== undefined ? { clientIds: nextClientIds } : {}),
+        ...(normalizedServiceIdsForSave !== undefined
+          ? { serviceIds: normalizedServiceIdsForSave }
+          : {}),
       };
 
       const updated = await prisma.$transaction(async (tx) => {

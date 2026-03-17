@@ -215,16 +215,18 @@ const addReceiptToPaidByCurrency = (
     ? receipt.service_allocations
     : [];
   if (selectedServiceIds && rawAllocations.length > 0) {
+    let appliedAllocation = false;
     for (const alloc of rawAllocations) {
       const serviceId = Number(alloc?.service_id);
       if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
       if (!selectedServiceIds.has(Math.trunc(serviceId))) continue;
       const amount = toNumberLoose(alloc?.amount_service ?? 0);
       if (Math.abs(amount) <= DEBT_TOLERANCE) continue;
+      appliedAllocation = true;
       const currency = normalizeCurrencyCodeLoose(alloc?.service_currency || "ARS");
       target[currency] = round2((target[currency] || 0) + amount);
     }
-    return;
+    if (appliedAllocation) return;
   }
 
   const amountCurrency = normalizeCurrencyCodeLoose(
@@ -317,9 +319,11 @@ const addUnallocatedReceiptPaidByCurrencyForSelection = (args: {
   serviceWeightById: Map<number, number>;
 }) => {
   const rawScopeIds = normalizeIdListLoose(args.receipt.serviceIds);
-  const scopeIds = (rawScopeIds.length > 0 ? rawScopeIds : args.allServiceIds).filter(
-    (id) => args.serviceCurrencyById.has(id),
-  );
+  const validScopedIds = rawScopeIds.filter((id) => args.serviceCurrencyById.has(id));
+  const scopeIds =
+    validScopedIds.length > 0
+      ? validScopedIds
+      : args.allServiceIds.filter((id) => args.serviceCurrencyById.has(id));
   if (!scopeIds.length) return;
 
   const selectedScopeIds = scopeIds.filter((id) => args.selectedServiceIds.has(id));
@@ -618,6 +622,15 @@ export default function ReceiptForm({
     bookingId ?? null,
   );
 
+  useEffect(() => {
+    const nextBookingId =
+      typeof bookingId === "number" && Number.isFinite(bookingId) && bookingId > 0
+        ? bookingId
+        : null;
+    if (nextBookingId == null) return;
+    setSelectedBookingId((prev) => (prev === nextBookingId ? prev : nextBookingId));
+  }, [bookingId]);
+
   const bookingSearchEnabled = !forcedBookingMode && mode === "booking";
   const { bookingQuery, setBookingQuery, bookingOptions, loadingBookings } =
     useBookingSearch({
@@ -646,6 +659,10 @@ export default function ReceiptForm({
   const allBookingServiceIds = useMemo(
     () => services.map((s) => s.id_service),
     [services],
+  );
+  const allBookingServiceIdSet = useMemo(
+    () => new Set(allBookingServiceIds),
+    [allBookingServiceIds],
   );
 
   const serviceIdsForContext = useMemo(() => {
@@ -1786,13 +1803,35 @@ export default function ReceiptForm({
 
     (async () => {
       try {
+        const qs = new URLSearchParams();
+        qs.set("bookingId", String(selectedBookingId));
+        let debugDebt = false;
+        if (typeof window !== "undefined") {
+          try {
+            const params = new URLSearchParams(window.location.search);
+            const queryEnabled = params.get("debugDebt") === "1";
+            const storageEnabled = ["1", "true", "on"].includes(
+              String(window.localStorage.getItem("ofistur:debugDebt") || "")
+                .trim()
+                .toLowerCase(),
+            );
+            debugDebt = queryEnabled || storageEnabled;
+          } catch {
+            debugDebt = false;
+          }
+        }
+        if (debugDebt) qs.set("debugDebt", "1");
+
         const res = await authFetch(
-          `/api/receipts?bookingId=${selectedBookingId}`,
+          `/api/receipts?${qs.toString()}`,
           { cache: "no-store", signal: ac.signal },
           token,
         );
         if (!res.ok) throw new Error("fetch failed");
         const json = await safeJson<unknown>(res);
+        if (debugDebt && isRecord(json) && isRecord(json.debug_debt)) {
+          console.warn("[debt-debug][receipt-form]", json.debug_debt);
+        }
         const list = asArray<ReceiptForDebt>(json);
         if (alive) setBookingReceipts(list);
       } catch {
@@ -2038,14 +2077,31 @@ export default function ReceiptForm({
 
   const relevantReceipts = useMemo(() => {
     if (!bookingReceipts.length) return [];
-    if (bookingSaleMode) return bookingReceipts;
+    const receiptsExcludingCurrent =
+      editingReceiptId && Number.isFinite(editingReceiptId) && editingReceiptId > 0
+        ? bookingReceipts.filter((r) => {
+            const receiptId = Number(
+              (r as { id_receipt?: unknown; id?: unknown }).id_receipt ??
+                (r as { id?: unknown }).id,
+            );
+            return !(
+              Number.isFinite(receiptId) &&
+              Math.trunc(receiptId) === Math.trunc(editingReceiptId)
+            );
+          })
+        : bookingReceipts;
+    if (bookingSaleMode) return receiptsExcludingCurrent;
     if (!serviceIdsForContext.length) return [];
     const svcSet = new Set(serviceIdsForContext);
-    return bookingReceipts.filter((r) => {
+    return receiptsExcludingCurrent.filter((r) => {
       const allocIds = Array.isArray(r.service_allocations)
         ? Array.from(
             new Set(
               r.service_allocations
+                .filter(
+                  (alloc) =>
+                    Math.abs(toNum(alloc?.amount_service ?? 0)) > DEBT_TOLERANCE,
+                )
                 .map((alloc) => Number(alloc?.service_id))
                 .filter((id) => Number.isFinite(id) && id > 0)
                 .map((id) => Math.trunc(id)),
@@ -2055,11 +2111,24 @@ export default function ReceiptForm({
       if (allocIds.length > 0) {
         return allocIds.some((id) => svcSet.has(id));
       }
-      const ids = Array.isArray(r.serviceIds) ? r.serviceIds : [];
+      const ids = Array.isArray(r.serviceIds)
+        ? r.serviceIds
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0)
+            .map((id) => Math.trunc(id))
+            .filter((id) => allBookingServiceIdSet.has(id))
+        : [];
       if (!ids.length) return true;
       return ids.some((id) => svcSet.has(id));
     });
-  }, [bookingReceipts, bookingSaleMode, serviceIdsForContext]);
+  }, [
+    allBookingServiceIdSet,
+    bookingReceipts,
+    bookingSaleMode,
+    editingReceiptId,
+    serviceIdsForContext,
+    toNum,
+  ]);
 
   const salesByCurrency = useMemo(() => {
     if (bookingSaleMode) {

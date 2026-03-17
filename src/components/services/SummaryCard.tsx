@@ -115,6 +115,17 @@ type ServiceDebtBreakdownRow = {
   debt: number;
 };
 
+type PaxAllocationDiagnostic = {
+  receiptId: number | null;
+  receiptNumber: string;
+  reasons: string[];
+  rawServiceIds: number[];
+  validServiceIds: number[];
+  allocationServiceIds: number[];
+  applicableAllocationServiceIds: number[];
+  amountsByCurrency: Record<string, number>;
+};
+
 type OperatorDebtBreakdownRow = {
   serviceId: number | null;
   currency: string;
@@ -935,10 +946,15 @@ export default function SummaryCard({
     return new Map(services.map((svc) => [svc.id_service, svc]));
   }, [services]);
 
-  const { paxDebtBreakdownByCurrency, paxUnallocatedPaidByCurrency } = useMemo(
+  const {
+    paxDebtBreakdownByCurrency,
+    paxUnallocatedPaidByCurrency,
+    paxAllocationDiagnostics,
+  } = useMemo(
     () => {
       const rowsByCurrency: Record<string, ServiceDebtBreakdownRow[]> = {};
       const unallocatedByCurrency: Record<string, number> = {};
+      const diagnostics: PaxAllocationDiagnostic[] = [];
       const svcList = services as ServiceWithCalcs[];
 
       const serviceIds = svcList
@@ -948,6 +964,7 @@ export default function SummaryCard({
         return {
           paxDebtBreakdownByCurrency: rowsByCurrency,
           paxUnallocatedPaidByCurrency: unallocatedByCurrency,
+          paxAllocationDiagnostics: diagnostics,
         };
       }
 
@@ -1008,15 +1025,87 @@ export default function SummaryCard({
         const manualAllocations = Array.isArray(receipt.service_allocations)
           ? receipt.service_allocations
           : [];
+        const rawSelectedServiceIds =
+          Array.isArray(receipt.serviceIds) && receipt.serviceIds.length
+            ? receipt.serviceIds
+                .map((id) => Number(id))
+                .filter((id) => Number.isFinite(id) && id > 0)
+            : [];
+        const validSelectedServiceIds = rawSelectedServiceIds.filter((id) =>
+          paidByService.has(id),
+        );
+        const selectedServiceIds =
+          validSelectedServiceIds.length > 0 ? validSelectedServiceIds : serviceIds;
+        const receiptIdRaw = Number((receipt as { id_receipt?: unknown }).id_receipt);
+        const receiptNumber = String(
+          (receipt as { receipt_number?: unknown }).receipt_number || "",
+        );
+
+        if (
+          rawSelectedServiceIds.length > 0 &&
+          validSelectedServiceIds.length === 0
+        ) {
+          diagnostics.push({
+            receiptId:
+              Number.isFinite(receiptIdRaw) && receiptIdRaw > 0
+                ? Math.trunc(receiptIdRaw)
+                : null,
+            receiptNumber,
+            reasons: ["stale_service_scope_ids"],
+            rawServiceIds: rawSelectedServiceIds,
+            validServiceIds: validSelectedServiceIds,
+            allocationServiceIds: [],
+            applicableAllocationServiceIds: [],
+            amountsByCurrency: amounts,
+          });
+        }
+
+        const allocateBySelectedServices = () => {
+          Object.entries(amounts).forEach(([cur, amount]) => {
+            if (!amount) return;
+            const targetIds = selectedServiceIds.filter(
+              (id) => serviceCurrency.get(id) === cur,
+            );
+            if (!targetIds.length) {
+              unallocatedByCurrency[cur] = (unallocatedByCurrency[cur] || 0) + amount;
+              return;
+            }
+
+            const weights = targetIds.map((id) =>
+              Math.max(0, saleByService.get(id) || 0),
+            );
+            const weightSum = weights.reduce((sum, val) => sum + val, 0);
+
+            targetIds.forEach((id, idx) => {
+              const allocated =
+                weightSum > 0
+                  ? (amount * weights[idx]) / weightSum
+                  : amount / targetIds.length;
+              paidByService.set(id, (paidByService.get(id) || 0) + allocated);
+            });
+          });
+        };
 
         if (manualAllocations.length > 0) {
           const allocatedByCurrency: Record<string, number> = {};
+          let hasApplicableAllocation = false;
+          const allocationServiceIds = Array.from(
+            new Set(
+              manualAllocations
+                .map((allocRaw) => Number(allocRaw?.service_id))
+                .filter((id) => Number.isFinite(id) && id > 0)
+                .map((id) => Math.trunc(id)),
+            ),
+          );
+          const applicableAllocationServiceIds: number[] = [];
           for (const allocRaw of manualAllocations) {
             const serviceId = Number(allocRaw?.service_id);
             const amountService = toNum(allocRaw?.amount_service ?? 0);
             if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
             if (Math.abs(amountService) <= PAYMENT_TOLERANCE) continue;
             if (!paidByService.has(serviceId)) continue;
+            hasApplicableAllocation = true;
+            applicableAllocationServiceIds.push(Math.trunc(serviceId));
 
             const serviceCur =
               serviceCurrency.get(serviceId) ||
@@ -1031,6 +1120,25 @@ export default function SummaryCard({
               (allocatedByCurrency[serviceCur] || 0) + amountService;
           }
 
+          // Fallback defensivo para recibos legacy con allocations vacías/no aplicables.
+          if (!hasApplicableAllocation) {
+            diagnostics.push({
+              receiptId:
+                Number.isFinite(receiptIdRaw) && receiptIdRaw > 0
+                  ? Math.trunc(receiptIdRaw)
+                  : null,
+              receiptNumber,
+              reasons: ["allocation_rows_without_valid_service_or_amount"],
+              rawServiceIds: rawSelectedServiceIds,
+              validServiceIds: validSelectedServiceIds,
+              allocationServiceIds,
+              applicableAllocationServiceIds,
+              amountsByCurrency: amounts,
+            });
+            allocateBySelectedServices();
+            return;
+          }
+
           Object.entries(amounts).forEach(([cur, amount]) => {
             const remainder = amount - (allocatedByCurrency[cur] || 0);
             if (Math.abs(remainder) <= PAYMENT_TOLERANCE) return;
@@ -1040,35 +1148,7 @@ export default function SummaryCard({
           return;
         }
 
-        const selectedIds = Array.isArray(receipt.serviceIds) && receipt.serviceIds.length
-          ? receipt.serviceIds
-              .map((id) => Number(id))
-              .filter((id) => Number.isFinite(id) && id > 0)
-          : serviceIds;
-
-        Object.entries(amounts).forEach(([cur, amount]) => {
-          if (!amount) return;
-          const targetIds = selectedIds.filter(
-            (id) => serviceCurrency.get(id) === cur,
-          );
-          if (!targetIds.length) {
-            unallocatedByCurrency[cur] = (unallocatedByCurrency[cur] || 0) + amount;
-            return;
-          }
-
-          const weights = targetIds.map((id) =>
-            Math.max(0, saleByService.get(id) || 0),
-          );
-          const weightSum = weights.reduce((sum, val) => sum + val, 0);
-
-          targetIds.forEach((id, idx) => {
-            const allocated =
-              weightSum > 0
-                ? (amount * weights[idx]) / weightSum
-                : amount / targetIds.length;
-            paidByService.set(id, (paidByService.get(id) || 0) + allocated);
-          });
-        });
+        allocateBySelectedServices();
       });
 
       serviceIds.forEach((id) => {
@@ -1093,10 +1173,37 @@ export default function SummaryCard({
       return {
         paxDebtBreakdownByCurrency: rowsByCurrency,
         paxUnallocatedPaidByCurrency: unallocatedByCurrency,
+        paxAllocationDiagnostics: diagnostics,
       };
     },
     [bookingSaleMode, manualMode, receipts, saleTotalsByCurrency, services],
   );
+
+  useEffect(() => {
+    if (!paxAllocationDiagnostics.length) return;
+    if (typeof window === "undefined") return;
+
+    let enabled = false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const queryEnabled = params.get("debugDebt") === "1";
+      const storageEnabled = ["1", "true", "on"].includes(
+        String(window.localStorage.getItem("ofistur:debugDebt") || "")
+          .trim()
+          .toLowerCase(),
+      );
+      enabled = queryEnabled || storageEnabled;
+    } catch {
+      enabled = false;
+    }
+
+    if (!enabled) return;
+
+    console.warn("[debt-debug] Recibos con imputacion anomala", {
+      bookingId,
+      issues: paxAllocationDiagnostics,
+    });
+  }, [bookingId, paxAllocationDiagnostics]);
 
   const { operatorDebtBreakdownByCurrency, operatorDebtTotalsByCurrency } =
     useMemo(() => {

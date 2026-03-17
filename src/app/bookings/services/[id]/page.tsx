@@ -311,6 +311,22 @@ export default function ServicesPage() {
       const qs = new URLSearchParams();
       qs.set("bookingId", String(bookingId));
       qs.set("take", "200");
+      let debugDebt = false;
+      if (typeof window !== "undefined") {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const queryEnabled = params.get("debugDebt") === "1";
+          const storageEnabled = ["1", "true", "on"].includes(
+            String(window.localStorage.getItem("ofistur:debugDebt") || "")
+              .trim()
+              .toLowerCase(),
+          );
+          debugDebt = queryEnabled || storageEnabled;
+        } catch {
+          debugDebt = false;
+        }
+      }
+      if (debugDebt) qs.set("debugDebt", "1");
 
       const res = await authFetch(
         `/api/receipts?${qs.toString()}`,
@@ -327,6 +343,9 @@ export default function ServicesPage() {
       }
 
       const json: unknown = await res.json().catch(() => null);
+      if (debugDebt && isRecord(json) && isRecord(json.debug_debt)) {
+        console.warn("[debt-debug][api/receipts]", json.debug_debt);
+      }
       const arr = extractReceiptsArray(json);
       const items = arr.map(coerceReceipt).filter((x) => x.id_receipt > 0);
 

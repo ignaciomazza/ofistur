@@ -499,14 +499,17 @@ export default async function handler(
             ? receipt.service_allocations
             : [];
 
+          let appliedAllocation = false;
           if (allocations.length > 0) {
             for (const alloc of allocations) {
               const serviceId = Number(alloc.service_id);
               if (!serviceById.has(serviceId)) continue;
               const amount = toNullableNumber(alloc.amount_service) || 0;
+              if (Math.abs(amount) <= PENDING_TOLERANCE) continue;
               addPaid(serviceId, amount);
+              appliedAllocation = true;
             }
-            continue;
+            if (appliedAllocation) continue;
           }
 
           const scopedServiceIds = Array.from(

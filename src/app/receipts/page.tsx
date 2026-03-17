@@ -1556,9 +1556,11 @@ export default function ReceiptsPage() {
           key={editingReceipt?.id_receipt ?? "new"}
           token={token || null}
           allowAgency={true}
+          bookingId={editingReceipt?.booking?.id_booking ?? undefined}
           editingReceiptId={editingReceipt?.id_receipt ?? null}
           isFormVisible={formVisible}
           setIsFormVisible={setFormVisible}
+          initialServiceIds={editingReceipt?.serviceIds ?? []}
           initialConcept={editingReceipt?.concept ?? ""}
           initialAmount={
             editingReceipt ? toNum(editingReceipt.amount) : undefined

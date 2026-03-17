@@ -549,9 +549,13 @@ function addUnallocatedReceiptPaidByCurrencyForSelection(args: {
   serviceWeightById: Map<number, number>;
 }) {
   const rawScopeIds = normalizeIdList(args.receipt.serviceIds);
-  const scopeIds = (rawScopeIds.length > 0 ? rawScopeIds : args.allServiceIds).filter(
-    (id) => args.serviceCurrencyById.has(id),
+  const validScopedIds = rawScopeIds.filter((id) =>
+    args.serviceCurrencyById.has(id),
   );
+  const scopeIds =
+    validScopedIds.length > 0
+      ? validScopedIds
+      : args.allServiceIds.filter((id) => args.serviceCurrencyById.has(id));
   if (scopeIds.length === 0) return;
 
   const selectedScopeIds = scopeIds.filter((id) => args.selectedServiceIds.has(id));
@@ -878,6 +882,13 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       ? req.query.bookingId[0]
       : req.query.bookingId;
     const bookingId = Number(bookingIdParam);
+    const debugDebt = String(
+      Array.isArray(req.query.debugDebt)
+        ? req.query.debugDebt[0]
+        : req.query.debugDebt ?? "",
+    )
+      .trim()
+      .toLowerCase() === "1";
 
     const financeGrants = await getFinanceSectionGrants(
       authAgencyId,
@@ -944,7 +955,95 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         service_allocations: normalizeServiceAllocationsFromReceipt(r),
       }));
 
-      return res.status(200).json({ receipts: normalized });
+      if (!debugDebt) {
+        return res.status(200).json({ receipts: normalized });
+      }
+
+      const bookingServices = await prisma.service.findMany({
+        where: { booking_id: bookingId },
+        select: { id_service: true },
+      });
+      const bookingServiceIdSet = new Set(
+        bookingServices.map((service) => service.id_service),
+      );
+
+      const issues = normalized
+        .map((receipt) => {
+          const rawServiceIds = normalizeIdList(
+            (receipt as { serviceIds?: unknown }).serviceIds,
+          );
+          const validServiceIds = rawServiceIds.filter((id) =>
+            bookingServiceIdSet.has(id),
+          );
+          const allocationRows = Array.isArray(receipt.service_allocations)
+            ? receipt.service_allocations
+            : [];
+          const allocationServiceIds = Array.from(
+            new Set(
+              allocationRows
+                .map((alloc) => Number(alloc?.service_id))
+                .filter((id) => Number.isFinite(id) && id > 0)
+                .map((id) => Math.trunc(id)),
+            ),
+          );
+          const applicableAllocationServiceIds = Array.from(
+            new Set(
+              allocationRows
+                .filter(
+                  (alloc) => Math.abs(toNum(alloc?.amount_service ?? 0)) > DEBT_TOLERANCE,
+                )
+                .map((alloc) => Number(alloc?.service_id))
+                .filter((id) => Number.isFinite(id) && bookingServiceIdSet.has(id))
+                .map((id) => Math.trunc(id)),
+            ),
+          );
+
+          const reasons: string[] = [];
+          if (rawServiceIds.length > 0 && validServiceIds.length === 0) {
+            reasons.push("stale_service_scope_ids");
+          }
+          if (
+            allocationRows.length > 0 &&
+            applicableAllocationServiceIds.length === 0
+          ) {
+            reasons.push("allocation_rows_without_valid_service_or_amount");
+          }
+          if (reasons.length === 0) return null;
+
+          const amountsByCurrency: Record<string, number> = {};
+          addReceiptToPaidByCurrency(amountsByCurrency, receipt);
+
+          return {
+            id_receipt: Number(receipt.id_receipt),
+            receipt_number: String(receipt.receipt_number || ""),
+            reasons,
+            raw_service_ids: rawServiceIds,
+            valid_service_ids: validServiceIds,
+            allocation_service_ids: allocationServiceIds,
+            applicable_allocation_service_ids: applicableAllocationServiceIds,
+            amounts_by_currency: amountsByCurrency,
+          };
+        })
+        .filter((issue): issue is NonNullable<typeof issue> => issue !== null);
+
+      if (issues.length > 0) {
+        console.warn("[receipts][debugDebt] anomalous receipt mapping", {
+          bookingId,
+          totalReceipts: normalized.length,
+          issueCount: issues.length,
+          issues,
+        });
+      }
+
+      return res.status(200).json({
+        receipts: normalized,
+        debug_debt: {
+          booking_id: bookingId,
+          total_receipts: normalized.length,
+          issue_count: issues.length,
+          issues,
+        },
+      });
     }
     if (!canReceipts && !canVerify) {
       return res.status(403).json({ error: "Sin permisos" });
@@ -1824,6 +1923,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         ? undefined
         : selectedServiceIdSet;
       const allBookingServiceIds = services.map((service) => service.id_service);
+      const allBookingServiceIdSet = new Set(allBookingServiceIds);
       const serviceCurrencyById = new Map(
         services.map((service) => [
           service.id_service,
@@ -1886,13 +1986,18 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           ? Array.from(
               new Set(
                 receipt.service_allocations
+                  .filter(
+                    (alloc) => Math.abs(toNum(alloc?.amount_service ?? 0)) > DEBT_TOLERANCE,
+                  )
                   .map((alloc) => Number(alloc?.service_id))
                   .filter((sid) => Number.isFinite(sid) && sid > 0)
                   .map((sid) => Math.trunc(sid)),
               ),
             )
           : [];
-        const receiptServiceIds = normalizeIdList(receipt.serviceIds);
+        const receiptServiceIds = normalizeIdList(receipt.serviceIds).filter((id) =>
+          allBookingServiceIdSet.has(id),
+        );
         const hasAllocations = receiptAllocationIds.length > 0;
         const appliesToSelection =
           bookingSaleMode ||
