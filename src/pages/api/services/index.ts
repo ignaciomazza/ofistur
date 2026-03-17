@@ -80,7 +80,22 @@ export default async function handler(
   res: NextApiResponse,
 ) {
   if (req.method === "GET") {
-    const { bookingId, ids, operatorId, q, take, pendingOnly } = req.query;
+    const {
+      bookingId,
+      ids,
+      operatorId,
+      q,
+      take,
+      pendingOnly,
+      paymentMethodId,
+      accountId,
+    } = req.query;
+    const paymentMethodIdParam = Array.isArray(paymentMethodId)
+      ? paymentMethodId[0]
+      : paymentMethodId;
+    const accountIdParam = Array.isArray(accountId) ? accountId[0] : accountId;
+    const parsedPaymentMethodId = parsePositiveInt(paymentMethodIdParam);
+    const parsedAccountId = parsePositiveInt(accountIdParam);
 
     const idsParam = Array.isArray(ids) ? ids[0] : ids;
     if (idsParam) {
@@ -473,11 +488,22 @@ export default async function handler(
       };
 
       if (serviceIds.length > 0) {
+        const receiptWhere: Prisma.ReceiptWhereInput = {
+          bookingId_booking: Number(bookingId),
+          OR: [
+            { id_agency: auth.id_agency },
+            { booking: { id_agency: auth.id_agency } },
+          ],
+        };
+        if (parsedPaymentMethodId) {
+          receiptWhere.payment_method_id = parsedPaymentMethodId;
+        }
+        if (parsedAccountId) {
+          receiptWhere.account_id = parsedAccountId;
+        }
+
         const receipts = await prisma.receipt.findMany({
-          where: {
-            bookingId_booking: Number(bookingId),
-            OR: [{ id_agency: auth.id_agency }, { booking: { id_agency: auth.id_agency } }],
-          },
+          where: receiptWhere,
           select: {
             amount: true,
             amount_currency: true,

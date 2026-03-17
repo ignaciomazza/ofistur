@@ -11,7 +11,7 @@ import Spinner from "@/components/Spinner";
 import { motion } from "framer-motion";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { Booking, User, SalesTeam, PassengerCategory } from "@/types";
+import { Booking, Service, User, SalesTeam, PassengerCategory } from "@/types";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
 import { rankBookingsBySimilarity } from "@/utils/bookingSearch";
@@ -964,6 +964,319 @@ export default function Page() {
     setIsFormVisible(true);
   };
 
+  const duplicateBooking = async (source: Booking) => {
+    const titularId = source.titular?.id_client ?? 0;
+    if (!isValidId(titularId)) {
+      toast.error("No se pudo duplicar la reserva: titular inválido.");
+      return;
+    }
+
+    const departureDate =
+      toDateKeyInBuenosAiresLegacySafe(source.departure_date) || "";
+    const returnDate = toDateKeyInBuenosAiresLegacySafe(source.return_date) || "";
+    if (!departureDate || !returnDate) {
+      toast.error("No se pudo duplicar la reserva: fechas inválidas.");
+      return;
+    }
+
+    const companions = (source.clients || [])
+      .map((c) => c.id_client)
+      .filter((id) => isValidId(id) && id !== titularId);
+
+    const simpleCompanions = Array.isArray(source.simple_companions)
+      ? source.simple_companions
+          .map((c) => {
+            const category_id =
+              c?.category_id != null ? Number(c.category_id) : null;
+            const age = c?.age != null ? Number(c.age) : null;
+            const notes =
+              typeof c?.notes === "string" && c.notes.trim()
+                ? c.notes.trim()
+                : null;
+
+            const safeCategory =
+              category_id != null &&
+              Number.isFinite(category_id) &&
+              category_id > 0
+                ? Math.floor(category_id)
+                : null;
+            const safeAge =
+              age != null && Number.isFinite(age) && age >= 0
+                ? Math.floor(age)
+                : null;
+
+            if (safeCategory == null && safeAge == null && !notes) return null;
+            return { category_id: safeCategory, age: safeAge, notes };
+          })
+          .filter(
+            (
+              item,
+            ): item is { category_id: number | null; age: number | null; notes: string | null } =>
+              item !== null,
+          )
+      : [];
+
+    const roleNormalized = normalizeRole(profile?.role || "");
+    const canPickCreator = [
+      "lider",
+      "gerente",
+      "administrativo",
+      "desarrollador",
+    ].includes(roleNormalized);
+    const canEditCreationDate = [
+      "gerente",
+      "administrativo",
+      "desarrollador",
+    ].includes(roleNormalized);
+    const creationDate =
+      toDateKeyInBuenosAiresLegacySafe(source.creation_date) || undefined;
+    const sourceStatus = String(source.status || "").trim().toLowerCase();
+    const statusForDuplicate =
+      sourceStatus === "bloqueada" || sourceStatus === "cancelada"
+        ? "Abierta"
+        : source.status || "Abierta";
+
+    const payload: {
+      clientStatus: string;
+      operatorStatus: string;
+      status: string;
+      details: string;
+      invoice_type: string;
+      invoice_observation?: string;
+      observation?: string;
+      titular_id: number;
+      departure_date: string;
+      return_date: string;
+      pax_count: number;
+      clients_ids: number[];
+      simple_companions: Array<{
+        category_id: number | null;
+        age: number | null;
+        notes: string | null;
+      }>;
+      id_user?: number;
+      creation_date?: string;
+    } = {
+      clientStatus: source.clientStatus || "Pendiente",
+      operatorStatus: source.operatorStatus || "Pendiente",
+      status: statusForDuplicate,
+      details: source.details?.trim() || "Copia de reserva",
+      invoice_type: source.invoice_type || "Coordinar con administracion",
+      invoice_observation: source.invoice_observation || "",
+      observation: source.observation || "",
+      titular_id: titularId,
+      departure_date: departureDate,
+      return_date: returnDate,
+      pax_count: 1 + companions.length + simpleCompanions.length,
+      clients_ids: companions,
+      simple_companions: simpleCompanions,
+      ...(canPickCreator && isValidId(source.user?.id_user)
+        ? { id_user: source.user.id_user }
+        : {}),
+      ...(canEditCreationDate && creationDate
+        ? { creation_date: creationDate }
+        : {}),
+    };
+
+    const readApiError = async (response: Response, fallback: string) => {
+      try {
+        const err = await response.json();
+        return typeof err?.error === "string" ? err.error : fallback;
+      } catch {
+        return fallback;
+      }
+    };
+
+    const resolveSourceServices = async (): Promise<Service[]> => {
+      try {
+        const servicesResp = await authFetch(
+          `/api/services?bookingId=${source.id_booking}`,
+          { cache: "no-store" },
+          token || undefined,
+        );
+        if (!servicesResp.ok) {
+          const msg = await readApiError(
+            servicesResp,
+            "No se pudieron obtener los servicios a duplicar.",
+          );
+          throw new Error(msg);
+        }
+        const data = (await servicesResp.json().catch(() => ({}))) as {
+          services?: Service[];
+        };
+        if (Array.isArray(data.services)) return data.services;
+      } catch (error) {
+        if (Array.isArray(source.services)) return source.services;
+        throw error;
+      }
+
+      return Array.isArray(source.services) ? source.services : [];
+    };
+
+    try {
+      const servicesToDuplicate = await resolveSourceServices();
+
+      const response = await authFetch(
+        "/api/bookings",
+        { method: "POST", body: JSON.stringify(payload) },
+        token || undefined,
+      );
+
+      if (!response.ok) {
+        const msg = await readApiError(response, "No se pudo duplicar la reserva.");
+        throw new Error(formatBookingErrorMessage(msg));
+      }
+
+      const duplicatedBooking = (await response.json().catch(() => null)) as
+        | Booking
+        | null;
+      const duplicatedBookingId = duplicatedBooking?.id_booking;
+      if (!isValidId(duplicatedBookingId)) {
+        throw new Error("No se pudo identificar la reserva duplicada.");
+      }
+
+      if (servicesToDuplicate.length > 0) {
+        let duplicatedServices = 0;
+        try {
+          for (const service of servicesToDuplicate) {
+            const serviceDeparture =
+              toDateKeyInBuenosAiresLegacySafe(service.departure_date) ||
+              departureDate;
+            const serviceReturn =
+              toDateKeyInBuenosAiresLegacySafe(service.return_date) || returnDate;
+
+            const servicePayload = {
+              type: service.type,
+              description: service.description ?? "",
+              note: service.note ?? "",
+              sale_price: service.sale_price ?? 0,
+              cost_price: service.cost_price ?? 0,
+              destination: service.destination ?? "",
+              reference: service.reference ?? "",
+              tax_21: service.tax_21 ?? null,
+              tax_105: service.tax_105 ?? null,
+              exempt: service.exempt ?? null,
+              other_taxes: service.other_taxes ?? null,
+              currency: service.currency || "ARS",
+              departure_date: serviceDeparture,
+              return_date: serviceReturn,
+              id_operator: service.id_operator,
+              booking_id: duplicatedBookingId,
+              nonComputable: service.nonComputable ?? null,
+              taxableBase21: service.taxableBase21 ?? null,
+              taxableBase10_5: service.taxableBase10_5 ?? null,
+              commissionExempt: service.commissionExempt ?? null,
+              commission21: service.commission21 ?? null,
+              commission10_5: service.commission10_5 ?? null,
+              vatOnCommission21: service.vatOnCommission21 ?? null,
+              vatOnCommission10_5: service.vatOnCommission10_5 ?? null,
+              totalCommissionWithoutVAT: service.totalCommissionWithoutVAT ?? null,
+              impIVA: service.impIVA ?? null,
+              card_interest: service.card_interest ?? null,
+              card_interest_21: service.card_interest_21 ?? null,
+              taxableCardInterest: service.taxableCardInterest ?? null,
+              vatOnCardInterest: service.vatOnCardInterest ?? null,
+              transfer_fee_pct: service.transfer_fee_pct ?? null,
+              transfer_fee_amount: service.transfer_fee_amount ?? null,
+              billing_override: service.billing_override ?? null,
+              extra_costs_amount: service.extra_costs_amount ?? null,
+              extra_taxes_amount: service.extra_taxes_amount ?? null,
+              extra_adjustments: service.extra_adjustments ?? null,
+            };
+
+            const serviceResponse = await authFetch(
+              "/api/services",
+              {
+                method: "POST",
+                body: JSON.stringify(servicePayload),
+              },
+              token || undefined,
+            );
+
+            if (!serviceResponse.ok) {
+              const msg = await readApiError(
+                serviceResponse,
+                "No se pudo duplicar uno de los servicios.",
+              );
+              throw new Error(formatBookingErrorMessage(msg));
+            }
+
+            duplicatedServices += 1;
+          }
+        } catch {
+          const rollback = await authFetch(
+            `/api/bookings/${duplicatedBookingId}`,
+            { method: "DELETE" },
+            token || undefined,
+          ).catch(() => null);
+
+          if (!rollback?.ok) {
+            throw new Error(
+              `No se pudieron duplicar todos los servicios (${duplicatedServices}/${servicesToDuplicate.length}). La reserva ${duplicatedBookingId} quedó creada parcialmente.`,
+            );
+          }
+
+          throw new Error(
+            `No se pudieron duplicar todos los servicios (${duplicatedServices}/${servicesToDuplicate.length}). Se revirtió la reserva duplicada.`,
+          );
+        }
+      }
+
+      const qs = buildBookingsQuery();
+      const listResp = await authFetch(
+        `/api/bookings?${qs}`,
+        { cache: "no-store" },
+        token || undefined,
+      );
+      if (!listResp.ok) throw new Error("No se pudo refrescar la lista.");
+      const { items, nextCursor } = await listResp.json();
+      logBookingsDateSnapshot("list:after-duplicate-refresh", items as Booking[]);
+      setBookings(items);
+      setNextCursor(nextCursor);
+      setExpandedBookingId(null);
+
+      try {
+        const numberingRes = await authFetch(
+          "/api/bookings/config/numbering",
+          { cache: "no-store" },
+          token || undefined,
+        );
+        if (numberingRes.ok) {
+          const numbering = (await numberingRes.json().catch(() => null)) as {
+            allow_manual_agency_booking_id?: boolean;
+            next_auto_agency_booking_id?: number;
+          } | null;
+          setAllowManualAgencyBookingId(
+            Boolean(numbering?.allow_manual_agency_booking_id),
+          );
+          setNextAutoAgencyBookingId(
+            typeof numbering?.next_auto_agency_booking_id === "number" &&
+              Number.isFinite(numbering.next_auto_agency_booking_id)
+              ? Math.max(1, Math.trunc(numbering.next_auto_agency_booking_id))
+              : null,
+          );
+        }
+      } catch {
+        // Si falla, no bloquea la duplicación.
+      }
+
+      if (servicesToDuplicate.length > 0) {
+        toast.success(
+          `Reserva duplicada con ${servicesToDuplicate.length} servicio${
+            servicesToDuplicate.length === 1 ? "" : "s"
+          }.`,
+        );
+      } else {
+        toast.success("Reserva duplicada con éxito.");
+      }
+    } catch (error: unknown) {
+      const msg = formatBookingErrorMessage(
+        error instanceof Error ? error.message : "Error inesperado.",
+      );
+      toast.error(msg);
+    }
+  };
+
   const deleteBooking = async (id: number) => {
     try {
       const res = await authFetch(
@@ -1158,6 +1471,7 @@ export default function Page() {
             expandedBookingId={expandedBookingId}
             setExpandedBookingId={setExpandedBookingId}
             startEditingBooking={startEditingBooking}
+            duplicateBooking={duplicateBooking}
             deleteBooking={deleteBooking}
             role={profile?.role as FilterRole}
             hasMore={Boolean(nextCursor)}

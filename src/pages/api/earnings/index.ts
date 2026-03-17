@@ -31,6 +31,29 @@ interface EarningItem {
   totalAgencyShare: number;
   debt: number;
   bookingIds: number[];
+  bookingRefs: Array<{ bookingId: number; agencyBookingId: number | null }>;
+}
+interface EarningBookingServiceDetail {
+  idService: number;
+  agencyServiceId: number | null;
+  bookingId: number;
+  agencyBookingId: number | null;
+  currency: string;
+  type: string;
+  description: string;
+  destination: string;
+  sale: number;
+  paid: number;
+  pending: number;
+  sellerCommission: number;
+  leaderCommission: number;
+  agencyCommission: number;
+}
+interface EarningBookingDetail {
+  bookingId: number;
+  agencyBookingId: number | null;
+  creationDate: string | null;
+  services: EarningBookingServiceDetail[];
 }
 interface EarningsResponse {
   totals: {
@@ -53,6 +76,7 @@ interface EarningsResponse {
     byMethod: Record<string, Record<string, number>>;
   };
   items: EarningItem[];
+  bookingDetails: EarningBookingDetail[];
 }
 
 // ===== Auth (para agencia) =====
@@ -142,6 +166,8 @@ function parsePaidPct(input: string | string[] | undefined): number {
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const PENDING_TOLERANCE = 0.01;
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 function isDateKeyWithinRange(
   key: string | null | undefined,
@@ -298,9 +324,15 @@ export default async function handler(
       },
       select: {
         id_service: true,
+        agency_service_id: true,
         booking_id: true,
         currency: true,
+        type: true,
+        description: true,
         sale_price: true,
+        card_interest: true,
+        taxableCardInterest: true,
+        vatOnCardInterest: true,
         cost_price: true,
         other_taxes: true,
         totalCommissionWithoutVAT: true,
@@ -326,6 +358,7 @@ export default async function handler(
         statsByCurrency: {},
         breakdowns: { byCountry: {}, byMethod: {} },
         items: [],
+        bookingDetails: [],
       });
     }
 
@@ -449,8 +482,11 @@ export default async function handler(
       number,
       { userId: number; userName: string; bookingCreatedAt: Date }
     >();
+    const bookingAgencyIdByBooking = new Map<number, number | null>();
+    const bookingCreationDateByBooking = new Map<number, Date>();
     let bookings: Array<{
       id_booking: number;
+      agency_booking_id: number | null;
       creation_date: Date;
       departure_date: Date;
       sale_totals: unknown | null;
@@ -466,6 +502,7 @@ export default async function handler(
         where: { id_agency: auth.id_agency, id_booking: { in: bookingIds } },
         select: {
           id_booking: true,
+          agency_booking_id: true,
           creation_date: true,
           departure_date: true,
           sale_totals: true,
@@ -480,6 +517,15 @@ export default async function handler(
           userName: `${b.user.first_name} ${b.user.last_name}`,
           bookingCreatedAt: b.creation_date,
         });
+        bookingCreationDateByBooking.set(b.id_booking, b.creation_date);
+        bookingAgencyIdByBooking.set(
+          b.id_booking,
+          b.agency_booking_id != null &&
+            Number.isFinite(Number(b.agency_booking_id)) &&
+            Number(b.agency_booking_id) > 0
+            ? Number(b.agency_booking_id)
+            : null,
+        );
       });
     }
 
@@ -531,8 +577,161 @@ export default async function handler(
         statsByCurrency: {},
         breakdowns: { byCountry: {}, byMethod: {} },
         items: [],
+        bookingDetails: [],
       });
     }
+
+    const servicesByBooking = new Map<number, (typeof services)[number][]>();
+    const serviceById = new Map<number, (typeof services)[number]>();
+    const serviceIdsByBooking = new Map<number, number[]>();
+    const serviceIdSetByBooking = new Map<number, Set<number>>();
+
+    services.forEach((svc) => {
+      const bid = svc.booking_id;
+      if (!allowedBookingIds.has(bid)) return;
+      const list = servicesByBooking.get(bid) || [];
+      list.push(svc);
+      servicesByBooking.set(bid, list);
+      serviceById.set(svc.id_service, svc);
+    });
+
+    servicesByBooking.forEach((bookingServices, bid) => {
+      const ids = Array.from(
+        new Set(bookingServices.map((svc) => svc.id_service)),
+      ).sort((a, b) => a - b);
+      serviceIdsByBooking.set(bid, ids);
+      serviceIdSetByBooking.set(bid, new Set(ids));
+    });
+
+    const paidByService = new Map<number, number>();
+    const serviceCommissionById = new Map<
+      number,
+      { seller: number; leader: number; agency: number }
+    >();
+    const bookingCommissionTotalsByCurrency = new Map<
+      number,
+      Record<string, { seller: number; leader: number; agency: number }>
+    >();
+    const addPaidByService = (serviceId: number, amount: number) => {
+      if (!Number.isFinite(serviceId) || serviceId <= 0) return;
+      if (!Number.isFinite(amount) || Math.abs(amount) <= PENDING_TOLERANCE) {
+        return;
+      }
+      paidByService.set(
+        serviceId,
+        round2((paidByService.get(serviceId) || 0) + amount),
+      );
+    };
+    const addServiceCommission = (
+      serviceId: number,
+      seller: number,
+      leader: number,
+      agency: number,
+    ) => {
+      if (!Number.isFinite(serviceId) || serviceId <= 0) return;
+      const existing = serviceCommissionById.get(serviceId) || {
+        seller: 0,
+        leader: 0,
+        agency: 0,
+      };
+      serviceCommissionById.set(serviceId, {
+        seller: round2(existing.seller + (Number.isFinite(seller) ? seller : 0)),
+        leader: round2(existing.leader + (Number.isFinite(leader) ? leader : 0)),
+        agency: round2(existing.agency + (Number.isFinite(agency) ? agency : 0)),
+      });
+    };
+    const addBookingCommissionTotals = (
+      bookingId: number,
+      currency: string,
+      seller: number,
+      leader: number,
+      agency: number,
+    ) => {
+      const cur = String(currency || "").trim().toUpperCase();
+      if (!cur) return;
+      const byCurrency = bookingCommissionTotalsByCurrency.get(bookingId) || {};
+      const existing = byCurrency[cur] || { seller: 0, leader: 0, agency: 0 };
+      byCurrency[cur] = {
+        seller: round2(existing.seller + (Number.isFinite(seller) ? seller : 0)),
+        leader: round2(existing.leader + (Number.isFinite(leader) ? leader : 0)),
+        agency: round2(existing.agency + (Number.isFinite(agency) ? agency : 0)),
+      };
+      bookingCommissionTotalsByCurrency.set(bookingId, byCurrency);
+    };
+    const getServiceDue = (svc: (typeof services)[number]) => {
+      const sale = Math.max(Number(svc.sale_price || 0), 0);
+      const splitInterest = Math.max(
+        (Number(svc.taxableCardInterest || 0) || 0) +
+          (Number(svc.vatOnCardInterest || 0) || 0),
+        0,
+      );
+      const fallbackInterest = Math.max(Number(svc.card_interest || 0), 0);
+      return round2(Math.max(sale + (splitInterest > 0 ? splitInterest : fallbackInterest), 0));
+    };
+    const distributeByServiceWeight = (serviceIds: number[], total: number) => {
+      if (serviceIds.length === 0) return;
+      if (!Number.isFinite(total) || Math.abs(total) <= PENDING_TOLERANCE) return;
+
+      const weights = serviceIds.map((sid) => {
+        const svc = serviceById.get(sid);
+        if (!svc) return 0;
+        return Math.max(getServiceDue(svc), 0);
+      });
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+      let remaining = round2(total);
+
+      serviceIds.forEach((sid, idx) => {
+        const isLast = idx === serviceIds.length - 1;
+        const ratio =
+          totalWeight > 0 ? weights[idx] / totalWeight : 1 / serviceIds.length;
+        const amount = isLast ? remaining : round2(total * ratio);
+        if (!isLast) remaining = round2(remaining - amount);
+        addPaidByService(sid, amount);
+      });
+    };
+    const distributeCommissionByServiceWeight = (
+      serviceIds: number[],
+      totals: { seller: number; leader: number; agency: number },
+    ) => {
+      if (serviceIds.length === 0) return;
+      const totalAbs =
+        Math.abs(totals.seller) + Math.abs(totals.leader) + Math.abs(totals.agency);
+      if (totalAbs <= PENDING_TOLERANCE) return;
+
+      const weights = serviceIds.map((sid) => {
+        const svc = serviceById.get(sid);
+        if (!svc) return 0;
+        return Math.max(getServiceDue(svc), 0);
+      });
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+
+      let remainingSeller = round2(totals.seller);
+      let remainingLeader = round2(totals.leader);
+      let remainingAgency = round2(totals.agency);
+
+      serviceIds.forEach((sid, idx) => {
+        const isLast = idx === serviceIds.length - 1;
+        const ratio =
+          totalWeight > 0 ? weights[idx] / totalWeight : 1 / serviceIds.length;
+        const sellerAmount = isLast
+          ? remainingSeller
+          : round2(totals.seller * ratio);
+        const leaderAmount = isLast
+          ? remainingLeader
+          : round2(totals.leader * ratio);
+        const agencyAmount = isLast
+          ? remainingAgency
+          : round2(totals.agency * ratio);
+
+        if (!isLast) {
+          remainingSeller = round2(remainingSeller - sellerAmount);
+          remainingLeader = round2(remainingLeader - leaderAmount);
+          remainingAgency = round2(remainingAgency - agencyAmount);
+        }
+
+      addServiceCommission(sid, sellerAmount, leaderAmount, agencyAmount);
+      });
+    };
 
     // 3) Venta total por reserva/moneda (para deuda y % pago)
     const saleTotalsByBooking = new Map<number, Record<string, number>>();
@@ -573,8 +772,16 @@ export default async function handler(
         bookingId_booking: true,
         amount: true,
         amount_currency: true,
+        payment_fee_amount: true,
         base_amount: true,
         base_currency: true,
+        serviceIds: true,
+        service_allocations: {
+          select: {
+            service_id: true,
+            amount_service: true,
+          },
+        },
         payment_method: true,
         payment_method_id: true,
         account: true,
@@ -609,6 +816,79 @@ export default async function handler(
       const list = receiptsByBookingMethod.get(bid) || [];
       list.push({ methodLabel, currency: cur, amount: val });
       receiptsByBookingMethod.set(bid, list);
+
+      const bookingServiceIds = serviceIdsByBooking.get(bid) || [];
+      const bookingServiceIdSet = serviceIdSetByBooking.get(bid);
+      if (bookingServiceIds.length === 0 || !bookingServiceIdSet) continue;
+
+      const allocations = Array.isArray(r.service_allocations)
+        ? r.service_allocations
+        : [];
+
+      let appliedAllocation = false;
+      if (allocations.length > 0) {
+        for (const alloc of allocations) {
+          const serviceId = Number(alloc.service_id);
+          if (!bookingServiceIdSet.has(serviceId)) continue;
+          const amount = Number(alloc.amount_service || 0);
+          if (Math.abs(amount) <= PENDING_TOLERANCE) continue;
+          addPaidByService(serviceId, amount);
+          appliedAllocation = true;
+        }
+        if (appliedAllocation) continue;
+      }
+
+      const scopedServiceIds = Array.from(
+        new Set(
+          (Array.isArray(r.serviceIds) ? r.serviceIds : [])
+            .map((id) => Number(id))
+            .filter(
+              (id) => Number.isFinite(id) && bookingServiceIdSet.has(id),
+            ),
+        ),
+      );
+      const effectiveScopedServiceIds =
+        scopedServiceIds.length > 0 ? scopedServiceIds : bookingServiceIds;
+
+      const amountCurrency = String(r.amount_currency || "").trim().toUpperCase();
+      const baseCurrency = String(r.base_currency || "").trim().toUpperCase();
+      const amountValue = Number(r.amount || 0) || 0;
+      const feeValue = Number(r.payment_fee_amount || 0) || 0;
+      const baseValue = Number(r.base_amount || 0) || 0;
+
+      let distributed = false;
+      if (baseCurrency && Math.abs(baseValue) > PENDING_TOLERANCE) {
+        const baseServiceIds = effectiveScopedServiceIds.filter((serviceId) => {
+          const serviceCurrency = String(
+            serviceById.get(serviceId)?.currency || "",
+          )
+            .trim()
+            .toUpperCase();
+          return serviceCurrency === baseCurrency;
+        });
+        if (baseServiceIds.length > 0) {
+          const total =
+            baseValue + (baseCurrency === amountCurrency ? feeValue : 0);
+          distributeByServiceWeight(baseServiceIds, total);
+          distributed = true;
+        }
+      }
+
+      if (!distributed && amountCurrency) {
+        const amountServiceIds = effectiveScopedServiceIds.filter(
+          (serviceId) => {
+            const serviceCurrency = String(
+              serviceById.get(serviceId)?.currency || "",
+            )
+              .trim()
+              .toUpperCase();
+            return serviceCurrency === amountCurrency;
+          },
+        );
+        if (amountServiceIds.length > 0) {
+          distributeByServiceWeight(amountServiceIds, amountValue + feeValue);
+        }
+      }
     }
 
     // 5) Validar % cobrado en la misma moneda
@@ -787,6 +1067,7 @@ export default async function handler(
 
       const key = `${currency}-${userId}`;
       const existing = itemsMap.get(key);
+      const agencyBookingId = bookingAgencyIdByBooking.get(bid) ?? null;
 
       if (existing) {
         existing.totalSellerComm += sellerComm;
@@ -797,6 +1078,10 @@ export default async function handler(
         if (!existing.bookingIds.includes(bid)) {
           existing.debt = Math.max(0, existing.debt + debt);
           existing.bookingIds.push(bid);
+          existing.bookingRefs.push({
+            bookingId: bid,
+            agencyBookingId,
+          });
         }
       } else {
         const { teamId, teamName } = getTeamDisplay(userId);
@@ -811,6 +1096,7 @@ export default async function handler(
           totalAgencyShare: agencyShare,
           debt: Math.max(0, debt),
           bookingIds: [bid],
+          bookingRefs: [{ bookingId: bid, agencyBookingId }],
         });
       }
       return true;
@@ -904,6 +1190,29 @@ export default async function handler(
           bookingComm[cur] = (bookingComm[cur] || 0) + commissionBase;
           commissionByBooking.set(bid, bookingComm);
         }
+        addBookingCommissionTotals(
+          bid,
+          cur,
+          sellerComm,
+          leaderComm,
+          agencyShareAmt,
+        );
+
+        const bookingServiceIdsForCurrency = Array.from(
+          new Set(
+            (servicesByBooking.get(bid) || [])
+              .filter(
+                (service) =>
+                  String(service.currency || "").trim().toUpperCase() === cur,
+              )
+              .map((service) => service.id_service),
+          ),
+        ).sort((a, b) => a - b);
+        distributeCommissionByServiceWeight(bookingServiceIdsForCurrency, {
+          seller: sellerComm,
+          leader: leaderComm,
+          agency: agencyShareAmt,
+        });
       }
     }
 
@@ -981,7 +1290,59 @@ export default async function handler(
         bookingComm[cur] = (bookingComm[cur] || 0) + commissionBase;
         commissionByBooking.set(bid, bookingComm);
       }
+      addBookingCommissionTotals(
+        bid,
+        cur,
+        sellerComm,
+        leaderComm,
+        agencyShareAmt,
+      );
+      addServiceCommission(
+        svc.id_service,
+        sellerComm,
+        leaderComm,
+        agencyShareAmt,
+      );
     }
+
+    bookingCommissionTotalsByCurrency.forEach((byCurrency, bid) => {
+      const bookingServices = servicesByBooking.get(bid) || [];
+      if (bookingServices.length === 0) return;
+
+      Object.entries(byCurrency).forEach(([cur, totals]) => {
+        const serviceIdsForCurrency = Array.from(
+          new Set(
+            bookingServices
+              .filter(
+                (svc) => String(svc.currency || "").trim().toUpperCase() === cur,
+              )
+              .map((svc) => svc.id_service),
+          ),
+        ).sort((a, b) => a - b);
+        if (serviceIdsForCurrency.length === 0) return;
+
+        const expectedAbs =
+          Math.abs(totals.seller) +
+          Math.abs(totals.leader) +
+          Math.abs(totals.agency);
+        if (expectedAbs <= PENDING_TOLERANCE) return;
+
+        const assignedAbs = serviceIdsForCurrency.reduce((sum, serviceId) => {
+          const existing = serviceCommissionById.get(serviceId);
+          if (!existing) return sum;
+          return (
+            sum +
+            Math.abs(existing.seller || 0) +
+            Math.abs(existing.leader || 0) +
+            Math.abs(existing.agency || 0)
+          );
+        }, 0);
+
+        if (assignedAbs <= PENDING_TOLERANCE) {
+          distributeCommissionByServiceWeight(serviceIdsForCurrency, totals);
+        }
+      });
+    });
 
     commissionByBooking.forEach((byCur, bid) => {
       const label = bookingCountry.get(bid) || "Sin pais";
@@ -1003,11 +1364,91 @@ export default async function handler(
           : 0;
     });
 
+    const referencedBookingIds = new Set<number>();
+    itemsMap.forEach((item) => {
+      item.bookingIds.forEach((bid) => {
+        if (allowedBookingIds.has(bid)) referencedBookingIds.add(bid);
+      });
+    });
+
+    const bookingDetails: EarningBookingDetail[] = Array.from(
+      referencedBookingIds,
+    )
+      .sort((a, b) => {
+        const aAgency = bookingAgencyIdByBooking.get(a) ?? Number.MAX_SAFE_INTEGER;
+        const bAgency = bookingAgencyIdByBooking.get(b) ?? Number.MAX_SAFE_INTEGER;
+        return aAgency - bAgency || a - b;
+      })
+      .map((bid) => {
+        const agencyBookingId = bookingAgencyIdByBooking.get(bid) ?? null;
+        const creationDateRaw = bookingCreationDateByBooking.get(bid) || null;
+        const bookingServices = (servicesByBooking.get(bid) || [])
+          .filter((svc) => {
+            const cur = String(svc.currency || "").trim().toUpperCase();
+            if (!cur) return false;
+            return validBookingCurrency.has(`${bid}-${cur}`);
+          })
+          .sort((a, b) => {
+            const aAgency = a.agency_service_id ?? Number.MAX_SAFE_INTEGER;
+            const bAgency = b.agency_service_id ?? Number.MAX_SAFE_INTEGER;
+            return aAgency - bAgency || a.id_service - b.id_service;
+          })
+          .map((svc) => {
+            const currency = String(svc.currency || "").trim().toUpperCase();
+            const sale = getServiceDue(svc);
+            const paid = round2(
+              Math.max(Number(paidByService.get(svc.id_service) || 0), 0),
+            );
+            const pending = round2(Math.max(sale - paid, 0));
+            const serviceCommissions = serviceCommissionById.get(svc.id_service) || {
+              seller: 0,
+              leader: 0,
+              agency: 0,
+            };
+
+            return {
+              idService: svc.id_service,
+              agencyServiceId:
+                svc.agency_service_id != null &&
+                Number.isFinite(Number(svc.agency_service_id)) &&
+                Number(svc.agency_service_id) > 0
+                  ? Number(svc.agency_service_id)
+                  : null,
+              bookingId: bid,
+              agencyBookingId,
+              currency,
+              type: String(svc.type || "").trim(),
+              description: String(svc.description || "").trim(),
+              destination: String(svc.destination || "").trim(),
+              sale,
+              paid,
+              pending,
+              sellerCommission: round2(
+                Math.max(Number(serviceCommissions.seller || 0), 0),
+              ),
+              leaderCommission: round2(
+                Math.max(Number(serviceCommissions.leader || 0), 0),
+              ),
+              agencyCommission: round2(
+                Math.max(Number(serviceCommissions.agency || 0), 0),
+              ),
+            };
+          });
+
+        return {
+          bookingId: bid,
+          agencyBookingId,
+          creationDate: creationDateRaw ? creationDateRaw.toISOString() : null,
+          services: bookingServices,
+        };
+      });
+
     return res.status(200).json({
       totals,
       statsByCurrency,
       breakdowns: { byCountry, byMethod },
       items: Array.from(itemsMap.values()),
+      bookingDetails,
     });
   } catch (err: unknown) {
     console.error("Error en earnings API:", err);

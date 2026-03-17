@@ -8,6 +8,7 @@ import React, {
   useEffect,
   useRef,
 } from "react";
+import Link from "next/link";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Spinner from "@/components/Spinner";
 import { toast } from "react-toastify";
@@ -43,6 +44,11 @@ interface EarningItem {
   totalLeaderComm: number;
   totalAgencyShare: number;
   debt: number;
+  bookingIds: number[];
+  bookingRefs?: Array<{
+    bookingId: number;
+    agencyBookingId: number | null;
+  }>;
 }
 
 interface EarningsResponse {
@@ -66,7 +72,59 @@ interface EarningsResponse {
     byMethod: Record<string, Record<string, number>>;
   };
   items: EarningItem[];
+  bookingDetails: Array<{
+    bookingId: number;
+    agencyBookingId: number | null;
+    creationDate: string | null;
+    services: Array<{
+      idService: number;
+      agencyServiceId: number | null;
+      bookingId: number;
+      agencyBookingId: number | null;
+      currency: string;
+      type: string;
+      description: string;
+      destination: string;
+      sale: number;
+      paid: number;
+      pending: number;
+      sellerCommission: number;
+      leaderCommission: number;
+      agencyCommission: number;
+    }>;
+  }>;
 }
+
+interface BookingServiceDetail {
+  idService: number;
+  agencyServiceId: number | null;
+  bookingId: number;
+  agencyBookingId: number | null;
+  currency: string;
+  type: string;
+  description: string;
+  destination: string;
+  sale: number;
+  paid: number;
+  pending: number;
+  sellerCommission: number;
+  leaderCommission: number;
+  agencyCommission: number;
+};
+
+type UserDetailGroup = {
+  userId: number;
+  userName: string;
+  teamName: string;
+  teamId: number;
+  rows: EarningItem[];
+  bookings: Array<{
+    bookingId: number;
+    agencyBookingId: number | null;
+  }>;
+  bookingDetailsById: Record<number, BookingServiceDetail[]>;
+  currencies: string[];
+};
 
 type TeamLite = { id_team: number; name: string };
 
@@ -96,6 +154,8 @@ const STACK_SKY =
   "rounded-2xl border border-sky-200/50 bg-sky-100/10 p-3 text-sky-950 shadow-sm shadow-sky-900/10 dark:border-sky-400/30 dark:bg-sky-900/10 dark:text-sky-100";
 const STACK_EMERALD =
   "rounded-2xl border border-emerald-200/50 bg-emerald-100/10 p-3 text-emerald-950 shadow-sm shadow-emerald-900/10 dark:border-emerald-400/30 dark:bg-emerald-900/10 dark:text-emerald-100";
+const MINI_STACK_BASE =
+  "inline-flex flex-row items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] leading-tight whitespace-nowrap shadow-sm";
 
 function getTzParts(date: Date, timeZone: string) {
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -147,6 +207,38 @@ function clampPct(value: string) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.min(100, Math.max(0, n));
+}
+
+function toSafeNumber(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function bookingInternalLabel(agencyBookingId: number | null) {
+  if (agencyBookingId && agencyBookingId > 0) return `Reserva N° ${agencyBookingId}`;
+  return "Reserva sin N° interno";
+}
+
+function formatCreationDate(value: string | null | undefined) {
+  if (!value) return "Sin fecha de creacion";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "Sin fecha de creacion";
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(d);
+}
+
+function currencyStackClass(currency: string) {
+  const cur = String(currency || "").trim().toUpperCase();
+  if (cur === "ARS") {
+    return `${MINI_STACK_BASE} border-emerald-200/60 bg-emerald-100/20 text-emerald-950 shadow-emerald-900/10 dark:border-emerald-400/35 dark:bg-emerald-900/20 dark:text-emerald-100`;
+  }
+  if (cur === "USD") {
+    return `${MINI_STACK_BASE} border-sky-200/60 bg-sky-100/20 text-sky-950 shadow-sky-900/10 dark:border-sky-400/35 dark:bg-sky-900/20 dark:text-sky-100`;
+  }
+  return `${MINI_STACK_BASE} border-amber-200/60 bg-amber-100/20 text-amber-950 shadow-amber-900/10 dark:border-amber-400/25 dark:bg-amber-900/20 dark:text-amber-100`;
 }
 
 const STATUS_OPTIONS = ["Todas", "Pendiente", "Pago", "Facturado"] as const;
@@ -246,8 +338,10 @@ export default function EarningsPage() {
     teamId: "",
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [viewMode, setViewMode] = useState<"charts" | "details">("charts");
   const [data, setData] = useState<EarningsResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [expandedUsers, setExpandedUsers] = useState<Set<number>>(new Set());
 
   const [currencyCodes, setCurrencyCodes] = useState<string[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<FinancePaymentMethod[]>(
@@ -333,6 +427,7 @@ export default function EarningsPage() {
       if (!res.ok) throw new Error("Error al cargar ganancias");
       const json: EarningsResponse = await res.json();
       setData(json);
+      setExpandedUsers(new Set());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error desconocido";
       toast.error(msg);
@@ -372,6 +467,156 @@ export default function EarningsPage() {
     return map;
   }, [data]);
 
+  const bookingDetailsByBooking = useMemo(() => {
+    const map = new Map<number, BookingServiceDetail[]>();
+    (data?.bookingDetails ?? []).forEach((detail) => {
+      const bid = Math.trunc(toSafeNumber(detail.bookingId));
+      if (bid <= 0) return;
+      const services = Array.isArray(detail.services)
+        ? detail.services
+            .map((svc) => ({
+              idService: Math.trunc(toSafeNumber(svc.idService)),
+              agencyServiceId: (() => {
+                const n = Math.trunc(toSafeNumber(svc.agencyServiceId));
+                return n > 0 ? n : null;
+              })(),
+              bookingId: Math.trunc(toSafeNumber(svc.bookingId)),
+              agencyBookingId: (() => {
+                const n = Math.trunc(toSafeNumber(svc.agencyBookingId));
+                return n > 0 ? n : null;
+              })(),
+              currency: String(svc.currency || "").trim().toUpperCase(),
+              type: String(svc.type || "").trim(),
+              description: String(svc.description || "").trim(),
+              destination: String(svc.destination || "").trim(),
+              sale: toSafeNumber(svc.sale),
+              paid: toSafeNumber(svc.paid),
+              pending: toSafeNumber(svc.pending),
+              sellerCommission: toSafeNumber(svc.sellerCommission),
+              leaderCommission: toSafeNumber(svc.leaderCommission),
+              agencyCommission: toSafeNumber(svc.agencyCommission),
+            }))
+            .filter((svc) => svc.idService > 0 && svc.bookingId > 0)
+        : [];
+      map.set(bid, services);
+    });
+    return map;
+  }, [data]);
+
+  const bookingCreationByBooking = useMemo(() => {
+    const map = new Map<number, string | null>();
+    (data?.bookingDetails ?? []).forEach((detail) => {
+      const bid = Math.trunc(toSafeNumber(detail.bookingId));
+      if (bid <= 0) return;
+      const creationDate =
+        typeof detail.creationDate === "string" && detail.creationDate.trim()
+          ? detail.creationDate
+          : null;
+      map.set(bid, creationDate);
+    });
+    return map;
+  }, [data]);
+
+  const detailGroups = useMemo<UserDetailGroup[]>(() => {
+    const map = new Map<number, UserDetailGroup>();
+    (data?.items ?? []).forEach((item) => {
+      const fallbackRefs = (Array.isArray(item.bookingIds) ? item.bookingIds : [])
+        .map((bid) => Math.trunc(toSafeNumber(bid)))
+        .filter((bid) => bid > 0)
+        .map((bid) => ({ bookingId: bid, agencyBookingId: null as number | null }));
+
+      const sourceRefs = Array.isArray(item.bookingRefs) && item.bookingRefs.length
+        ? item.bookingRefs
+        : fallbackRefs;
+
+      const normalizedRefs = sourceRefs
+        .map((ref) => {
+          const bookingId = Math.trunc(toSafeNumber(ref.bookingId));
+          const agencyBookingIdRaw = Math.trunc(toSafeNumber(ref.agencyBookingId));
+          if (bookingId <= 0) return null;
+          return {
+            bookingId,
+            agencyBookingId: agencyBookingIdRaw > 0 ? agencyBookingIdRaw : null,
+          };
+        })
+        .filter(
+          (
+            ref,
+          ): ref is {
+            bookingId: number;
+            agencyBookingId: number | null;
+          } => Boolean(ref),
+        );
+
+      const existing = map.get(item.userId);
+      if (!existing) {
+        map.set(item.userId, {
+          userId: item.userId,
+          userName: item.userName,
+          teamName: item.teamName,
+          teamId: item.teamId,
+          rows: [item],
+          bookings: normalizedRefs,
+          bookingDetailsById: Object.fromEntries(
+            normalizedRefs.map((ref) => [
+              ref.bookingId,
+              bookingDetailsByBooking.get(ref.bookingId) || [],
+            ]),
+          ),
+          currencies: [item.currency],
+        });
+        return;
+      }
+
+      existing.rows.push(item);
+      const mergedById = new Map<number, { bookingId: number; agencyBookingId: number | null }>();
+      existing.bookings.forEach((ref) => mergedById.set(ref.bookingId, ref));
+      normalizedRefs.forEach((ref) => {
+        const current = mergedById.get(ref.bookingId);
+        if (!current) {
+          mergedById.set(ref.bookingId, ref);
+          return;
+        }
+        if (!current.agencyBookingId && ref.agencyBookingId) {
+          mergedById.set(ref.bookingId, ref);
+        }
+      });
+      existing.bookings = Array.from(mergedById.values()).sort(
+        (a, b) =>
+          (a.agencyBookingId ?? Number.MAX_SAFE_INTEGER) -
+          (b.agencyBookingId ?? Number.MAX_SAFE_INTEGER) ||
+          a.bookingId - b.bookingId,
+      );
+      existing.bookingDetailsById = Object.fromEntries(
+        existing.bookings.map((ref) => [
+          ref.bookingId,
+          bookingDetailsByBooking.get(ref.bookingId) || [],
+        ]),
+      );
+      if (!existing.currencies.includes(item.currency)) {
+        existing.currencies.push(item.currency);
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) =>
+      a.userName.localeCompare(b.userName, "es", {
+        sensitivity: "base",
+      }),
+    );
+  }, [bookingDetailsByBooking, data]);
+
+  const toggleUserDetails = useCallback(
+    (userId: number) => {
+      setExpandedUsers((prev) => {
+        const next = new Set(prev);
+        if (next.has(userId)) next.delete(userId);
+        else next.add(userId);
+        return next;
+      });
+    },
+    [],
+  );
+
   const breakdownSeries = useCallback(
     (breakdown: Record<string, Record<string, number>>, cur: string) => {
       return Object.entries(breakdown)
@@ -397,6 +642,7 @@ export default function EarningsPage() {
     setDateField("creation");
     setMinPaidPct(40);
     setShowAdvanced(false);
+    setExpandedUsers(new Set());
     const range = monthRangeInTz(new Date(), DEFAULT_TZ);
     setFrom(range.from);
     setTo(range.to);
@@ -413,7 +659,31 @@ export default function EarningsPage() {
               fechas de viaje o creacion.
             </p>
           </div>
-          <div className="flex items-center gap-2 text-xs opacity-70">
+          <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+            <div className="inline-flex rounded-full border border-white/20 bg-white/20 p-1 backdrop-blur">
+              <button
+                type="button"
+                onClick={() => setViewMode("charts")}
+                className={`rounded-full px-3 py-1 text-xs transition ${
+                  viewMode === "charts"
+                    ? "border border-sky-300/40 bg-sky-100/70 text-sky-950 dark:border-sky-400/40 dark:bg-sky-900/40 dark:text-sky-100"
+                    : "opacity-70"
+                }`}
+              >
+                Graficos
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("details")}
+                className={`rounded-full px-3 py-1 text-xs transition ${
+                  viewMode === "details"
+                    ? "border border-sky-300/40 bg-sky-100/70 text-sky-950 dark:border-sky-400/40 dark:bg-sky-900/40 dark:text-sky-100"
+                    : "opacity-70"
+                }`}
+              >
+                Detalle por usuario
+              </button>
+            </div>
             <span className={PILL_WHITE}>Zona Horaria: Buenos Aires</span>
           </div>
         </div>
@@ -786,149 +1056,420 @@ export default function EarningsPage() {
           </div>
         )}
 
-        {currencyOrder.map((cur) => {
-          const dataCur = itemsByCurrency[cur] || [];
-          if (dataCur.length === 0) return null;
-          return (
-            <ChartSection
-              key={`chart-${cur}`}
-              title={cur}
-              data={dataCur}
-              colors={[
-                "rgba(14, 165, 233, 0.85)",
-                "rgba(56, 189, 248, 0.8)",
-                "rgba(125, 211, 252, 0.75)",
-              ]}
-            />
-          );
-        })}
-
-        {data && currencyOrder.length > 0 && (
-          <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {viewMode === "charts" && (
+          <>
             {currencyOrder.map((cur) => {
-              const byCountry = breakdownSeries(data.breakdowns.byCountry, cur);
-              if (!byCountry.length) return null;
+              const dataCur = itemsByCurrency[cur] || [];
+              if (dataCur.length === 0) return null;
               return (
-                <div key={`country-${cur}`} className={GLASS}>
-                  <h3 className="mb-3 text-base font-medium">
-                    Ganancia por pais · {cur}
-                  </h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={byCountry} margin={{ left: 8, right: 8 }}>
-                      <CartesianGrid
-                        stroke="currentColor"
-                        strokeOpacity={0.15}
-                      />
-                      <XAxis dataKey="label" hide />
-                      <YAxis tick={{ fill: "currentColor", fontSize: 12 }} />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload?.length) return null;
-                          const row = payload[0];
-                          return (
-                            <div className="rounded-2xl border border-white/10 bg-white/80 px-3 py-2 text-xs text-sky-950 shadow-sm backdrop-blur dark:bg-sky-950/70 dark:text-white">
-                              <p className="font-medium">
-                                {row.payload?.label}
-                              </p>
-                              <p>{formatMoney(Number(row.value || 0), cur)}</p>
-                            </div>
-                          );
-                        }}
-                      />
-                      <Bar
-                        dataKey="value"
-                        fill="rgba(14, 165, 233, 0.75)"
-                        radius={[10, 10, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <ChartSection
+                  key={`chart-${cur}`}
+                  title={cur}
+                  data={dataCur}
+                  colors={[
+                    "rgba(14, 165, 233, 0.85)",
+                    "rgba(56, 189, 248, 0.8)",
+                    "rgba(125, 211, 252, 0.75)",
+                  ]}
+                />
               );
             })}
 
+            {data && currencyOrder.length > 0 && (
+              <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {currencyOrder.map((cur) => {
+                  const byCountry = breakdownSeries(data.breakdowns.byCountry, cur);
+                  if (!byCountry.length) return null;
+                  return (
+                    <div key={`country-${cur}`} className={GLASS}>
+                      <h3 className="mb-3 text-base font-medium">
+                        Ganancia por pais · {cur}
+                      </h3>
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={byCountry} margin={{ left: 8, right: 8 }}>
+                          <CartesianGrid
+                            stroke="currentColor"
+                            strokeOpacity={0.15}
+                          />
+                          <XAxis dataKey="label" hide />
+                          <YAxis tick={{ fill: "currentColor", fontSize: 12 }} />
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload?.length) return null;
+                              const row = payload[0];
+                              return (
+                                <div className="rounded-2xl border border-white/10 bg-white/80 px-3 py-2 text-xs text-sky-950 shadow-sm backdrop-blur dark:bg-sky-950/70 dark:text-white">
+                                  <p className="font-medium">
+                                    {row.payload?.label}
+                                  </p>
+                                  <p>{formatMoney(Number(row.value || 0), cur)}</p>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Bar
+                            dataKey="value"
+                            fill="rgba(14, 165, 233, 0.75)"
+                            radius={[10, 10, 0, 0]}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  );
+                })}
+
+                {currencyOrder.map((cur) => {
+                  const byMethod = breakdownSeries(data.breakdowns.byMethod, cur);
+                  if (!byMethod.length) return null;
+                  return (
+                    <div key={`method-${cur}`} className={GLASS}>
+                      <h3 className="mb-3 text-base font-medium">
+                        Cobrado por metodo · {cur}
+                      </h3>
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={byMethod} margin={{ left: 8, right: 8 }}>
+                          <CartesianGrid
+                            stroke="currentColor"
+                            strokeOpacity={0.15}
+                          />
+                          <XAxis dataKey="label" hide />
+                          <YAxis tick={{ fill: "currentColor", fontSize: 12 }} />
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload?.length) return null;
+                              const row = payload[0];
+                              return (
+                                <div className="rounded-2xl border border-white/10 bg-white/80 px-3 py-2 text-xs text-sky-950 shadow-sm backdrop-blur dark:bg-sky-950/70 dark:text-white">
+                                  <p className="font-medium">
+                                    {row.payload?.label}
+                                  </p>
+                                  <p>{formatMoney(Number(row.value || 0), cur)}</p>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Bar
+                            dataKey="value"
+                            fill="rgba(56, 189, 248, 0.8)"
+                            radius={[10, 10, 0, 0]}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {currencyOrder.map((cur) => {
-              const byMethod = breakdownSeries(data.breakdowns.byMethod, cur);
-              if (!byMethod.length) return null;
+              const dataCur = itemsByCurrency[cur] || [];
+              if (dataCur.length === 0) return null;
               return (
-                <div key={`method-${cur}`} className={GLASS}>
-                  <h3 className="mb-3 text-base font-medium">
-                    Cobrado por metodo · {cur}
-                  </h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={byMethod} margin={{ left: 8, right: 8 }}>
-                      <CartesianGrid
-                        stroke="currentColor"
-                        strokeOpacity={0.15}
-                      />
-                      <XAxis dataKey="label" hide />
-                      <YAxis tick={{ fill: "currentColor", fontSize: 12 }} />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload?.length) return null;
-                          const row = payload[0];
-                          return (
-                            <div className="rounded-2xl border border-white/10 bg-white/80 px-3 py-2 text-xs text-sky-950 shadow-sm backdrop-blur dark:bg-sky-950/70 dark:text-white">
-                              <p className="font-medium">
-                                {row.payload?.label}
-                              </p>
-                              <p>{formatMoney(Number(row.value || 0), cur)}</p>
+                <div key={`tbl-${cur}`} className={`${GLASS} mb-8 overflow-x-auto`}>
+                  <h3 className="mb-2 font-medium">{cur}</h3>
+                  <table className="w-full text-center text-sm">
+                    <thead>
+                      <tr className="text-sky-700 dark:text-sky-200">
+                        <th className="px-4 py-2 font-medium">Equipo</th>
+                        <th className="px-4 py-2 font-medium">Vendedor</th>
+                        <th className="px-4 py-2 font-medium">
+                          Comision vendedor
+                        </th>
+                        <th className="px-4 py-2 font-medium">Comision lider</th>
+                        <th className="px-4 py-2 font-medium">Agencia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dataCur.map((it) => (
+                        <tr
+                          key={`${cur}-${it.teamId}-${it.userId}`}
+                          className="border-b font-light dark:border-white/10"
+                        >
+                          <td className="px-4 py-2">{it.teamName}</td>
+                          <td className="px-4 py-2">{it.userName}</td>
+                          <td className="px-4 py-2">
+                            {formatMoney(it.totalSellerComm, cur)}
+                          </td>
+                          <td className="px-4 py-2">
+                            {formatMoney(it.totalLeaderComm, cur)}
+                          </td>
+                          <td className="px-4 py-2">
+                            {formatMoney(it.totalAgencyShare, cur)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {viewMode === "details" && data && detailGroups.length > 0 && (
+          <div className="mb-8 space-y-4">
+            {detailGroups.map((group) => {
+              const isExpanded = expandedUsers.has(group.userId);
+
+              return (
+                <div
+                  key={`detail-user-${group.userId}-${group.teamId}`}
+                  className={GLASS}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold">{group.userName}</h3>
+                      <p className="text-xs opacity-70">
+                        Equipo: {group.teamName || "Sin equipo"} · Reservas:{" "}
+                        {group.bookings.length}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleUserDetails(group.userId)}
+                      className={PILL_SKY}
+                      aria-expanded={isExpanded}
+                    >
+                      {isExpanded ? "Ocultar detalle" : "Ver detalle"}
+                    </button>
+                  </div>
+
+                  <div className="mt-3 overflow-x-auto">
+                    <div className="flex w-max flex-row flex-nowrap gap-1.5 pr-1">
+                      {group.rows.map((row) => {
+                        const tone = currencyStackClass(row.currency);
+                        return (
+                          <React.Fragment
+                            key={`summary-${group.userId}-${row.currency}`}
+                          >
+                            <div className={tone}>
+                              <span className="whitespace-nowrap text-[9px] uppercase opacity-70">
+                                Comision vendedor
+                              </span>
+                              <span className="whitespace-nowrap text-[11px] font-semibold">
+                                {formatMoney(row.totalSellerComm, row.currency)}
+                              </span>
                             </div>
-                          );
-                        }}
-                      />
-                      <Bar
-                        dataKey="value"
-                        fill="rgba(56, 189, 248, 0.8)"
-                        radius={[10, 10, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
+                            <div className={tone}>
+                              <span className="whitespace-nowrap text-[9px] uppercase opacity-70">
+                                Comision lider
+                              </span>
+                              <span className="whitespace-nowrap text-[11px] font-semibold">
+                                {formatMoney(row.totalLeaderComm, row.currency)}
+                              </span>
+                            </div>
+                            <div className={tone}>
+                              <span className="whitespace-nowrap text-[9px] uppercase opacity-70">
+                                Comision agencia
+                              </span>
+                              <span className="whitespace-nowrap text-[11px] font-semibold">
+                                {formatMoney(row.totalAgencyShare, row.currency)}
+                              </span>
+                            </div>
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+                      {group.bookings.length === 0 && (
+                        <p className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm opacity-80">
+                          No hay reservas asociadas a este usuario en el rango actual.
+                        </p>
+                      )}
+                      {group.bookings.map((bookingRef) => {
+                        const bookingId = bookingRef.bookingId;
+                        const services = group.bookingDetailsById[bookingId] || [];
+                        const bookingHref = `/bookings/services/${bookingId}`;
+                        const bookingTitle = bookingInternalLabel(
+                          bookingRef.agencyBookingId,
+                        );
+                        const bookingCreation = formatCreationDate(
+                          bookingCreationByBooking.get(bookingId),
+                        );
+                        const totalsByCurrency = services.reduce(
+                          (acc, svc) => {
+                            const cur = svc.currency || "ARS";
+                            const prev = acc[cur] || { sale: 0, paid: 0, pending: 0 };
+                            prev.sale += svc.sale;
+                            prev.paid += svc.paid;
+                            prev.pending += svc.pending;
+                            acc[cur] = prev;
+                            return acc;
+                          },
+                          {} as Record<
+                            string,
+                            { sale: number; paid: number; pending: number }
+                          >,
+                        );
+
+                        return (
+                          <div
+                            key={`booking-detail-${group.userId}-${bookingId}`}
+                            className="rounded-2xl border border-white/15 bg-white/5 p-3"
+                          >
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="font-medium">{bookingTitle}</p>
+                                <p className="text-[11px] opacity-70">{bookingCreation}</p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Link
+                                  href={bookingHref}
+                                  className={PILL_SKY}
+                                  aria-label={`Abrir ${bookingTitle}`}
+                                >
+                                  Ir a reserva
+                                </Link>
+                              </div>
+                            </div>
+
+                            {Object.keys(totalsByCurrency).length > 0 && (
+                              <div className="mb-3 overflow-x-auto">
+                                <div className="flex w-max flex-row flex-nowrap gap-1.5 pr-1">
+                                  {Object.entries(totalsByCurrency).flatMap(
+                                    ([cur, totals]) => {
+                                      const tone = currencyStackClass(cur);
+                                      return [
+                                        <div
+                                          key={`booking-total-sale-${bookingId}-${cur}`}
+                                          className={tone}
+                                        >
+                                          <span className="whitespace-nowrap text-[9px] uppercase opacity-70">
+                                            Venta
+                                          </span>
+                                          <span className="whitespace-nowrap text-[11px] font-semibold">
+                                            {formatMoney(totals.sale, cur)}
+                                          </span>
+                                        </div>,
+                                        <div
+                                          key={`booking-total-paid-${bookingId}-${cur}`}
+                                          className={tone}
+                                        >
+                                          <span className="whitespace-nowrap text-[9px] uppercase opacity-70">
+                                            Cobrado
+                                          </span>
+                                          <span className="whitespace-nowrap text-[11px] font-semibold">
+                                            {formatMoney(totals.paid, cur)}
+                                          </span>
+                                        </div>,
+                                        <div
+                                          key={`booking-total-pending-${bookingId}-${cur}`}
+                                          className={tone}
+                                        >
+                                          <span className="whitespace-nowrap text-[9px] uppercase opacity-70">
+                                            Saldo
+                                          </span>
+                                          <span className="whitespace-nowrap text-[11px] font-semibold">
+                                            {formatMoney(totals.pending, cur)}
+                                          </span>
+                                        </div>,
+                                      ];
+                                    },
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {services.length === 0 ? (
+                              <p className="text-xs opacity-70">
+                                No hay servicios cargados para esta reserva.
+                              </p>
+                            ) : (
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm">
+                                  <thead>
+                                    <tr className="border-b border-white/10 text-xs uppercase tracking-wide opacity-70">
+                                      <th className="p-2 font-medium">Servicio</th>
+                                      <th className="p-2 font-medium">Venta</th>
+                                      <th className="p-2 font-medium">Cobrado</th>
+                                      <th className="p-2 font-medium">Saldo</th>
+                                      <th className="p-2 font-medium">
+                                        Comision vendedor
+                                      </th>
+                                      <th className="p-2 font-medium">
+                                        Comision lider
+                                      </th>
+                                      <th className="p-2 font-medium">
+                                        Comision agencia
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {services.map((svc) => {
+                                      const serviceLabel =
+                                        svc.agencyServiceId &&
+                                        svc.agencyServiceId > 0
+                                          ? `Servicio N° ${svc.agencyServiceId}`
+                                          : "Servicio sin N° interno";
+                                      const serviceDesc = [
+                                        svc.type,
+                                        svc.destination,
+                                        svc.description,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" · ");
+                                      return (
+                                        <tr
+                                          key={`svc-${group.userId}-${bookingId}-${svc.idService}`}
+                                          className="border-b border-white/10"
+                                        >
+                                          <td className="p-2">
+                                            <p className="font-medium">
+                                              {serviceLabel}
+                                            </p>
+                                            {serviceDesc && (
+                                              <p className="text-xs opacity-70">
+                                                {serviceDesc}
+                                              </p>
+                                            )}
+                                          </td>
+                                          <td className="p-2">
+                                            {formatMoney(svc.sale, svc.currency)}
+                                          </td>
+                                          <td className="p-2">
+                                            {formatMoney(svc.paid, svc.currency)}
+                                          </td>
+                                          <td className="p-2">
+                                            {formatMoney(svc.pending, svc.currency)}
+                                          </td>
+                                          <td className="p-2">
+                                            {formatMoney(
+                                              svc.sellerCommission,
+                                              svc.currency,
+                                            )}
+                                          </td>
+                                          <td className="p-2">
+                                            {formatMoney(
+                                              svc.leaderCommission,
+                                              svc.currency,
+                                            )}
+                                          </td>
+                                          <td className="p-2">
+                                            {formatMoney(
+                                              svc.agencyCommission,
+                                              svc.currency,
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
-
-        {currencyOrder.map((cur) => {
-          const dataCur = itemsByCurrency[cur] || [];
-          if (dataCur.length === 0) return null;
-          return (
-            <div key={`tbl-${cur}`} className={`${GLASS} mb-8 overflow-x-auto`}>
-              <h3 className="mb-2 font-medium">{cur}</h3>
-              <table className="w-full text-center text-sm">
-                <thead>
-                  <tr className="text-sky-700 dark:text-sky-200">
-                    <th className="px-4 py-2 font-medium">Equipo</th>
-                    <th className="px-4 py-2 font-medium">Vendedor</th>
-                    <th className="px-4 py-2 font-medium">Comision vendedor</th>
-                    <th className="px-4 py-2 font-medium">Comision lider</th>
-                    <th className="px-4 py-2 font-medium">Agencia</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dataCur.map((it) => (
-                    <tr
-                      key={`${cur}-${it.teamId}-${it.userId}`}
-                      className="border-b font-light dark:border-white/10"
-                    >
-                      <td className="px-4 py-2">{it.teamName}</td>
-                      <td className="px-4 py-2">{it.userName}</td>
-                      <td className="px-4 py-2">
-                        {formatMoney(it.totalSellerComm, cur)}
-                      </td>
-                      <td className="px-4 py-2">
-                        {formatMoney(it.totalLeaderComm, cur)}
-                      </td>
-                      <td className="px-4 py-2">
-                        {formatMoney(it.totalAgencyShare, cur)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-        })}
 
         {data && data.items.length === 0 && !loading && (
           <p className="text-center opacity-80">No hay datos para ese rango.</p>

@@ -22,6 +22,7 @@ interface BookingListProps {
   expandedBookingId: number | null;
   setExpandedBookingId: React.Dispatch<React.SetStateAction<number | null>>;
   startEditingBooking: (booking: Booking) => void;
+  duplicateBooking: (booking: Booking) => Promise<void>;
   deleteBooking: (id: number) => void;
   role?: string;
   hasMore?: boolean;
@@ -35,6 +36,7 @@ export default function BookingList({
   expandedBookingId,
   setExpandedBookingId,
   startEditingBooking,
+  duplicateBooking,
   deleteBooking,
   role,
   hasMore = false,
@@ -60,6 +62,7 @@ export default function BookingList({
             setExpandedBookingId={setExpandedBookingId}
             formatDate={formatDate}
             startEditingBooking={startEditingBooking}
+            duplicateBooking={duplicateBooking}
             deleteBooking={deleteBooking}
             role={role}
           />
@@ -75,6 +78,7 @@ export default function BookingList({
             setExpandedBookingId={setExpandedBookingId}
             formatDate={formatDate}
             startEditingBooking={startEditingBooking}
+            duplicateBooking={duplicateBooking}
             deleteBooking={deleteBooking}
             role={role}
           />
@@ -107,6 +111,7 @@ type BookingRowProps = {
   setExpandedBookingId: React.Dispatch<React.SetStateAction<number | null>>;
   formatDate: (date: string | undefined) => string;
   startEditingBooking: (booking: Booking) => void;
+  duplicateBooking: (booking: Booking) => Promise<void>;
   deleteBooking: (id: number) => void;
   role?: string;
 };
@@ -117,9 +122,11 @@ function BookingListRow({
   setExpandedBookingId,
   formatDate,
   startEditingBooking,
+  duplicateBooking,
   deleteBooking,
   role,
 }: BookingRowProps) {
+  const [isDuplicating, setIsDuplicating] = React.useState(false);
   const isExpanded = expandedBookingId === booking.id_booking;
   const toggleRow = () =>
     setExpandedBookingId((prevId) =>
@@ -133,6 +140,16 @@ function BookingListRow({
 
   const handleEdit = () => {
     startEditingBooking(booking);
+  };
+
+  const handleDuplicate = async () => {
+    if (isDuplicating) return;
+    setIsDuplicating(true);
+    try {
+      await duplicateBooking(booking);
+    } finally {
+      setIsDuplicating(false);
+    }
   };
 
   const formatStatus = (value?: string) => {
@@ -289,6 +306,55 @@ function BookingListRow({
             >
               Reserva
             </Link>
+            {canManage && (
+              <button
+                className={`${ACTION_BUTTON} flex items-center gap-1 px-4 py-2 text-sm font-semibold disabled:opacity-60`}
+                onClick={() => {
+                  void handleDuplicate();
+                }}
+                disabled={isDuplicating}
+              >
+                {isDuplicating ? (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="size-4 animate-spin"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="9"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      className="opacity-30"
+                    />
+                    <path
+                      d="M12 3a9 9 0 0 1 9 9h-3a6 6 0 0 0-6-6V3Z"
+                      fill="currentColor"
+                      className="opacity-90"
+                    />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="size-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M8.25 7.5H6a2.25 2.25 0 0 0-2.25 2.25v8.25A2.25 2.25 0 0 0 6 20.25h8.25A2.25 2.25 0 0 0 16.5 18v-2.25M9.75 3.75H18A2.25 2.25 0 0 1 20.25 6v8.25A2.25 2.25 0 0 1 18 16.5H9.75A2.25 2.25 0 0 1 7.5 14.25V6A2.25 2.25 0 0 1 9.75 3.75Z"
+                    />
+                  </svg>
+                )}
+                Duplicar
+              </button>
+            )}
             {canManage && (
               <button
                 className={`${ACTION_BUTTON} px-4 py-2 text-sm font-semibold`}

@@ -1,15 +1,9 @@
 // src/components/bookings/BookingCard.tsx
 "use client";
-import React from "react";
+import React, { useCallback, useState } from "react";
 import { motion } from "framer-motion";
 import { Booking } from "@/types";
 import Link from "next/link";
-import {
-  ACTION_BUTTON,
-  DANGER_BUTTON,
-  ICON_BUTTON,
-  getStatusChipClasses,
-} from "./palette";
 
 interface BookingCardProps {
   booking: Booking;
@@ -17,8 +11,41 @@ interface BookingCardProps {
   setExpandedBookingId: React.Dispatch<React.SetStateAction<number | null>>;
   formatDate: (dateString: string | undefined) => string;
   startEditingBooking: (booking: Booking) => void;
+  duplicateBooking: (booking: Booking) => Promise<void>;
   deleteBooking: (id: number) => void;
   role?: string;
+}
+
+const TOGGLE_BUTTON =
+  "rounded-full border border-sky-900/20 bg-white/20 text-sky-950 shadow-sm shadow-sky-950/15 backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 hover:bg-white/40 active:scale-90 dark:border-white/20 dark:bg-white/5 dark:text-white dark:hover:bg-white/10";
+const ACTION_REVEAL_CONTAINER =
+  "grid grid-cols-[20px_0fr] items-center gap-0 overflow-hidden transition-[grid-template-columns,gap] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:grid-cols-[20px_1fr] group-hover/btn:gap-2 group-focus-visible/btn:grid-cols-[20px_1fr] group-focus-visible/btn:gap-2";
+const ACTION_REVEAL_LABEL =
+  "min-w-0 translate-x-2 whitespace-nowrap text-sm opacity-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/btn:translate-x-0 group-hover/btn:opacity-100 group-focus-visible/btn:translate-x-0 group-focus-visible/btn:opacity-100";
+
+const DUPLICATE_BUTTON =
+  "group/btn rounded-full border border-emerald-500/40 bg-emerald-500/5 px-3 py-2 text-emerald-900 shadow-sm shadow-emerald-950/15 backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 hover:bg-emerald-500/15 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60 dark:text-emerald-100";
+const EDIT_BUTTON =
+  "group/btn rounded-full border border-sky-500/35 bg-sky-500/5 px-3 py-2 text-sky-900 shadow-sm shadow-sky-950/15 backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 hover:bg-sky-500/10 active:scale-90 dark:text-sky-100";
+const DELETE_BUTTON =
+  "group/btn rounded-full border border-rose-500/40 bg-rose-500/5 px-3 py-2 text-rose-900 shadow-sm shadow-rose-950/15 backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 hover:bg-rose-500/15 active:scale-90 dark:text-rose-100";
+const VIEW_BUTTON =
+  "rounded-full border border-sky-500/35 bg-sky-500/5 text-sky-900 shadow-sm shadow-sky-950/15 backdrop-blur-sm transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-95 hover:bg-sky-500/10 active:scale-90 dark:text-sky-100";
+const STATUS_CHIP_BASE =
+  "rounded-full border px-3 py-1 text-xs font-semibold shadow-sm shadow-sky-950/15 backdrop-blur-sm";
+
+function getStatusChipTone(value?: string): string {
+  const key = (value || "").toLowerCase();
+  if (key === "pendiente") {
+    return "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-100";
+  }
+  if (key === "pago") {
+    return "border-emerald-500/35 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100";
+  }
+  if (key === "facturado") {
+    return "border-sky-500/35 bg-sky-500/10 text-sky-900 dark:text-sky-100";
+  }
+  return "border-slate-500/25 bg-slate-500/10 text-slate-900 dark:text-slate-100";
 }
 
 export default function BookingCard({
@@ -27,10 +54,12 @@ export default function BookingCard({
   setExpandedBookingId,
   formatDate,
   startEditingBooking,
+  duplicateBooking,
   deleteBooking,
   role,
 }: BookingCardProps) {
   const isExpanded = expandedBookingId === booking.id_booking;
+  const [isDuplicating, setIsDuplicating] = useState(false);
   const canManage =
     booking.status === "Abierta" ||
     role === "administrativo" ||
@@ -59,17 +88,20 @@ export default function BookingCard({
   );
 
   const statusChip = (label: string, value: string) => (
-    <span key={label} className={getStatusChipClasses(value)}>
+    <span
+      key={label}
+      className={`${STATUS_CHIP_BASE} ${getStatusChipTone(value)}`}
+    >
       {label}: {value}
     </span>
   );
 
   const badge = (() => {
     const base =
-      "rounded-full p-2 shadow-md shadow-sky-900/20 dark:shadow-sky-950/40";
+      "grid size-9 place-items-center rounded-full border bg-white/20 shadow-sm shadow-sky-950/15 backdrop-blur-sm dark:bg-white/5";
     if (booking.status === "Bloqueada") {
       return {
-        cls: `${base} bg-amber-100/30 dark:bg-amber-500/15 text-amber-600 shadow-sm shadow-amber-900/20 dark:text-amber-200`,
+        cls: `${base} border-amber-500/40 text-amber-700 dark:text-amber-200`,
         icon: (
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -90,7 +122,7 @@ export default function BookingCard({
     }
     if (booking.status === "Cancelada") {
       return {
-        cls: `${base} bg-rose-100/30 dark:bg-rose-500/15 text-rose-600 shadow-sm shadow-rose-900/20 dark:text-rose-200`,
+        cls: `${base} border-rose-500/40 text-rose-700 dark:text-rose-200`,
         icon: (
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -110,7 +142,7 @@ export default function BookingCard({
       };
     }
     return {
-      cls: `${base} bg-emerald-100/30 dark:bg-emerald-500/15 text-emerald-600 shadow-sm shadow-emerald-900/20 dark:text-emerald-200`,
+      cls: `${base} border-emerald-500/40 text-emerald-700 dark:text-emerald-200`,
       icon: (
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -145,8 +177,19 @@ export default function BookingCard({
     setExpandedBookingId((prevId) =>
       prevId === booking.id_booking ? null : booking.id_booking,
     );
-  const actionBtn = `${ACTION_BUTTON} px-4 py-2 text-sm font-semibold`;
-  const toggleBtn = `${ICON_BUTTON} p-2`;
+
+  const handleDuplicate = useCallback(async () => {
+    if (isDuplicating) return;
+    setIsDuplicating(true);
+    try {
+      await duplicateBooking(booking);
+    } finally {
+      setIsDuplicating(false);
+    }
+  }, [booking, duplicateBooking, isDuplicating]);
+
+  const toggleBtn = `${TOGGLE_BUTTON} p-2`;
+
   return (
     <motion.div
       layout
@@ -239,7 +282,7 @@ export default function BookingCard({
 
           <Link
             href={`/bookings/services/${booking.public_id ?? booking.id_booking}`}
-            className={`${ACTION_BUTTON} mt-6 flex w-full items-center justify-center gap-2 px-4 py-2 text-sm font-semibold`}
+            className={`${VIEW_BUTTON} mt-6 flex w-full items-center justify-center gap-2 px-4 py-2 text-sm font-semibold`}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -279,47 +322,115 @@ export default function BookingCard({
                 />
               </svg>
             </button>
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
               {canManage && (
                 <button
-                  className={actionBtn}
-                  onClick={() => startEditingBooking(booking)}
+                  type="button"
+                  onClick={() => {
+                    void handleDuplicate();
+                  }}
+                  disabled={isDuplicating}
+                  className={DUPLICATE_BUTTON}
+                  aria-label="Duplicar reserva"
+                  title="Duplicar reserva"
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.4}
-                    stroke="currentColor"
-                    className="size-5"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
-                    />
-                  </svg>
+                  <div className={ACTION_REVEAL_CONTAINER}>
+                    {isDuplicating ? (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="size-5 animate-spin"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="9"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          className="opacity-30"
+                        />
+                        <path
+                          d="M12 3a9 9 0 0 1 9 9h-3a6 6 0 0 0-6-6V3Z"
+                          fill="currentColor"
+                          className="opacity-90"
+                        />
+                      </svg>
+                    ) : (
+                      <>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="size-5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={1.4}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M8.25 7.5H6a2.25 2.25 0 0 0-2.25 2.25v8.25A2.25 2.25 0 0 0 6 20.25h8.25A2.25 2.25 0 0 0 16.5 18v-2.25M9.75 3.75H18A2.25 2.25 0 0 1 20.25 6v8.25A2.25 2.25 0 0 1 18 16.5H9.75A2.25 2.25 0 0 1 7.5 14.25V6A2.25 2.25 0 0 1 9.75 3.75Z"
+                          />
+                        </svg>
+                        <span className={ACTION_REVEAL_LABEL}>Duplicar</span>
+                      </>
+                    )}
+                  </div>
                 </button>
               )}
               {canManage && (
                 <button
-                  className={`${DANGER_BUTTON} px-4 py-2 text-sm font-semibold`}
-                  onClick={() => deleteBooking(booking.id_booking)}
+                  type="button"
+                  className={EDIT_BUTTON}
+                  onClick={() => startEditingBooking(booking)}
+                  aria-label="Editar reserva"
+                  title="Editar reserva"
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.4}
-                    stroke="currentColor"
-                    className="size-5"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
-                    />
-                  </svg>
+                  <div className={ACTION_REVEAL_CONTAINER}>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.4}
+                      stroke="currentColor"
+                      className="size-5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                      />
+                    </svg>
+                    <span className={ACTION_REVEAL_LABEL}>Editar</span>
+                  </div>
+                </button>
+              )}
+              {canManage && (
+                <button
+                  type="button"
+                  className={DELETE_BUTTON}
+                  onClick={() => deleteBooking(booking.id_booking)}
+                  aria-label="Eliminar reserva"
+                  title="Eliminar reserva"
+                >
+                  <div className={ACTION_REVEAL_CONTAINER}>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.4}
+                      stroke="currentColor"
+                      className="size-5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                      />
+                    </svg>
+                    <span className={ACTION_REVEAL_LABEL}>Eliminar</span>
+                  </div>
                 </button>
               )}
             </div>
