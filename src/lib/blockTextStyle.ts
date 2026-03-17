@@ -9,6 +9,7 @@ export const BLOCK_TEXT_SIZE_OPTIONS: Array<{
   value: BlockTextSize;
   label: string;
 }> = [
+  { value: "xxs", label: "XXS" },
   { value: "xs", label: "XS" },
   { value: "sm", label: "SM" },
   { value: "base", label: "Base" },
@@ -29,6 +30,7 @@ export const BLOCK_TEXT_WEIGHT_OPTIONS: Array<{
 ];
 
 export const BLOCK_TEXT_SIZE_CLASS: Record<BlockTextSize, string> = {
+  xxs: "text-[10px]",
   xs: "text-xs",
   sm: "text-sm",
   base: "text-base",
@@ -46,6 +48,7 @@ export const BLOCK_TEXT_WEIGHT_CLASS: Record<BlockTextWeight, string> = {
 };
 
 const BLOCK_TEXT_SIZE_PT: Record<BlockTextSize, number> = {
+  xxs: 9,
   xs: 10,
   sm: 11,
   base: 12,
@@ -64,6 +67,7 @@ const BLOCK_TEXT_WEIGHT_CSS: Record<BlockTextWeight, number> = {
 
 export function isBlockTextSize(value: unknown): value is BlockTextSize {
   return (
+    value === "xxs" ||
     value === "xs" ||
     value === "sm" ||
     value === "base" ||

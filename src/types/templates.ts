@@ -41,7 +41,7 @@ export type CurrentUser = {
 // ========= UI tokens =========
 export type Density = "compact" | "comfortable" | "relaxed";
 
-export type BlockTextSize = "xs" | "sm" | "base" | "lg" | "xl" | "2xl";
+export type BlockTextSize = "xxs" | "xs" | "sm" | "base" | "lg" | "xl" | "2xl";
 export type BlockTextWeight =
   | "light"
   | "normal"
