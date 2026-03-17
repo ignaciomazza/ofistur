@@ -196,17 +196,20 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc",
   },
   headerRow: { width: "100%", overflow: "hidden" },
-  headerRightRow: { width: "100%", marginTop: 6 },
   headerLeft: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "flex-end",
     gap: 10,
     width: "100%",
     minWidth: 0,
   },
-  headerLeftText: { flexGrow: 1, flexShrink: 1, minWidth: 0, maxWidth: 320 },
-  agencyName: { fontSize: 10, fontWeight: "bold", color: "#0f172a" },
-  agencyMeta: { fontSize: 8.5, color: "#64748b" },
+  headerLeftText: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: 320,
+    textAlign: "left",
+  },
   logo: { height: 30, width: 120, objectFit: "contain" },
   docTitle: {
     fontSize: 14,
@@ -399,16 +402,11 @@ const ReceiptDocument: React.FC<ReceiptPdfData> = ({
                 <View style={{ height: 30, width: 90 }} />
               )}
               <View style={styles.headerLeftText}>
-                <Text style={styles.agencyName}>{agencyNameSafe}</Text>
-                <Text style={styles.agencyMeta}>{agencyLegalSafe}</Text>
-                <Text style={styles.agencyMeta}>CUIT {agency.taxId}</Text>
+                <Text style={styles.docTitle}>Recibo de pago</Text>
+                <Text style={styles.docSub}>Nro {receiptNumber}</Text>
+                <Text style={styles.docSub}>{fmtDate(issueDate)}</Text>
               </View>
             </View>
-          </View>
-          <View style={styles.headerRightRow}>
-            <Text style={styles.docTitle}>Recibo de pago</Text>
-            <Text style={styles.docSub}>Nro {receiptNumber}</Text>
-            <Text style={styles.docSub}>{fmtDate(issueDate)}</Text>
           </View>
         </View>
 
