@@ -64,6 +64,7 @@ type PendingServiceLite = {
   type: string;
   destination: string;
   description: string;
+  reference: string;
   booking: {
     id_booking: number;
     agency_booking_id: number | null;
@@ -125,6 +126,7 @@ export default async function handler(
             type: true,
             destination: true,
             description: true,
+            reference: true,
             booking: {
               select: {
                 id_booking: true,
@@ -217,6 +219,7 @@ export default async function handler(
             { type: { contains: qValue, mode: "insensitive" } },
             { destination: { contains: qValue, mode: "insensitive" } },
             { description: { contains: qValue, mode: "insensitive" } },
+            { reference: { contains: qValue, mode: "insensitive" } },
             { booking: { is: { details: { contains: qValue, mode: "insensitive" } } } },
             {
               booking: {
@@ -255,6 +258,7 @@ export default async function handler(
             type: true,
             destination: true,
             description: true,
+            reference: true,
             booking: {
               select: {
                 id_booking: true,

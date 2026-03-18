@@ -29,6 +29,7 @@ type OperatorServiceLite = {
   type?: string;
   destination?: string;
   description?: string | null;
+  reference?: string | null;
   paid_amount?: number | null;
   pending_amount?: number | null;
   overpaid_amount?: number | null;
@@ -564,6 +565,7 @@ export default function OperatorPaymentServicesSection({
             .trim();
           const bookingDetails = String(svc.booking?.details || "").trim();
           const serviceDetails = String(svc.description || "").trim();
+          const serviceReference = String(svc.reference || "").trim();
           const serviceCurrency = (svc.currency || "ARS").toUpperCase();
 
           return (
@@ -611,6 +613,11 @@ export default function OperatorPaymentServicesSection({
                 {serviceDetails && (
                   <div className="text-xs text-sky-950/70 dark:text-white/70">
                     Detalle servicio: {serviceDetails}
+                  </div>
+                )}
+                {serviceReference && (
+                  <div className="text-xs text-sky-950/70 dark:text-white/70">
+                    Referencia: {serviceReference}
                   </div>
                 )}
                 {bookingTitular && (
