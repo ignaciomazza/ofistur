@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { getNextAgencyCounter } from "@/lib/agencyCounters";
 import { isMissingColumnError } from "@/lib/prismaErrors";
+import { invalidateBookingPermissionCaches } from "@/lib/accessControl";
 import {
   normalizeBookingComponentRules,
   pickBookingComponentRule,
@@ -203,6 +204,8 @@ export default async function handler(
           },
         });
       });
+
+      invalidateBookingPermissionCaches(auth.id_agency);
 
       return res.status(200).json({ rules: sanitized });
     } catch (error) {

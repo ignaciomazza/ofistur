@@ -66,6 +66,43 @@ function setCachedValue<T>(
   map.set(key, { value, expiresAt: Date.now() + ACCESS_CACHE_TTL_MS });
 }
 
+function invalidateMapEntriesByPrefix<T>(
+  map: Map<string, T>,
+  prefix: string,
+): void {
+  for (const key of map.keys()) {
+    if (key.startsWith(prefix)) {
+      map.delete(key);
+    }
+  }
+}
+
+export function invalidateBookingPermissionCaches(
+  id_agency?: number | null,
+  id_user?: number | null,
+): void {
+  if (!id_agency) return;
+
+  const agencyPrefix = `${id_agency}:`;
+  const bookingGrantPrefix = id_user
+    ? `${id_agency}:${id_user}`
+    : agencyPrefix;
+  const financeAccessPrefix = id_user
+    ? `${id_agency}:${id_user}:`
+    : agencyPrefix;
+
+  invalidateMapEntriesByPrefix(bookingComponentGrantCache, bookingGrantPrefix);
+  invalidateMapEntriesByPrefix(
+    bookingComponentGrantInflight,
+    bookingGrantPrefix,
+  );
+  invalidateMapEntriesByPrefix(financePicksAccessCache, financeAccessPrefix);
+  invalidateMapEntriesByPrefix(
+    financePicksAccessInflight,
+    financeAccessPrefix,
+  );
+}
+
 export async function canAccessBookingByRole(
   auth: {
     id_user?: number | null;

@@ -25,6 +25,19 @@ describe("permissions role normalization", () => {
     );
   });
 
+  it("requires explicit booking grants for seller roles", () => {
+    expect(canAccessBookingComponent("vendedor", [], "billing")).toBe(false);
+    expect(canAccessBookingComponent("vendedor", [], "booking_status")).toBe(
+      false,
+    );
+    expect(
+      canAccessBookingComponent("vendedor", ["receipts_form"], "billing"),
+    ).toBe(false);
+    expect(
+      canAccessBookingComponent("vendedor", ["billing"], "billing"),
+    ).toBe(true);
+  });
+
   it("always allows viewing resources and calendar", () => {
     expect(canAccessResourceSection("vendedor", [], "resources_notes")).toBe(
       true,

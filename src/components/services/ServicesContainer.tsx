@@ -475,36 +475,48 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     BookingComponentKey[]
   >([]);
 
-  useEffect(() => {
-    if (!token) {
-      setBookingComponents([]);
-      return;
-    }
-    let alive = true;
-
-    (async () => {
+  const loadBookingComponents = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!token) {
+        setBookingComponents([]);
+        return;
+      }
       try {
         const res = await authFetch(
           "/api/bookings/permissions",
-          { cache: "no-store" },
+          { cache: "no-store", signal },
           token,
         );
         if (!res.ok) {
-          if (alive) setBookingComponents([]);
+          setBookingComponents([]);
           return;
         }
         const payload = (await res.json()) as { rules?: unknown };
         const rules = normalizeBookingComponentRules(payload?.rules);
-        if (alive) setBookingComponents(rules[0]?.components ?? []);
+        setBookingComponents(rules[0]?.components ?? []);
       } catch {
-        if (alive) setBookingComponents([]);
+        if (!signal?.aborted) {
+          setBookingComponents([]);
+        }
       }
-    })();
+    },
+    [token],
+  );
+
+  useEffect(() => {
+    const ac = new AbortController();
+    void loadBookingComponents(ac.signal);
+
+    const handleFocus = () => {
+      void loadBookingComponents();
+    };
+    window.addEventListener("focus", handleFocus);
 
     return () => {
-      alive = false;
+      ac.abort();
+      window.removeEventListener("focus", handleFocus);
     };
-  }, [token]);
+  }, [loadBookingComponents]);
 
   const fetchTransferFee = useCallback(
     async (signal?: AbortSignal) => {
@@ -1651,8 +1663,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     bookingComponents,
     "billing",
   );
-  const canViewBilling =
-    canUseBilling || role === "vendedor" || role === "lider";
+  const canViewBilling = canUseBilling;
   const canUseOperatorPayments = canAccessBookingComponent(
     role,
     bookingComponents,
