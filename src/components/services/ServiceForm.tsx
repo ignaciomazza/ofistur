@@ -730,9 +730,11 @@ const MONEY_FIELDS: MoneyFieldName[] = [
 const formatMoneyFieldValue = (
   value: number | null | undefined,
   currency: string,
+  options?: { showZero?: boolean },
 ) => {
   const num = Number(value ?? 0);
-  if (!Number.isFinite(num) || num <= 0) return "";
+  if (!Number.isFinite(num) || num < 0) return "";
+  if (num === 0 && !options?.showZero) return "";
   return formatMoneyInput(String(num), currency);
 };
 
@@ -1230,6 +1232,9 @@ export default function ServiceForm({
       formatMoneyFieldValue(
         Number(formData[name] ?? 0),
         currencyCode || formData.currency || "ARS",
+        {
+          showZero: name === "cost_price" || name === "sale_price",
+        },
       ),
     [formData],
   );
@@ -1379,8 +1384,9 @@ export default function ServiceForm({
   }, [activePreset, applyPreset]);
 
   const hasPrices =
-    Number(formData.cost_price) > 0 &&
-    (Number(formData.sale_price) > 0 || useBookingSaleTotal);
+    Number(formData.cost_price) >= 0 &&
+    (Number(formData.sale_price) > 0 ||
+      (useBookingSaleTotal && Number(formData.cost_price) > 0));
   const margin = useMemo(
     () =>
       hasPrices
@@ -1662,10 +1668,10 @@ export default function ServiceForm({
   }, [formData.note, editingServiceId]);
 
   useEffect(() => {
-    if (!useBookingSaleTotal || hasPrices) return;
+    if (hasPrices) return;
     if (isSameBillingData(baseBillingData, fallbackBillingData)) return;
     setBaseBillingData(fallbackBillingData);
-  }, [useBookingSaleTotal, hasPrices, baseBillingData, fallbackBillingData]);
+  }, [hasPrices, baseBillingData, fallbackBillingData]);
 
   useEffect(() => {
     if (!onBillingUpdate || !baseBillingData) return;
