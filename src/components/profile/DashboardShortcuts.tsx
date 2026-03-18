@@ -30,18 +30,41 @@ type Totals = Record<string, number>;
 type MyEarningsResponse = {
   totals: { seller: Totals; beneficiary: Totals; grandTotal: Totals };
 };
+type EarningsStatsByCurrency = Record<
+  string,
+  {
+    saleTotal?: number;
+    paidTotal?: number;
+    debtTotal?: number;
+    commissionTotal?: number;
+    paymentRate?: number;
+  }
+>;
 type AgencyEarningsResponse = {
   totals?: {
     sellerComm?: Totals;
     leaderComm?: Totals;
     agencyShare?: Totals;
   };
+  statsByCurrency?: EarningsStatsByCurrency;
 };
 type ServiceCalcConfigResponse = {
   billing_breakdown_mode?: string | null;
   use_booking_sale_total?: boolean | null;
 };
 type EarningsScope = "personal" | "agency";
+type CommissionByCurrency = Record<
+  string,
+  {
+    commissionTotal: number;
+    seller: number;
+    leader: number;
+    agency: number;
+    paidTotal: number;
+    debtTotal: number;
+    paymentRate: number;
+  }
+>;
 
 type UserLite = {
   id_user: number;
@@ -220,6 +243,18 @@ const toNum = (v: number | string | null | undefined) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const clampPct = (value: number) => Math.max(0, Math.min(100, value));
+
+const makeZeroCommission = () => ({
+  commissionTotal: 0,
+  seller: 0,
+  leader: 0,
+  agency: 0,
+  paidTotal: 0,
+  debtTotal: 0,
+  paymentRate: 0,
+});
+
 const normCurrency = (raw: string | null | undefined): "ARS" | "USD" => {
   const s = String(raw || "")
     .trim()
@@ -255,6 +290,10 @@ const spanCls = (cols: 1 | 2, rows: 1 | 2) =>
   `${cols === 1 ? "col-span-1" : "col-span-1 md:col-span-2"} ${
     rows === 1 ? "row-span-1" : "row-span-2"
   }`;
+
+const MAX_TEAM_MEMBERS_VISIBLE = 6;
+const MAX_TRAVEL_ITEMS_VISIBLE = 2;
+const MAX_TRAVEL_ITEMS_EXPANDED = 6;
 
 /* ===================== componente ===================== */
 export default function DashboardShortcuts() {
@@ -293,9 +332,13 @@ export default function DashboardShortcuts() {
 
   const [loading, setLoading] = useState(true);
 
-  const [commissionByCur, setCommissionByCur] = useState<
-    Record<string, number>
-  >({});
+  const [commissionByCur, setCommissionByCur] = useState<CommissionByCurrency>(
+    {},
+  );
+  const [macroMinPaidPct, setMacroMinPaidPct] = useState(0);
+  const [macroMinPaidPctDebounced, setMacroMinPaidPctDebounced] = useState(0);
+  const [macroMinPaidPctApplied, setMacroMinPaidPctApplied] = useState(0);
+  const [loadingCommissionPanel, setLoadingCommissionPanel] = useState(false);
   const [newClientsCount, setNewClientsCount] = useState(0);
   const [totalBookings, setTotalBookings] = useState(0);
   const [pendingBookings, setPendingBookings] = useState<Booking[]>([]);
@@ -304,6 +347,7 @@ export default function DashboardShortcuts() {
     inTrip: Booking[];
     returning: Booking[];
   }>({ departing: [], inTrip: [], returning: [] });
+  const [showMoreTravel, setShowMoreTravel] = useState(false);
   const [debts, setDebts] = useState<
     { booking: Booking; debtARS: number; debtUSD: number }[]
   >([]);
@@ -312,6 +356,7 @@ export default function DashboardShortcuts() {
   const [useBookingSaleTotal, setUseBookingSaleTotal] = useState(false);
 
   const abortedRef = useRef(false);
+  const commissionReqIdRef = useRef(0);
 
   /* ------------------- fetch helpers ------------------- */
   const fetchProfile = useCallback(async () => {
@@ -328,12 +373,19 @@ export default function DashboardShortcuts() {
   }, [token]);
 
   const fetchEarnings = useCallback(
-    async (curCodes: string[], scope: EarningsScope) => {
-      const toCurrencyMap = (pool?: Totals): Record<string, number> => {
-        const out: Record<string, number> = {};
+    async (
+      curCodes: string[],
+      scope: EarningsScope,
+      minPaidPct: number = 0,
+    ): Promise<CommissionByCurrency> => {
+      const toCurrencyMap = (pool?: Totals): CommissionByCurrency => {
+        const out: CommissionByCurrency = {};
         for (const code of curCodes) {
           const val = pool?.[code] ?? 0;
-          out[code] = Number.isFinite(val) ? Number(val) : 0;
+          out[code] = {
+            ...makeZeroCommission(),
+            commissionTotal: Number.isFinite(val) ? Number(val) : 0,
+          };
         }
         return out;
       };
@@ -356,8 +408,13 @@ export default function DashboardShortcuts() {
 
       if (scope === "agency") {
         try {
+          const qs = new URLSearchParams({
+            from: monthFrom,
+            to: monthTo,
+          });
+          qs.set("minPaidPct", String(clampPct(minPaidPct)));
           const r = await authFetch(
-            `/api/earnings?from=${monthFrom}&to=${monthTo}`,
+            `/api/earnings?${qs.toString()}`,
             { cache: "no-store" },
             token || undefined,
           );
@@ -366,15 +423,29 @@ export default function DashboardShortcuts() {
             throw new Error("Error comisiones agencia");
           }
           const data = (await r.json()) as AgencyEarningsResponse;
-          const out: Record<string, number> = {};
+          const out: CommissionByCurrency = {};
           for (const code of curCodes) {
             const seller = Number(data?.totals?.sellerComm?.[code] ?? 0);
             const leader = Number(data?.totals?.leaderComm?.[code] ?? 0);
             const agency = Number(data?.totals?.agencyShare?.[code] ?? 0);
-            out[code] = [seller, leader, agency].reduce(
-              (acc, val) => acc + (Number.isFinite(val) ? val : 0),
-              0,
+            const stats = data?.statsByCurrency?.[code];
+            const commissionTotal = Number(
+              stats?.commissionTotal ?? seller + leader + agency,
             );
+            const paidTotal = Number(stats?.paidTotal ?? 0);
+            const debtTotal = Number(stats?.debtTotal ?? 0);
+            const paymentRate = Number(stats?.paymentRate ?? 0);
+            out[code] = {
+              commissionTotal: Number.isFinite(commissionTotal)
+                ? commissionTotal
+                : 0,
+              seller: Number.isFinite(seller) ? seller : 0,
+              leader: Number.isFinite(leader) ? leader : 0,
+              agency: Number.isFinite(agency) ? agency : 0,
+              paidTotal: Number.isFinite(paidTotal) ? paidTotal : 0,
+              debtTotal: Number.isFinite(debtTotal) ? debtTotal : 0,
+              paymentRate: Number.isFinite(paymentRate) ? paymentRate : 0,
+            };
           }
           return out;
         } catch (err) {
@@ -509,32 +580,10 @@ export default function DashboardShortcuts() {
         const profileRole = normalizeDashboardRole(p.role);
         const macroScope = isMacroDashboardRole(profileRole);
 
-        // Preparo monedas a consultar (fallback ARS/USD)
-        const curCodes =
-          enabled.length > 0
-            ? enabled.map((c) => c.code)
-            : (["ARS", "USD"] as string[]);
-
         // 2) Resto de datos en paralelo; cada bloque maneja su propio error
         const tasks: Promise<unknown>[] = [];
 
-        // 2.a) Comisiones
-        tasks.push(
-          fetchEarnings(curCodes, macroScope ? "agency" : "personal")
-            .then((commission) => {
-              if (!abortedRef.current) setCommissionByCur(commission);
-            })
-            .catch((e) => {
-              console.error("[dashboard] earnings error:", e);
-              if (!abortedRef.current) {
-                const zero: Record<string, number> = {};
-                for (const c of curCodes) zero[c] = 0;
-                setCommissionByCur(zero);
-              }
-            }),
-        );
-
-        // 2.b) Reservas del mes (conteo) + pendientes
+        // 2.a) Reservas del mes (conteo) + pendientes
         tasks.push(
           (async () => {
             const qs = new URLSearchParams({
@@ -553,7 +602,7 @@ export default function DashboardShortcuts() {
           })().catch((e) => console.error("[dashboard] reservas mes:", e)),
         );
 
-        // 2.c) Deuda por reserva (top 6)
+        // 2.b) Deuda por reserva (top 6)
         tasks.push(
           (async () => {
             const qs = new URLSearchParams({ take: "120" });
@@ -587,7 +636,7 @@ export default function DashboardShortcuts() {
           })().catch((e) => console.error("[dashboard] deudas:", e)),
         );
 
-        // 2.d) Resumen de viajes (semana actual)
+        // 2.c) Resumen de viajes (semana actual)
         tasks.push(
           (async () => {
             const collected: Booking[] = [];
@@ -666,7 +715,7 @@ export default function DashboardShortcuts() {
           })().catch((e) => console.error("[dashboard] travel week:", e)),
         );
 
-        // 2.e) Nuevos pasajeros del mes
+        // 2.d) Nuevos pasajeros del mes
         tasks.push(
           (async () => {
             let count = 0;
@@ -699,7 +748,7 @@ export default function DashboardShortcuts() {
           })().catch((e) => console.error("[dashboard] nuevos pasajeros:", e)),
         );
 
-        // 2.f) Mi equipo
+        // 2.e) Mi equipo
         tasks.push(
           (async () => {
             const r = await authFetch(
@@ -739,14 +788,78 @@ export default function DashboardShortcuts() {
     weekFrom,
     weekTo,
     fetchProfile,
-    fetchEarnings,
     fetchBookingsPage,
     fetchCalcConfig,
+  ]);
+
+  useEffect(() => {
+    if (!isMacroView) return;
+    const timeoutId = window.setTimeout(() => {
+      setMacroMinPaidPctDebounced(macroMinPaidPct);
+    }, 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [isMacroView, macroMinPaidPct]);
+
+  useEffect(() => {
+    if (!token || !profile) return;
+
+    let cancelled = false;
+    const curCodes =
+      enabledCurrencies.length > 0
+        ? enabledCurrencies.map((c) => c.code)
+        : (["ARS", "USD"] as string[]);
+    const requestedPaidPct = isMacroView ? macroMinPaidPctDebounced : 0;
+    const reqId = commissionReqIdRef.current + 1;
+    commissionReqIdRef.current = reqId;
+
+    setLoadingCommissionPanel(true);
+
+    fetchEarnings(
+      curCodes,
+      isMacroView ? "agency" : "personal",
+      requestedPaidPct,
+    )
+      .then((commission) => {
+        if (cancelled || reqId !== commissionReqIdRef.current) return;
+        setCommissionByCur(commission);
+        setMacroMinPaidPctApplied(requestedPaidPct);
+      })
+      .catch((e) => {
+        console.error("[dashboard] earnings error:", e);
+        if (cancelled || reqId !== commissionReqIdRef.current) return;
+        const zero: CommissionByCurrency = {};
+        for (const code of curCodes) {
+          zero[code] = makeZeroCommission();
+        }
+        setCommissionByCur(zero);
+      })
+      .finally(() => {
+        if (cancelled || reqId !== commissionReqIdRef.current) return;
+        setLoadingCommissionPanel(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    token,
+    profile,
+    enabledCurrencies,
+    isMacroView,
+    macroMinPaidPctDebounced,
+    fetchEarnings,
   ]);
 
   /* ===================== UI ===================== */
   const title = (b: Booking) =>
     `${(b.titular.first_name || "").toUpperCase()} ${(b.titular.last_name || "").toUpperCase()}`.trim();
+  const travelItemsVisible = showMoreTravel
+    ? MAX_TRAVEL_ITEMS_EXPANDED
+    : MAX_TRAVEL_ITEMS_VISIBLE;
+  const hasMoreTravel =
+    travelWeek.departing.length > MAX_TRAVEL_ITEMS_VISIBLE ||
+    travelWeek.inTrip.length > MAX_TRAVEL_ITEMS_VISIBLE ||
+    travelWeek.returning.length > MAX_TRAVEL_ITEMS_VISIBLE;
 
   return (
     <AnimatePresence>
@@ -777,7 +890,7 @@ export default function DashboardShortcuts() {
             hidden: { opacity: 0, y: 16 },
             visible: { opacity: 1, y: 0 },
           }}
-          className={`${glass} ${spanCls(2, 1)} p-6`}
+          className={`${glass} ${spanCls(2, 1)} ${isMacroView ? "p-5" : "p-6"}`}
         >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium text-sky-900/80 dark:text-sky-100">
@@ -792,20 +905,155 @@ export default function DashboardShortcuts() {
               Ver más
             </Link>
           </div>
-          <p className="mb-3 text-xs opacity-70">Por moneda</p>
-          <div className="flex flex-wrap gap-2">
-            {currencyCodes.map((code) => (
-              <span
-                key={code}
-                className={`${chip} border border-emerald-800/10 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200`}
-              >
-                {code}
-                <strong className="font-semibold">
-                  {fmt(commissionByCur[code] || 0, code as CurrencyCode)}
-                </strong>
-              </span>
-            ))}
-          </div>
+          {isMacroView ? (
+            <>
+              <div className="mb-3 rounded-xl border border-white/20 bg-white/20 px-3 py-2.5 dark:bg-white/5">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium opacity-80">
+                    Cobro minimo para incluir
+                  </p>
+                  <span className="rounded-full border border-sky-300/30 bg-sky-100/40 px-2 py-0.5 text-[11px] font-semibold text-sky-900 dark:text-sky-100">
+                    {macroMinPaidPct}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={macroMinPaidPct}
+                  onChange={(e) => {
+                    setLoadingCommissionPanel(true);
+                    setMacroMinPaidPct(clampPct(Number(e.target.value)));
+                  }}
+                  className="h-1.5 w-full accent-sky-500 hover:cursor-pointer"
+                />
+                <div className="mt-1.5 space-y-0.5">
+                  <p className="text-[10px] opacity-70">
+                    Referencia: porcentaje cobrado sobre el total de la reserva
+                    para incluirla.
+                  </p>
+                  <p className="inline-flex items-center gap-1 text-[10px] font-medium opacity-80">
+                    <span
+                      className={`inline-block size-1.5 rounded-full ${
+                        loadingCommissionPanel
+                          ? "animate-pulse bg-sky-400"
+                          : "bg-emerald-400/80"
+                      }`}
+                    />
+                    {loadingCommissionPanel
+                      ? "Actualizando comisiones..."
+                      : `Filtro aplicado: ${macroMinPaidPctApplied}%`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 xl:grid-cols-2">
+                {currencyCodes.map((code) => {
+                  const summary = commissionByCur[code] || makeZeroCommission();
+                  const ratePct = Math.round((summary.paymentRate || 0) * 100);
+                  return (
+                    <div
+                      key={code}
+                      className="rounded-xl border border-emerald-800/10 bg-white/20 p-3 dark:bg-white/5"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold">{code}</p>
+                        <span className="rounded-full border border-white/25 bg-white/20 px-2 py-0.5 text-[10px]">
+                          Tasa pago {ratePct}%
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-[10px] uppercase tracking-wide opacity-70">
+                              Ganancia total
+                            </p>
+                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                              {fmt(summary.commissionTotal, code as CurrencyCode)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 p-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-[10px] uppercase tracking-wide opacity-70">
+                              Cobrado
+                            </p>
+                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                              {fmt(summary.paidTotal, code as CurrencyCode)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-[10px] uppercase tracking-wide opacity-70">
+                              Pendiente
+                            </p>
+                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                              {fmt(summary.debtTotal, code as CurrencyCode)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 border-t border-white/10 pt-2">
+                        <p className="mb-1.5 text-[10px] uppercase tracking-wide opacity-60">
+                          Distribucion
+                        </p>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                            <p className="text-[10px] uppercase tracking-wide opacity-70">
+                              Vendedor
+                            </p>
+                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                              {fmt(summary.seller, code as CurrencyCode)}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                            <p className="text-[10px] uppercase tracking-wide opacity-70">
+                              Lider
+                            </p>
+                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                              {fmt(summary.leader, code as CurrencyCode)}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                            <p className="text-[10px] uppercase tracking-wide opacity-70">
+                              Agencia
+                            </p>
+                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                              {fmt(summary.agency, code as CurrencyCode)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mb-3 text-xs opacity-70">Por moneda</p>
+              <div className="flex flex-wrap gap-2">
+                {currencyCodes.map((code) => (
+                  <span
+                    key={code}
+                    className={`${chip} border border-emerald-800/10 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200`}
+                  >
+                    {code}
+                    <strong className="font-semibold">
+                      {fmt(
+                        commissionByCur[code]?.commissionTotal || 0,
+                        code as CurrencyCode,
+                      )}
+                    </strong>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </motion.div>
 
         {/* Deuda por reserva */}
@@ -985,19 +1233,33 @@ export default function DashboardShortcuts() {
             </p>
           ) : (
             <div className="space-y-3">
-              {teamsMine.map((t) => (
-                <div key={t.id_team}>
-                  <p className="mb-1 font-medium">{t.name}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {t.user_teams.map((ut) => (
+              {teamsMine.map((t) => {
+                const visibleMembers = t.user_teams.slice(
+                  0,
+                  MAX_TEAM_MEMBERS_VISIBLE,
+                );
+                const hiddenCount = Math.max(
+                  t.user_teams.length - visibleMembers.length,
+                  0,
+                );
+                return (
+                <div key={t.id_team} className="rounded-xl border border-white/10 bg-white/10 p-2.5">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-medium">{t.name}</p>
+                    <span className="rounded-full border border-white/20 px-2 py-0.5 text-[10px] opacity-80">
+                      {t.user_teams.length} integrantes
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {visibleMembers.map((ut) => (
                       <span
                         key={ut.user.id_user}
-                        className={`${chip} border bg-white/20 text-sky-900 dark:text-white`}
+                        className={`${chip} border bg-white/20 px-2 py-1 text-[11px] text-sky-900 dark:text-white`}
                         title={`${ut.user.first_name} ${ut.user.last_name}`}
                       >
                         {ut.user.first_name} {ut.user.last_name}
                         <span
-                          className={`ml-1 rounded-full px-2 py-0.5 text-[10px] ${
+                          className={`ml-1 rounded-full px-1.5 py-0.5 text-[9px] ${
                             ut.user.role === "lider"
                               ? "bg-sky-600/20 text-sky-900 dark:text-sky-200"
                               : "bg-emerald-600/20 text-emerald-900 dark:text-emerald-200"
@@ -1007,9 +1269,15 @@ export default function DashboardShortcuts() {
                         </span>
                       </span>
                     ))}
+                    {hiddenCount > 0 && (
+                      <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-2 py-1 text-[11px] font-medium opacity-80">
+                        +{hiddenCount} más
+                      </span>
+                    )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </motion.div>
@@ -1021,7 +1289,7 @@ export default function DashboardShortcuts() {
             hidden: { opacity: 0, y: 16 },
             visible: { opacity: 1, y: 0 },
           }}
-          className={`${glass} ${spanCls(2, 2)} p-6`}
+          className={`${glass} ${spanCls(2, 1)} self-start p-5`}
         >
           <div className="mb-2 flex items-center justify-between">
             <div>
@@ -1038,24 +1306,37 @@ export default function DashboardShortcuts() {
               href={`/bookings?from=${weekFrom}&to=${weekTo}`}
               className="rounded-full bg-sky-600/10 px-3 py-1 text-xs font-medium text-sky-900 shadow-sm hover:bg-sky-600/20 dark:text-white"
             >
-              Ver más
+              Reservas
             </Link>
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-2xl border border-sky-500/20 bg-white/20 p-3 dark:bg-white/5">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-sky-900 dark:text-sky-100">
-                  Viajan esta semana
+          <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
+            <span className="rounded-full border border-sky-500/25 bg-sky-500/10 px-2 py-0.5">
+              Salen: {travelWeek.departing.length}
+            </span>
+            <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5">
+              En viaje: {travelWeek.inTrip.length}
+            </span>
+            <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5">
+              Regresan: {travelWeek.returning.length}
+            </span>
+          </div>
+          <div className="grid gap-2">
+            <div className="rounded-xl border border-sky-500/20 bg-white/20 p-2.5 dark:bg-white/5">
+              <div className="mb-1.5 flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-900 dark:text-sky-100">
+                  Salen
                 </p>
-                <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[11px] font-medium text-sky-900 dark:text-sky-100">
+                <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] font-medium text-sky-900 dark:text-sky-100">
                   {travelWeek.departing.length}
                 </span>
               </div>
               {travelWeek.departing.length === 0 ? (
                 <p className="text-xs opacity-70">Sin salidas en esta semana.</p>
               ) : (
-                <ul className="space-y-2 text-sm">
-                  {travelWeek.departing.map((b) => {
+                <ul className="space-y-1.5 text-xs">
+                  {travelWeek.departing
+                    .slice(0, travelItemsVisible)
+                    .map((b) => {
                     const bookingNumber = b.agency_booking_id ?? b.id_booking;
                     return (
                       <li key={b.id_booking} className="space-y-1">
@@ -1065,7 +1346,7 @@ export default function DashboardShortcuts() {
                         >
                           N° {bookingNumber} — {title(b)}
                         </Link>
-                        <p className="text-[11px] opacity-80">
+                        <p className="text-[10px] opacity-80">
                           Sale: {humanDate(b.departure_date)}
                         </p>
                       </li>
@@ -1075,20 +1356,22 @@ export default function DashboardShortcuts() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-amber-500/20 bg-white/20 p-3 dark:bg-white/5">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-100">
+            <div className="rounded-xl border border-amber-500/20 bg-white/20 p-2.5 dark:bg-white/5">
+              <div className="mb-1.5 flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-100">
                   En viaje
                 </p>
-                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:text-amber-100">
+                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-medium text-amber-900 dark:text-amber-100">
                   {travelWeek.inTrip.length}
                 </span>
               </div>
               {travelWeek.inTrip.length === 0 ? (
                 <p className="text-xs opacity-70">Nadie está viajando hoy.</p>
               ) : (
-                <ul className="space-y-2 text-sm">
-                  {travelWeek.inTrip.map((b) => {
+                <ul className="space-y-1.5 text-xs">
+                  {travelWeek.inTrip
+                    .slice(0, travelItemsVisible)
+                    .map((b) => {
                     const bookingNumber = b.agency_booking_id ?? b.id_booking;
                     return (
                       <li key={b.id_booking} className="space-y-1">
@@ -1098,7 +1381,7 @@ export default function DashboardShortcuts() {
                         >
                           N° {bookingNumber} — {title(b)}
                         </Link>
-                        <p className="text-[11px] opacity-80">
+                        <p className="text-[10px] opacity-80">
                           Regresa: {humanDate(b.return_date)}
                         </p>
                       </li>
@@ -1108,20 +1391,22 @@ export default function DashboardShortcuts() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-emerald-500/20 bg-white/20 p-3 dark:bg-white/5">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-100">
-                  Regresan esta semana
+            <div className="rounded-xl border border-emerald-500/20 bg-white/20 p-2.5 dark:bg-white/5">
+              <div className="mb-1.5 flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-100">
+                  Regresan
                 </p>
-                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium text-emerald-900 dark:text-emerald-100">
+                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:text-emerald-100">
                   {travelWeek.returning.length}
                 </span>
               </div>
               {travelWeek.returning.length === 0 ? (
                 <p className="text-xs opacity-70">Sin regresos en esta semana.</p>
               ) : (
-                <ul className="space-y-2 text-sm">
-                  {travelWeek.returning.map((b) => {
+                <ul className="space-y-1.5 text-xs">
+                  {travelWeek.returning
+                    .slice(0, travelItemsVisible)
+                    .map((b) => {
                     const bookingNumber = b.agency_booking_id ?? b.id_booking;
                     return (
                       <li key={b.id_booking} className="space-y-1">
@@ -1131,7 +1416,7 @@ export default function DashboardShortcuts() {
                         >
                           N° {bookingNumber} — {title(b)}
                         </Link>
-                        <p className="text-[11px] opacity-80">
+                        <p className="text-[10px] opacity-80">
                           Regresa: {humanDate(b.return_date)}
                         </p>
                       </li>
@@ -1141,6 +1426,17 @@ export default function DashboardShortcuts() {
               )}
             </div>
           </div>
+          {hasMoreTravel && (
+            <div className="mt-2 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setShowMoreTravel((prev) => !prev)}
+                className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium opacity-90 transition hover:bg-white/20"
+              >
+                {showMoreTravel ? "Ver menos" : "Ver más"}
+              </button>
+            </div>
+          )}
         </motion.div>
 
         {/* Salir */}

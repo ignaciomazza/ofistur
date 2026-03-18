@@ -15,6 +15,9 @@
 /ignisci
 pax.json
 
+/gales
+scripts/import-gales-clients.js
+
 # next.js
 /.next/
 /out/
