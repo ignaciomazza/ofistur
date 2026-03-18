@@ -168,6 +168,95 @@ function parseNullableBool(input: unknown): boolean | null | undefined {
   return undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cleanString(v: unknown, max = 500): string | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v !== "string") return undefined;
+  const s = v.trim();
+  if (!s) return null;
+  return s.slice(0, max);
+}
+
+function parseDateTimeOrNull(value: unknown): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed;
+}
+
+function sanitizeVoucherPdfDraft(value: unknown): Prisma.InputJsonValue | null {
+  if (!isRecord(value)) return null;
+  if (!Array.isArray(value.blocks)) return null;
+
+  const selectedPaymentIndexRaw = value.selectedPaymentIndex;
+  let selectedPaymentIndex: number | null | undefined = undefined;
+  if (selectedPaymentIndexRaw === null) {
+    selectedPaymentIndex = null;
+  } else {
+    const n = Number(selectedPaymentIndexRaw);
+    if (Number.isInteger(n) && n >= 0) {
+      selectedPaymentIndex = Math.trunc(n);
+    }
+  }
+
+  const selectedServiceIds = Array.isArray(value.selectedServiceIds)
+    ? Array.from(
+        new Set(
+          value.selectedServiceIds
+            .map((entry) => Number(entry))
+            .filter((n) => Number.isInteger(n) && n > 0)
+            .map((n) => Math.trunc(n)),
+        ),
+      )
+    : undefined;
+
+  const servicesViewMode =
+    value.servicesViewMode === "compact" || value.servicesViewMode === "detailed"
+      ? value.servicesViewMode
+      : undefined;
+
+  const payload = {
+    blocks: value.blocks,
+    selectedCoverUrl: cleanString(value.selectedCoverUrl, 2000) ?? "",
+    selectedPaymentIndex,
+    selectedPhone: cleanString(value.selectedPhone, 200) ?? "",
+    selectedServiceIds,
+    servicesViewMode,
+    includeSignature:
+      typeof value.includeSignature === "boolean"
+        ? value.includeSignature
+        : undefined,
+    includePaxSignature:
+      typeof value.includePaxSignature === "boolean"
+        ? value.includePaxSignature
+        : undefined,
+    includeAgencySignature:
+      typeof value.includeAgencySignature === "boolean"
+        ? value.includeAgencySignature
+        : undefined,
+    includeClarification:
+      typeof value.includeClarification === "boolean"
+        ? value.includeClarification
+        : undefined,
+    includeDni: typeof value.includeDni === "boolean" ? value.includeDni : undefined,
+  };
+
+  const serialized = JSON.stringify(payload);
+  if (serialized.length > 900_000) {
+    throw new Error("El borrador de confirmación supera el tamaño permitido.");
+  }
+
+  return payload as Prisma.InputJsonValue;
+}
+
 type CommissionValidationResult = {
   value:
     | ReturnType<typeof normalizeCommissionOverrides>
@@ -430,16 +519,20 @@ export default async function handler(
       commission_overrides,
       sale_totals,
       use_booking_sale_total_override,
+      voucher_pdf_draft,
+      voucher_pdf_draft_saved_at,
     } = req.body ?? {};
 
     if (
       commission_overrides === undefined &&
       sale_totals === undefined &&
-      use_booking_sale_total_override === undefined
+      use_booking_sale_total_override === undefined &&
+      voucher_pdf_draft === undefined &&
+      voucher_pdf_draft_saved_at === undefined
     ) {
       return res.status(400).json({
         error:
-          "Debés enviar al menos uno de estos campos: commission_overrides, sale_totals, use_booking_sale_total_override.",
+          "Debés enviar al menos uno de estos campos: commission_overrides, sale_totals, use_booking_sale_total_override, voucher_pdf_draft, voucher_pdf_draft_saved_at.",
       });
     }
 
@@ -509,6 +602,35 @@ export default async function handler(
       }
     }
 
+    let normalizedVoucherPdfDraft:
+      | Prisma.InputJsonValue
+      | typeof Prisma.DbNull
+      | undefined = undefined;
+    if (voucher_pdf_draft !== undefined) {
+      try {
+        const draft = sanitizeVoucherPdfDraft(voucher_pdf_draft);
+        normalizedVoucherPdfDraft = draft ?? Prisma.DbNull;
+      } catch (error) {
+        const msg =
+          error instanceof Error
+            ? error.message
+            : "No se pudo validar el borrador de confirmación.";
+        return res.status(400).json({ error: msg });
+      }
+    }
+
+    let parsedVoucherPdfDraftSavedAt: Date | null | undefined = undefined;
+    if (voucher_pdf_draft_saved_at !== undefined) {
+      parsedVoucherPdfDraftSavedAt = parseDateTimeOrNull(
+        voucher_pdf_draft_saved_at,
+      );
+      if (parsedVoucherPdfDraftSavedAt === undefined) {
+        return res.status(400).json({
+          error: "voucher_pdf_draft_saved_at inválido.",
+        });
+      }
+    }
+
     try {
       const booking = await prisma.booking.update({
         where: { id_booking: existing.id_booking },
@@ -531,6 +653,12 @@ export default async function handler(
             : {}),
           ...(parsedSaleTotalOverride !== undefined
             ? { use_booking_sale_total_override: parsedSaleTotalOverride }
+            : {}),
+          ...(normalizedVoucherPdfDraft !== undefined
+            ? { voucher_pdf_draft: normalizedVoucherPdfDraft }
+            : {}),
+          ...(parsedVoucherPdfDraftSavedAt !== undefined
+            ? { voucher_pdf_draft_saved_at: parsedVoucherPdfDraftSavedAt }
             : {}),
         },
         include: {

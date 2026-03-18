@@ -35,9 +35,161 @@ const STUDIO_ICON_TAB =
   "inline-flex items-center justify-center rounded-xl border border-slate-300/55 bg-white/85 p-2 text-slate-700 shadow-sm transition hover:scale-[0.98] dark:border-slate-200/25 dark:bg-slate-900/60 dark:text-slate-100";
 const STUDIO_ICON_TAB_ACTIVE =
   "border-sky-500/55 bg-sky-500/15 text-sky-900 dark:border-sky-300/50 dark:bg-sky-500/30 dark:text-sky-50";
+const STUDIO_ICON_ACTION =
+  "inline-flex size-10 items-center justify-center rounded-xl border border-slate-300/60 bg-white/85 text-slate-700 shadow-sm transition hover:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-200/25 dark:bg-slate-900/60 dark:text-slate-100";
+const BOOKING_VOUCHER_DRAFT_VERSION = 1;
 
 const cx = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(" ");
+
+type BookingVoucherDraftValue = {
+  blocks: OrderedBlock[];
+  selectedCoverUrl: string;
+  selectedPaymentIndex: number | null;
+  selectedPhone: string;
+  selectedServiceIds?: number[];
+  servicesViewMode: "compact" | "detailed";
+  includeSignature: boolean;
+  includePaxSignature: boolean;
+  includeAgencySignature: boolean;
+  includeClarification: boolean;
+  includeDni: boolean;
+};
+
+type BookingVoucherDraftPayload = {
+  version: number;
+  saved_at: string;
+  value: BookingVoucherDraftValue;
+};
+
+function cleanString(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function toDraftStorageKey(bookingId: string | null): string | null {
+  if (!bookingId) return null;
+  return `ofistur:bookings:voucher-draft:${bookingId}`;
+}
+
+function coerceOrderedBlocks(input: unknown): OrderedBlock[] | null {
+  if (!Array.isArray(input)) return null;
+  return input.filter(isObj).map((entry) => entry as OrderedBlock);
+}
+
+function coerceVoucherDraftValue(input: unknown): BookingVoucherDraftValue | null {
+  if (!isObj(input)) return null;
+  const blocks = coerceOrderedBlocks(input.blocks);
+  if (!blocks) return null;
+
+  const selectedPaymentRaw = input.selectedPaymentIndex;
+  const selectedPaymentIndex =
+    selectedPaymentRaw == null
+      ? null
+      : Number.isInteger(Number(selectedPaymentRaw)) &&
+          Number(selectedPaymentRaw) >= 0
+        ? Math.trunc(Number(selectedPaymentRaw))
+        : null;
+
+  const selectedServiceIds = Array.isArray(input.selectedServiceIds)
+    ? Array.from(
+        new Set(
+          input.selectedServiceIds
+            .map((item) => Number(item))
+            .filter((n) => Number.isInteger(n) && n > 0)
+            .map((n) => Math.trunc(n)),
+        ),
+      )
+    : undefined;
+
+  return {
+    blocks,
+    selectedCoverUrl: cleanString(input.selectedCoverUrl),
+    selectedPaymentIndex,
+    selectedPhone: cleanString(input.selectedPhone),
+    selectedServiceIds,
+    servicesViewMode:
+      input.servicesViewMode === "detailed" ? "detailed" : "compact",
+    includeSignature:
+      typeof input.includeSignature === "boolean" ? input.includeSignature : false,
+    includePaxSignature:
+      typeof input.includePaxSignature === "boolean"
+        ? input.includePaxSignature
+        : true,
+    includeAgencySignature:
+      typeof input.includeAgencySignature === "boolean"
+        ? input.includeAgencySignature
+        : true,
+    includeClarification:
+      typeof input.includeClarification === "boolean"
+        ? input.includeClarification
+        : true,
+    includeDni: typeof input.includeDni === "boolean" ? input.includeDni : true,
+  };
+}
+
+function readDraftFromStorage(
+  storageKey: string | null,
+): BookingVoucherDraftPayload | null {
+  if (!storageKey || typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isObj(parsed)) return null;
+    const value = coerceVoucherDraftValue(parsed.value);
+    if (!value) return null;
+    return {
+      version: Number(parsed.version) || 0,
+      saved_at: cleanString(parsed.saved_at),
+      value,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeDraftToStorage(
+  storageKey: string | null,
+  value: BookingVoucherDraftValue,
+): string | null {
+  if (!storageKey || typeof window === "undefined") return null;
+  try {
+    const savedAt = new Date().toISOString();
+    const payload: BookingVoucherDraftPayload = {
+      version: BOOKING_VOUCHER_DRAFT_VERSION,
+      saved_at: savedAt,
+      value,
+    };
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
+    return savedAt;
+  } catch {
+    return null;
+  }
+}
+
+function removeDraftFromStorage(storageKey: string | null): void {
+  if (!storageKey || typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {}
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return "—";
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString("es-AR");
+  } catch {
+    return value;
+  }
+}
+
+function toDateMs(value?: string | null): number {
+  if (!value) return 0;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(
@@ -682,6 +834,12 @@ export default function BookingVoucherPage() {
   const [studioPanel, setStudioPanel] = useState<StudioPanel>("design");
   const [designMenuSection, setDesignMenuSection] =
     useState<DesignMenuSection>("cover");
+  const [lastDraftSavedAt, setLastDraftSavedAt] = useState<string | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const draftStorageKey = useMemo(() => toDraftStorageKey(id), [id]);
+  const lastSavedPayloadRef = useRef<string | null>(null);
 
   const coverTouchedRef = useRef(false);
   const paymentTouchedRef = useRef(false);
@@ -690,6 +848,10 @@ export default function BookingVoucherPage() {
 
   useEffect(() => {
     servicesInitRef.current = null;
+    lastSavedPayloadRef.current = null;
+    setDraftReady(false);
+    setLastDraftSavedAt(null);
+    setDraftError(null);
   }, [id]);
 
   useEffect(() => {
@@ -700,6 +862,8 @@ export default function BookingVoucherPage() {
       try {
         setLoading(true);
         setError(null);
+        setDraftReady(false);
+        setDraftError(null);
 
         const [bookingRes, cfgRes] = await Promise.all([
           authFetch(
@@ -732,13 +896,122 @@ export default function BookingVoucherPage() {
           );
         }
 
+        const nextCfgRaw = cfgJson.config ?? {};
+        const resolvedCfg = normalizeConfig(nextCfgRaw, "voucher");
+        const defaultCoverFromCfg =
+          resolvedCfg.coverImage?.mode === "url"
+            ? resolvedCfg.coverImage?.url || ""
+            : "";
+        const resolvedPaymentOptions = Array.isArray(resolvedCfg.paymentOptions)
+          ? resolvedCfg.paymentOptions
+          : [];
+        const resolvedPaymentIndex =
+          typeof resolvedCfg.payment?.selectedIndex === "number" &&
+          resolvedCfg.payment.selectedIndex >= 0 &&
+          resolvedCfg.payment.selectedIndex < resolvedPaymentOptions.length
+            ? resolvedCfg.payment.selectedIndex
+            : null;
+        const normalizedAgency = normalizeAgencyForPdf(bookingJson.agency);
+        const defaultPhone =
+          cleanString(normalizedAgency.phone) ||
+          (Array.isArray(normalizedAgency.phones)
+            ? cleanString(normalizedAgency.phones[0])
+            : "");
+        const allServiceIds = Array.isArray(bookingJson.services)
+          ? bookingJson.services
+              .map((service) => Number(service.id_service))
+              .filter((serviceId) => Number.isInteger(serviceId) && serviceId > 0)
+              .map((serviceId) => Math.trunc(serviceId))
+          : [];
+        const validServiceIds = new Set(allServiceIds);
+
+        const localDraft = readDraftFromStorage(toDraftStorageKey(id));
+        const serverDraftValue = coerceVoucherDraftValue(
+          bookingJson.voucher_pdf_draft,
+        );
+        const serverSavedAt = cleanString(bookingJson.voucher_pdf_draft_saved_at);
+        const useLocalDraft =
+          !!localDraft &&
+          toDateMs(localDraft.saved_at) > toDateMs(serverSavedAt || null);
+        const selectedDraft = useLocalDraft
+          ? localDraft?.value
+          : serverDraftValue ?? localDraft?.value ?? null;
+        const selectedSavedAt = useLocalDraft
+          ? localDraft?.saved_at || null
+          : serverSavedAt || localDraft?.saved_at || null;
+
         setBooking(bookingJson);
-        setCfgRaw(cfgJson.config ?? {});
+        setCfgRaw(nextCfgRaw);
+
+        if (selectedDraft) {
+          const selectedPaymentFromDraft =
+            selectedDraft.selectedPaymentIndex != null &&
+            selectedDraft.selectedPaymentIndex >= 0 &&
+            selectedDraft.selectedPaymentIndex < resolvedPaymentOptions.length
+              ? selectedDraft.selectedPaymentIndex
+              : null;
+          const selectedServiceIdsFromDraft = Array.isArray(
+            selectedDraft.selectedServiceIds,
+          )
+            ? selectedDraft.selectedServiceIds.filter((serviceId) =>
+                validServiceIds.has(serviceId),
+              )
+            : allServiceIds;
+          const normalizedDraftValue: BookingVoucherDraftValue = {
+            ...selectedDraft,
+            selectedPaymentIndex: selectedPaymentFromDraft,
+            selectedServiceIds: [...selectedServiceIdsFromDraft].sort(
+              (a, b) => a - b,
+            ),
+          };
+
+          servicesInitRef.current = id;
+          coverTouchedRef.current = true;
+          paymentTouchedRef.current = true;
+          phoneTouchedRef.current = true;
+
+          setServicesViewMode(selectedDraft.servicesViewMode);
+          setIncludeSignature(selectedDraft.includeSignature);
+          setIncludePaxSignature(selectedDraft.includePaxSignature);
+          setIncludeAgencySignature(selectedDraft.includeAgencySignature);
+          setIncludeClarification(selectedDraft.includeClarification);
+          setIncludeDni(selectedDraft.includeDni);
+          setSelectedCoverUrl(selectedDraft.selectedCoverUrl || "");
+          setSelectedPaymentIndex(selectedPaymentFromDraft);
+          setSelectedPhone(selectedDraft.selectedPhone || "");
+          setSelectedServiceIds(new Set(selectedServiceIdsFromDraft));
+          setEditableBlocks(selectedDraft.blocks);
+          lastSavedPayloadRef.current = JSON.stringify(normalizedDraftValue);
+        } else {
+          servicesInitRef.current = null;
+          coverTouchedRef.current = false;
+          paymentTouchedRef.current = false;
+          phoneTouchedRef.current = false;
+
+          setServicesViewMode("compact");
+          setIncludeSignature(false);
+          setIncludePaxSignature(true);
+          setIncludeAgencySignature(true);
+          setIncludeClarification(true);
+          setIncludeDni(true);
+          setSelectedCoverUrl(defaultCoverFromCfg);
+          setSelectedPaymentIndex(resolvedPaymentIndex);
+          setSelectedPhone(defaultPhone);
+          setSelectedServiceIds(new Set(allServiceIds));
+          setEditableBlocks([]);
+          lastSavedPayloadRef.current = null;
+        }
+        setLastDraftSavedAt(selectedSavedAt);
+        setDraftReady(true);
       } catch (err) {
         if (controller.signal.aborted) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
         const msg = err instanceof Error ? err.message : "Error al cargar";
         setError(msg);
+        setDraftReady(false);
+        setLastDraftSavedAt(null);
+        setDraftError(null);
+        lastSavedPayloadRef.current = null;
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -1167,9 +1440,12 @@ export default function BookingVoucherPage() {
   useEffect(() => {
     setEditableBlocks((prev) => {
       const byId = new Map(prev.map((b) => [b.id, b]));
-      return previewBlocks.map(
+      const previewIds = new Set(previewBlocks.map((b) => b.id));
+      const mergedPreview = previewBlocks.map(
         (b) => byId.get(b.id) ?? contentBlockToOrdered(b, false),
       );
+      const customBlocks = prev.filter((block) => !previewIds.has(block.id));
+      return [...mergedPreview, ...customBlocks];
     });
   }, [previewKey, previewBlocks]);
 
@@ -1273,6 +1549,250 @@ export default function BookingVoucherPage() {
     [booking],
   );
 
+  const draftValue = useMemo<BookingVoucherDraftValue>(
+    () => ({
+      blocks: editableBlocks,
+      selectedCoverUrl,
+      selectedPaymentIndex,
+      selectedPhone,
+      selectedServiceIds: [...selectedServiceIds].sort((a, b) => a - b),
+      servicesViewMode,
+      includeSignature,
+      includePaxSignature,
+      includeAgencySignature,
+      includeClarification,
+      includeDni,
+    }),
+    [
+      editableBlocks,
+      selectedCoverUrl,
+      selectedPaymentIndex,
+      selectedPhone,
+      selectedServiceIds,
+      servicesViewMode,
+      includeSignature,
+      includePaxSignature,
+      includeAgencySignature,
+      includeClarification,
+      includeDni,
+    ],
+  );
+
+  const saveDraftToServer = useCallback(
+    async (
+      nextValue: BookingVoucherDraftValue | null,
+      opts?: { silent?: boolean; savedAt?: string | null },
+    ): Promise<boolean> => {
+      if (!token || !id) return false;
+      const silent = opts?.silent === true;
+      const savedAt =
+        opts?.savedAt === undefined
+          ? nextValue
+            ? new Date().toISOString()
+            : null
+          : opts.savedAt;
+
+      if (!silent) setSavingDraft(true);
+      try {
+        const res = await authFetch(
+          `/api/bookings/${id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              voucher_pdf_draft: nextValue,
+              voucher_pdf_draft_saved_at: savedAt,
+            }),
+          },
+          token,
+        );
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        if (!res.ok) {
+          throw new Error(body?.error || "No se pudo guardar la confirmación.");
+        }
+        if (nextValue) {
+          setLastDraftSavedAt(savedAt || new Date().toISOString());
+          lastSavedPayloadRef.current = JSON.stringify(nextValue);
+        } else {
+          setLastDraftSavedAt(null);
+          lastSavedPayloadRef.current = null;
+        }
+        setDraftError(null);
+        return true;
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "No se pudo guardar la confirmación.";
+        setDraftError(msg);
+        return false;
+      } finally {
+        if (!silent) setSavingDraft(false);
+      }
+    },
+    [id, token],
+  );
+
+  useEffect(() => {
+    if (!draftReady || !draftStorageKey || !booking) return;
+    const timeout = window.setTimeout(() => {
+      const savedAt = writeDraftToStorage(draftStorageKey, draftValue);
+      const serialized = JSON.stringify(draftValue);
+      if (serialized === lastSavedPayloadRef.current) return;
+      void saveDraftToServer(draftValue, {
+        silent: true,
+        savedAt: savedAt || new Date().toISOString(),
+      });
+    }, 800);
+    return () => window.clearTimeout(timeout);
+  }, [
+    booking,
+    draftReady,
+    draftStorageKey,
+    draftValue,
+    saveDraftToServer,
+  ]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    if (lastSavedPayloadRef.current !== null) return;
+    lastSavedPayloadRef.current = JSON.stringify(draftValue);
+  }, [draftReady, draftValue]);
+
+  const saveDraftNow = useCallback(async () => {
+    const savedAt = writeDraftToStorage(draftStorageKey, draftValue);
+    await saveDraftToServer(draftValue, {
+      silent: false,
+      savedAt: savedAt || new Date().toISOString(),
+    });
+  }, [draftStorageKey, draftValue, saveDraftToServer]);
+
+  const applyDraftValue = useCallback(
+    (nextDraft: BookingVoucherDraftValue) => {
+      const maxPaymentIndex = paymentOptions.length - 1;
+      const nextPaymentIndex =
+        nextDraft.selectedPaymentIndex != null &&
+        nextDraft.selectedPaymentIndex >= 0 &&
+        nextDraft.selectedPaymentIndex <= maxPaymentIndex
+          ? nextDraft.selectedPaymentIndex
+          : null;
+      const allServiceIds = services
+        .map((service) => Number(service.id_service))
+        .filter((serviceId) => Number.isInteger(serviceId) && serviceId > 0)
+        .map((serviceId) => Math.trunc(serviceId));
+      const validServiceIds = new Set(allServiceIds);
+      const nextSelectedServiceIds = Array.isArray(nextDraft.selectedServiceIds)
+        ? nextDraft.selectedServiceIds.filter((serviceId) =>
+            validServiceIds.has(serviceId),
+          )
+        : allServiceIds;
+      const normalizedDraft: BookingVoucherDraftValue = {
+        ...nextDraft,
+        selectedPaymentIndex: nextPaymentIndex,
+        selectedServiceIds: [...nextSelectedServiceIds].sort((a, b) => a - b),
+      };
+
+      servicesInitRef.current = id ?? servicesInitRef.current;
+      coverTouchedRef.current = true;
+      paymentTouchedRef.current = true;
+      phoneTouchedRef.current = true;
+
+      setServicesViewMode(nextDraft.servicesViewMode);
+      setIncludeSignature(nextDraft.includeSignature);
+      setIncludePaxSignature(nextDraft.includePaxSignature);
+      setIncludeAgencySignature(nextDraft.includeAgencySignature);
+      setIncludeClarification(nextDraft.includeClarification);
+      setIncludeDni(nextDraft.includeDni);
+      setSelectedCoverUrl(nextDraft.selectedCoverUrl || "");
+      setSelectedPaymentIndex(nextPaymentIndex);
+      setSelectedPhone(nextDraft.selectedPhone || "");
+      setSelectedServiceIds(new Set(nextSelectedServiceIds));
+      setEditableBlocks(nextDraft.blocks);
+      lastSavedPayloadRef.current = JSON.stringify(normalizedDraft);
+    },
+    [id, paymentOptions.length, services],
+  );
+
+  const reloadDraft = useCallback(async () => {
+    let loadedServerDraft = false;
+    if (token && id) {
+      try {
+        const res = await authFetch(
+          `/api/bookings/${id}`,
+          { cache: "no-store" },
+          token,
+        );
+        const body = (await res.json().catch(() => null)) as
+          | BookingPayload
+          | { error?: string }
+          | null;
+        if (res.ok && body && "id_booking" in body) {
+          const serverDraft = coerceVoucherDraftValue(body.voucher_pdf_draft);
+          if (serverDraft) {
+            applyDraftValue(serverDraft);
+            setLastDraftSavedAt(
+              cleanString(body.voucher_pdf_draft_saved_at) || null,
+            );
+            setDraftError(null);
+            loadedServerDraft = true;
+          }
+        }
+      } catch {}
+    }
+    if (loadedServerDraft) return;
+    const savedDraft = readDraftFromStorage(draftStorageKey);
+    if (!savedDraft) return;
+    applyDraftValue(savedDraft.value);
+    setLastDraftSavedAt(savedDraft.saved_at || null);
+    setDraftError(null);
+  }, [applyDraftValue, draftStorageKey, id, token]);
+
+  const restoreBase = useCallback(() => {
+    coverTouchedRef.current = false;
+    paymentTouchedRef.current = false;
+    phoneTouchedRef.current = false;
+    servicesInitRef.current = id ?? servicesInitRef.current;
+    setServicesViewMode("compact");
+    setIncludeSignature(false);
+    setIncludePaxSignature(true);
+    setIncludeAgencySignature(true);
+    setIncludeClarification(true);
+    setIncludeDni(true);
+    setSelectedCoverUrl(defaultCoverUrl);
+    if (
+      defaultPaymentIndex != null &&
+      defaultPaymentIndex >= 0 &&
+      defaultPaymentIndex < paymentOptions.length
+    ) {
+      setSelectedPaymentIndex(defaultPaymentIndex);
+    } else {
+      setSelectedPaymentIndex(null);
+    }
+    setSelectedPhone(phoneOptions[0]?.value || "");
+    setSelectedServiceIds(new Set(services.map((service) => service.id_service)));
+    setEditableBlocks([]);
+  }, [
+    defaultCoverUrl,
+    defaultPaymentIndex,
+    id,
+    paymentOptions.length,
+    phoneOptions,
+    services,
+  ]);
+
+  const deleteDraft = useCallback(async () => {
+    removeDraftFromStorage(draftStorageKey);
+    restoreBase();
+    setLastDraftSavedAt(null);
+    await saveDraftToServer(null, { silent: false, savedAt: null });
+    lastSavedPayloadRef.current = null;
+  }, [draftStorageKey, restoreBase, saveDraftToServer]);
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (!draftReady) return false;
+    const current = JSON.stringify(draftValue);
+    return current !== (lastSavedPayloadRef.current ?? "");
+  }, [draftReady, draftValue]);
+
   const saveCurrentAsPreset = async () => {
     try {
       if (!token) throw new Error("No hay token de autenticación.");
@@ -1345,7 +1865,7 @@ export default function BookingVoucherPage() {
       },
       {
         key: "manage",
-        srLabel: "Cotización",
+        srLabel: "Gestión",
         label: (
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={1.7}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 21H4.5a1.5 1.5 0 0 1-1.5-1.5V5.56a1.5 1.5 0 0 1 .44-1.06l1.06-1.06A1.5 1.5 0 0 1 5.56 3h11.38a1.5 1.5 0 0 1 1.06.44l1.06 1.06a1.5 1.5 0 0 1 .44 1.06V19.5A1.5 1.5 0 0 1 19.5 21Z" />
@@ -1361,7 +1881,7 @@ export default function BookingVoucherPage() {
       ? "Menú"
       : studioPanel === "design"
       ? "Diseño"
-      : "Cotización";
+      : "Gestión";
   const designMenuItems: Array<{
     key: DesignMenuSection;
     label: string;
@@ -1795,8 +2315,146 @@ export default function BookingVoucherPage() {
     }
 
     if (studioPanel === "manage") {
+      const draftStatusLabel = savingDraft
+        ? "Guardando cambios…"
+        : draftError
+          ? "Error de guardado"
+          : hasUnsavedChanges
+            ? "Cambios pendientes"
+            : "Sincronizado";
+      const draftStatusTone = savingDraft
+        ? "border-sky-300/50 bg-sky-500/10 text-sky-800 dark:text-sky-100"
+        : draftError
+          ? "border-rose-300/50 bg-rose-500/10 text-rose-700 dark:text-rose-200"
+          : hasUnsavedChanges
+            ? "border-amber-300/50 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+            : "border-emerald-300/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200";
       return (
         <div className="space-y-3">
+          <div className={PANEL_CLASS}>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+              Guardado de esta reserva
+            </h3>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span
+                className={cx(
+                  "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                  draftStatusTone,
+                )}
+              >
+                {draftStatusLabel}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-300">
+                Último guardado:{" "}
+                {lastDraftSavedAt ? formatDateTime(lastDraftSavedAt) : "sin borrador"}
+              </span>
+            </div>
+            {draftError ? (
+              <p className="mt-2 text-xs text-rose-600 dark:text-rose-300">
+                {draftError}
+              </p>
+            ) : null}
+            <div className="mt-3 grid grid-cols-4 justify-items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void saveDraftNow()}
+                disabled={savingDraft}
+                className={STUDIO_ICON_ACTION}
+                title="Guardar ahora"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.7}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M19.5 21H4.5a1.5 1.5 0 0 1-1.5-1.5V5.56a1.5 1.5 0 0 1 .44-1.06l1.06-1.06A1.5 1.5 0 0 1 5.56 3H16.94a1.5 1.5 0 0 1 1.06.44l1.06 1.06a1.5 1.5 0 0 1 .44 1.06V19.5A1.5 1.5 0 0 1 19.5 21Z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M8.25 3v5.25h7.5V3M8.25 21v-6h7.5v6"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => void reloadDraft()}
+                disabled={savingDraft}
+                className={STUDIO_ICON_ACTION}
+                title="Cargar último guardado"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.7}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3.75 15.75v3a1.5 1.5 0 0 0 1.5 1.5h13.5a1.5 1.5 0 0 0 1.5-1.5v-3M12 3.75v10.5m0 0 3.75-3.75M12 14.25 8.25 10.5"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={restoreBase}
+                className={STUDIO_ICON_ACTION}
+                title="Volver al contenido base"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.7}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3.75 12a8.25 8.25 0 1 0 2.416-5.834M3.75 5.25v3.75h3.75"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteDraft()}
+                disabled={savingDraft || !lastDraftSavedAt}
+                className="inline-flex size-10 items-center justify-center rounded-xl border border-rose-400/60 bg-rose-100/80 text-rose-700 shadow-sm transition hover:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-300/40 dark:bg-rose-500/15 dark:text-rose-200"
+                title="Eliminar borrador"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  className="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.7}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="mt-2 grid grid-cols-4 justify-items-center gap-2 text-center text-[10px] text-slate-500 dark:text-slate-300">
+              <span className="w-10">Guardar</span>
+              <span className="w-10">Cargar</span>
+              <span className="w-10">Base</span>
+              <span className="w-10">Eliminar</span>
+            </div>
+          </div>
           <div className={PANEL_CLASS}>
             <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
               Presets de contenido

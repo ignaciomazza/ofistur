@@ -255,6 +255,8 @@ model Booking {
   invoice_type                    String
   invoice_observation             String?
   observation                     String?
+  voucher_pdf_draft               Json?
+  voucher_pdf_draft_saved_at      DateTime?
   creation_date                   DateTime                      @default(now())
   id_user                         Int
   user                            User                          @relation(fields: [id_user], references: [id_user])

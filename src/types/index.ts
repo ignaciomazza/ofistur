@@ -201,6 +201,8 @@ export interface Booking {
   invoice_type: "Factura A" | "Factura B" | "Coordinar con administracion";
   observation?: string;
   invoice_observation?: string;
+  voucher_pdf_draft?: unknown;
+  voucher_pdf_draft_saved_at?: string | null;
   titular: Client;
   user: User;
   agency: Agency;
