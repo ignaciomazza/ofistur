@@ -1358,6 +1358,8 @@ export default function ReceiptsPage() {
             p.payment_method_id != null ? p.payment_method_id : null,
           account_id: p.account_id ?? null,
           operator_id: null,
+          client_id: null,
+          client_credit_mode: "DEBIT",
           credit_account_id: null,
         }));
       }
@@ -1374,6 +1376,8 @@ export default function ReceiptsPage() {
             payment_method_id: hasPm ? pmId : null,
             account_id: hasAcc ? accId : null,
             operator_id: null,
+            client_id: null,
+            client_credit_mode: "DEBIT",
             credit_account_id: null,
           },
         ];

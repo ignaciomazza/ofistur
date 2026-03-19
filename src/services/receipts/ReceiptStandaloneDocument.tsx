@@ -24,6 +24,13 @@ export type ReceiptStandalonePdfData = {
   paymentDescription?: string;
   paymentFeeAmount?: number;
   payments?: ReceiptPdfPaymentLine[];
+  services?: Array<{
+    id: number;
+    description: string;
+    dateLabel?: string | null;
+    departureDate?: string | Date | null;
+    returnDate?: string | Date | null;
+  }>;
   base_amount?: number | null;
   base_currency?: string | null;
   counter_amount?: number | null;
@@ -92,23 +99,49 @@ const fmtDate = (
   return formatted === "-" ? "—" : formatted;
 };
 
-const CREDIT_METHOD_LABEL = "Crédito/corriente operador";
-const VIRTUAL_CREDIT_METHOD_ID = 999000000;
+const OPERATOR_CREDIT_METHOD_LABEL = "Crédito/corriente operador";
+const CLIENT_CREDIT_METHOD_LABEL = "Crédito/corriente cliente";
+const VIRTUAL_OPERATOR_CREDIT_METHOD_ID = 999000000;
+const VIRTUAL_CLIENT_CREDIT_METHOD_ID = 999000001;
 
 const paymentLabel = (p: ReceiptPdfPaymentLine) => {
-  const isVirtualCredit =
+  const isVirtualOperatorCredit =
     typeof p.payment_method_id === "number" &&
-    p.payment_method_id >= VIRTUAL_CREDIT_METHOD_ID;
+    p.payment_method_id === VIRTUAL_OPERATOR_CREDIT_METHOD_ID;
+  const isVirtualClientCredit =
+    typeof p.payment_method_id === "number" &&
+    p.payment_method_id === VIRTUAL_CLIENT_CREDIT_METHOD_ID;
 
   const pm =
     (p.paymentMethodName && p.paymentMethodName.trim()) ||
-    (isVirtualCredit
-      ? CREDIT_METHOD_LABEL
+    (isVirtualOperatorCredit
+      ? OPERATOR_CREDIT_METHOD_LABEL
+      : isVirtualClientCredit
+        ? CLIENT_CREDIT_METHOD_LABEL
       : p.payment_method_id
         ? `Metodo N° ${p.payment_method_id}`
         : "Metodo");
 
   return pm;
+};
+
+const formatServiceRange = (svc: {
+  dateLabel?: string | null;
+  departureDate?: string | Date | null;
+  returnDate?: string | Date | null;
+}) => {
+  const directLabel = String(svc.dateLabel || "").trim();
+  if (directLabel) return directLabel;
+  const depLabel = fmtDate(svc.departureDate);
+  const retLabel = fmtDate(svc.returnDate);
+  const hasDep = depLabel !== "—";
+  const hasRet = retLabel !== "—";
+  if (hasDep && hasRet) {
+    return depLabel === retLabel ? depLabel : `${depLabel} - ${retLabel}`;
+  }
+  if (hasDep) return depLabel;
+  if (hasRet) return retLabel;
+  return "—";
 };
 
 const styles = StyleSheet.create({
@@ -199,6 +232,27 @@ const styles = StyleSheet.create({
     color: "#1f2937",
   },
   payMeta: { fontSize: 8.5, color: "#64748b" },
+  serviceLine: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 8,
+    marginBottom: 6,
+  },
+  serviceDesc: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    fontSize: 9.2,
+    color: "#1f2937",
+  },
+  serviceDate: {
+    width: 128,
+    flexShrink: 0,
+    textAlign: "right",
+    fontSize: 8.6,
+    color: "#64748b",
+  },
   divider: {
     height: 1,
     backgroundColor: "#e5e5e5",
@@ -219,6 +273,7 @@ export default function ReceiptStandaloneDocument(
     paymentDescription,
     paymentFeeAmount,
     payments = [],
+    services = [],
     base_amount,
     base_currency,
     counter_amount,
@@ -331,6 +386,26 @@ export default function ReceiptStandaloneDocument(
             <Text>
               {softWrapLongWords(paymentDescription, { breakChar: " " })}
             </Text>
+          </View>
+        )}
+
+        {services.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.label}>Detalle del recibo</Text>
+            <View style={styles.list}>
+              {services.map((service, idx) => (
+                <View key={`${service.id}-${idx}`} style={styles.serviceLine}>
+                  <Text style={styles.serviceDesc}>
+                    {softWrapLongWords(service.description || "-", {
+                      breakChar: " ",
+                    })}
+                  </Text>
+                  <Text style={styles.serviceDate}>
+                    {formatServiceRange(service)}
+                  </Text>
+                </View>
+              ))}
+            </View>
           </View>
         )}
 

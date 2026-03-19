@@ -64,8 +64,10 @@ import CreateReceiptFields from "@/components/receipts/receipt-form/CreateReceip
 
 type Mode = "agency" | "booking";
 
-const CREDIT_METHOD_LABEL = "Crédito/corriente operador";
-const VIRTUAL_CREDIT_METHOD_ID = 999_000_000;
+const OPERATOR_CREDIT_METHOD_LABEL = "Crédito/corriente operador";
+const CLIENT_CREDIT_METHOD_LABEL = "Crédito/corriente cliente";
+const VIRTUAL_OPERATOR_CREDIT_METHOD_ID = 999_000_000;
+const VIRTUAL_CLIENT_CREDIT_METHOD_ID = 999_000_001;
 
 const normalizeMethodName = (value: string) =>
   String(value || "")
@@ -77,10 +79,23 @@ const normalizeMethodName = (value: string) =>
 const OPERATOR_CREDIT_METHOD_ALIASES = new Set([
   "credito operador",
   "credito/corriente operador",
+  "cuenta corriente operador",
 ]);
 
 const isOperatorCreditMethodName = (value: string) =>
   OPERATOR_CREDIT_METHOD_ALIASES.has(normalizeMethodName(value));
+
+const CLIENT_CREDIT_METHOD_ALIASES = new Set([
+  "credito cliente",
+  "credito/corriente cliente",
+  "cuenta corriente cliente",
+  "credito pax",
+  "credito/corriente pax",
+  "cuenta corriente pax",
+]);
+
+const isClientCreditMethodName = (value: string) =>
+  CLIENT_CREDIT_METHOD_ALIASES.has(normalizeMethodName(value));
 
 // 👇 Cambiá esto si tu endpoint es otro
 const CREDIT_ACCOUNTS_ENDPOINT = "/api/credit/account";
@@ -91,6 +106,7 @@ type CreditAccountOption = {
   currency?: string; // "ARS" | "USD" ...
   enabled?: boolean;
   operator_id?: number;
+  client_id?: number;
 };
 
 type OperatorLite = {
@@ -109,6 +125,8 @@ type PaymentDraft = {
 
   // crédito operador
   operator_id: number | null;
+  client_id: number | null;
+  client_credit_mode: "DEBIT" | "CREDIT";
 
   // ✅ cuenta crédito (CreditAccount)
   credit_account_id: number | null;
@@ -223,7 +241,9 @@ const addReceiptToPaidByCurrency = (
       const amount = toNumberLoose(alloc?.amount_service ?? 0);
       if (Math.abs(amount) <= DEBT_TOLERANCE) continue;
       appliedAllocation = true;
-      const currency = normalizeCurrencyCodeLoose(alloc?.service_currency || "ARS");
+      const currency = normalizeCurrencyCodeLoose(
+        alloc?.service_currency || "ARS",
+      );
       target[currency] = round2((target[currency] || 0) + amount);
     }
     if (appliedAllocation) return;
@@ -319,26 +339,34 @@ const addUnallocatedReceiptPaidByCurrencyForSelection = (args: {
   serviceWeightById: Map<number, number>;
 }) => {
   const rawScopeIds = normalizeIdListLoose(args.receipt.serviceIds);
-  const validScopedIds = rawScopeIds.filter((id) => args.serviceCurrencyById.has(id));
+  const validScopedIds = rawScopeIds.filter((id) =>
+    args.serviceCurrencyById.has(id),
+  );
   const scopeIds =
     validScopedIds.length > 0
       ? validScopedIds
       : args.allServiceIds.filter((id) => args.serviceCurrencyById.has(id));
   if (!scopeIds.length) return;
 
-  const selectedScopeIds = scopeIds.filter((id) => args.selectedServiceIds.has(id));
+  const selectedScopeIds = scopeIds.filter((id) =>
+    args.selectedServiceIds.has(id),
+  );
   if (!selectedScopeIds.length) return;
 
   const fullPaidByCurrency: Record<string, number> = {};
   addReceiptToPaidByCurrency(fullPaidByCurrency, args.receipt);
 
   const sumWeight = (ids: number[]) =>
-    ids.reduce((sum, id) => sum + Math.max(0, args.serviceWeightById.get(id) || 0), 0);
+    ids.reduce(
+      (sum, id) => sum + Math.max(0, args.serviceWeightById.get(id) || 0),
+      0,
+    );
 
   for (const [currencyRaw, amountRaw] of Object.entries(fullPaidByCurrency)) {
     const currency = normalizeCurrencyCodeLoose(currencyRaw || "ARS");
     const amount = toNumberLoose(amountRaw);
-    if (!Number.isFinite(amount) || Math.abs(amount) <= DEBT_TOLERANCE) continue;
+    if (!Number.isFinite(amount) || Math.abs(amount) <= DEBT_TOLERANCE)
+      continue;
 
     const scopeIdsForCurrency = scopeIds.filter(
       (id) => args.serviceCurrencyById.get(id) === currency,
@@ -355,7 +383,10 @@ const addUnallocatedReceiptPaidByCurrencyForSelection = (args: {
       selectedWeightForCurrency > DEBT_TOLERANCE
     ) {
       ratio = selectedWeightForCurrency / totalWeightForCurrency;
-    } else if (scopeIdsForCurrency.length > 0 && selectedIdsForCurrency.length > 0) {
+    } else if (
+      scopeIdsForCurrency.length > 0 &&
+      selectedIdsForCurrency.length > 0
+    ) {
       ratio = selectedIdsForCurrency.length / scopeIdsForCurrency.length;
     } else {
       const totalWeight = sumWeight(scopeIds);
@@ -370,7 +401,9 @@ const addUnallocatedReceiptPaidByCurrencyForSelection = (args: {
     if (!Number.isFinite(ratio) || ratio <= 0) continue;
     const proratedAmount = round2(amount * ratio);
     if (Math.abs(proratedAmount) <= DEBT_TOLERANCE) continue;
-    args.target[currency] = round2((args.target[currency] || 0) + proratedAmount);
+    args.target[currency] = round2(
+      (args.target[currency] || 0) + proratedAmount,
+    );
   }
 };
 
@@ -503,7 +536,9 @@ function extractClientCreditExcess(
   const clientId = Number(source.client_id);
   if (!Number.isFinite(clientId) || clientId <= 0) return null;
 
-  const rawByCurrency = isRecord(source.by_currency) ? source.by_currency : null;
+  const rawByCurrency = isRecord(source.by_currency)
+    ? source.by_currency
+    : null;
   if (!rawByCurrency) return null;
 
   const byCurrency: Record<string, number> = {};
@@ -575,30 +610,74 @@ export default function ReceiptForm({
   const accountsTyped: FinanceAccount[] = accounts;
   const currenciesTyped: FinanceCurrency[] = currencies;
 
-  /* ===== Crédito: método ID real (si existe) o virtual (0) ===== */
-  const creditMethodId = useMemo(() => {
-    const m = paymentMethodsTyped.find(
-      (pm) => isOperatorCreditMethodName(pm.name || ""),
+  /* ===== Crédito/corriente: métodos reales o virtuales ===== */
+  const operatorCreditMethodId = useMemo(() => {
+    const m = paymentMethodsTyped.find((pm) =>
+      isOperatorCreditMethodName(pm.name || ""),
     );
-    return m?.id_method ?? VIRTUAL_CREDIT_METHOD_ID;
+    return m?.id_method ?? VIRTUAL_OPERATOR_CREDIT_METHOD_ID;
+  }, [paymentMethodsTyped]);
+
+  const clientCreditMethodId = useMemo(() => {
+    const m = paymentMethodsTyped.find((pm) =>
+      isClientCreditMethodName(pm.name || ""),
+    );
+    return m?.id_method ?? VIRTUAL_CLIENT_CREDIT_METHOD_ID;
   }, [paymentMethodsTyped]);
 
   const paymentMethodsUi = useMemo(() => {
-    const hasCreditInDb = paymentMethodsTyped.some(
-      (pm) => isOperatorCreditMethodName(pm.name || ""),
+    const hasOperatorCreditInDb = paymentMethodsTyped.some((pm) =>
+      isOperatorCreditMethodName(pm.name || ""),
+    );
+    const hasClientCreditInDb = paymentMethodsTyped.some((pm) =>
+      isClientCreditMethodName(pm.name || ""),
     );
 
-    if (hasCreditInDb) return paymentMethodsTyped;
+    if (hasOperatorCreditInDb && hasClientCreditInDb)
+      return paymentMethodsTyped;
 
-    const virtualCredit = {
-      id_method: VIRTUAL_CREDIT_METHOD_ID,
-      name: CREDIT_METHOD_LABEL,
-      requires_account: false,
-      enabled: true,
-    } as FinancePaymentMethod;
+    const virtualMethods: FinancePaymentMethod[] = [];
+    if (!hasOperatorCreditInDb) {
+      virtualMethods.push({
+        id_method: VIRTUAL_OPERATOR_CREDIT_METHOD_ID,
+        name: OPERATOR_CREDIT_METHOD_LABEL,
+        requires_account: false,
+        enabled: true,
+      });
+    }
+    if (!hasClientCreditInDb) {
+      virtualMethods.push({
+        id_method: VIRTUAL_CLIENT_CREDIT_METHOD_ID,
+        name: CLIENT_CREDIT_METHOD_LABEL,
+        requires_account: false,
+        enabled: true,
+      });
+    }
 
-    return [virtualCredit, ...paymentMethodsTyped];
+    return [...virtualMethods, ...paymentMethodsTyped];
   }, [paymentMethodsTyped]);
+
+  const isOperatorCreditPayment = useCallback(
+    (methodId: number | null | undefined) =>
+      methodId != null &&
+      Number.isFinite(Number(methodId)) &&
+      Number(methodId) === Number(operatorCreditMethodId),
+    [operatorCreditMethodId],
+  );
+
+  const isClientCreditPayment = useCallback(
+    (methodId: number | null | undefined) =>
+      methodId != null &&
+      Number.isFinite(Number(methodId)) &&
+      Number(methodId) === Number(clientCreditMethodId),
+    [clientCreditMethodId],
+  );
+
+  const isAnyCreditPayment = useCallback(
+    (methodId: number | null | undefined) =>
+      isOperatorCreditPayment(methodId) || isClientCreditPayment(methodId),
+    [isOperatorCreditPayment, isClientCreditPayment],
+  );
 
   /* ===== Mode ===== */
   const forcedBookingMode = !!bookingId;
@@ -624,11 +703,15 @@ export default function ReceiptForm({
 
   useEffect(() => {
     const nextBookingId =
-      typeof bookingId === "number" && Number.isFinite(bookingId) && bookingId > 0
+      typeof bookingId === "number" &&
+      Number.isFinite(bookingId) &&
+      bookingId > 0
         ? bookingId
         : null;
     if (nextBookingId == null) return;
-    setSelectedBookingId((prev) => (prev === nextBookingId ? prev : nextBookingId));
+    setSelectedBookingId((prev) =>
+      prev === nextBookingId ? prev : nextBookingId,
+    );
   }, [bookingId]);
 
   const bookingSearchEnabled = !forcedBookingMode && mode === "booking";
@@ -697,7 +780,12 @@ export default function ReceiptForm({
     if (mode !== "booking") return [] as ServiceLite[];
     if (receiptServiceSelectionMode === "booking") return selectedServices;
     return userSelectedServices;
-  }, [mode, receiptServiceSelectionMode, selectedServices, userSelectedServices]);
+  }, [
+    mode,
+    receiptServiceSelectionMode,
+    selectedServices,
+    userSelectedServices,
+  ]);
   const [manualServiceAllocationsEnabled, setManualServiceAllocationsEnabled] =
     useState(
       Array.isArray(initialServiceAllocations) &&
@@ -715,32 +803,36 @@ export default function ReceiptForm({
       }
       return out;
     });
-  const [serviceAllocationPaymentAmountsById, setServiceAllocationPaymentAmountsById] =
-    useState<Record<number, string>>(() => {
-      const out: Record<number, string> = {};
-      for (const alloc of initialServiceAllocations || []) {
-        const serviceId = Number(alloc?.service_id);
-        const amountRaw = Number(alloc?.amount_payment ?? 0);
-        if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
-        if (!Number.isFinite(amountRaw) || amountRaw <= 0) continue;
-        out[Math.trunc(serviceId)] = String(amountRaw);
-      }
-      return out;
-    });
-  const [serviceAllocationPaymentCurrencyById, setServiceAllocationPaymentCurrencyById] =
-    useState<Record<number, string>>(() => {
-      const out: Record<number, string> = {};
-      for (const alloc of initialServiceAllocations || []) {
-        const serviceId = Number(alloc?.service_id);
-        const paymentCurrency = normalizeOptionalCurrencyCodeLoose(
-          alloc?.payment_currency || "",
-        );
-        if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
-        if (!paymentCurrency) continue;
-        out[Math.trunc(serviceId)] = paymentCurrency;
-      }
-      return out;
-    });
+  const [
+    serviceAllocationPaymentAmountsById,
+    setServiceAllocationPaymentAmountsById,
+  ] = useState<Record<number, string>>(() => {
+    const out: Record<number, string> = {};
+    for (const alloc of initialServiceAllocations || []) {
+      const serviceId = Number(alloc?.service_id);
+      const amountRaw = Number(alloc?.amount_payment ?? 0);
+      if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+      if (!Number.isFinite(amountRaw) || amountRaw <= 0) continue;
+      out[Math.trunc(serviceId)] = String(amountRaw);
+    }
+    return out;
+  });
+  const [
+    serviceAllocationPaymentCurrencyById,
+    setServiceAllocationPaymentCurrencyById,
+  ] = useState<Record<number, string>>(() => {
+    const out: Record<number, string> = {};
+    for (const alloc of initialServiceAllocations || []) {
+      const serviceId = Number(alloc?.service_id);
+      const paymentCurrency = normalizeOptionalCurrencyCodeLoose(
+        alloc?.payment_currency || "",
+      );
+      if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+      if (!paymentCurrency) continue;
+      out[Math.trunc(serviceId)] = paymentCurrency;
+    }
+    return out;
+  });
 
   useEffect(() => {
     setServiceAllocationAmountsById((prev) => {
@@ -916,7 +1008,9 @@ export default function ReceiptForm({
   const suggestions = useMemo(() => {
     if (!selectedServices.length) return null;
     const currenciesInSelection = new Set(
-      selectedServices.map((s) => normalizeCurrencyCodeLoose(s.currency || "ARS")),
+      selectedServices.map((s) =>
+        normalizeCurrencyCodeLoose(s.currency || "ARS"),
+      ),
     );
     if (currenciesInSelection.size > 1) return null;
 
@@ -948,7 +1042,8 @@ export default function ReceiptForm({
   }, [selectedServices]);
 
   const normalizedServiceAllocationsForPayload = useMemo(() => {
-    if (!manualServiceAllocationsEnabled) return [] as ReceiptServiceAllocationLine[];
+    if (!manualServiceAllocationsEnabled)
+      return [] as ReceiptServiceAllocationLine[];
     if (!allocationServices.length) return [] as ReceiptServiceAllocationLine[];
 
     const serviceById = new Map(
@@ -973,7 +1068,9 @@ export default function ReceiptForm({
         serviceAllocationPaymentAmountsById[serviceId] || "",
       );
       const hasPaymentAmount =
-        amountPayment != null && Number.isFinite(amountPayment) && amountPayment > 0;
+        amountPayment != null &&
+        Number.isFinite(amountPayment) &&
+        amountPayment > 0;
       out.push({
         service_id: serviceId,
         amount_service: round2(amount),
@@ -1006,7 +1103,8 @@ export default function ReceiptForm({
     if (Array.isArray(initialPayments) && initialPayments.length > 0) {
       const hasPerLineFee = initialPayments.some(
         (p) =>
-          (p.fee_mode === "FIXED" || p.fee_mode === "PERCENT") ||
+          p.fee_mode === "FIXED" ||
+          p.fee_mode === "PERCENT" ||
           (typeof p.fee_amount === "number" && p.fee_amount > 0),
       );
       return initialPayments.map((p, idx) => ({
@@ -1030,7 +1128,7 @@ export default function ReceiptForm({
                 initialFeeAmount != null &&
                 initialFeeAmount > 0
               ? "FIXED"
-            : "NONE",
+              : "NONE",
         fee_value:
           p.fee_mode === "FIXED" || p.fee_mode === "PERCENT"
             ? String(p.fee_value ?? 0)
@@ -1039,8 +1137,11 @@ export default function ReceiptForm({
                 initialFeeAmount != null &&
                 initialFeeAmount > 0
               ? String(initialFeeAmount)
-            : "",
+              : "",
         operator_id: p.operator_id ?? null,
+        client_id: p.client_id ?? null,
+        client_credit_mode:
+          p.client_credit_mode === "CREDIT" ? "CREDIT" : "DEBIT",
         credit_account_id: p.credit_account_id ?? null,
       }));
     }
@@ -1061,6 +1162,8 @@ export default function ReceiptForm({
             ? String(initialFeeAmount)
             : "",
         operator_id: null,
+        client_id: null,
+        client_credit_mode: "DEBIT",
         credit_account_id: null,
       },
     ];
@@ -1180,7 +1283,9 @@ export default function ReceiptForm({
       const next = { ...prev };
       for (const service of allocationServices) {
         const serviceId = service.id_service;
-        const existing = normalizeOptionalCurrencyCodeLoose(next[serviceId] || "");
+        const existing = normalizeOptionalCurrencyCodeLoose(
+          next[serviceId] || "",
+        );
         if (existing) continue;
         const serviceCurrency = normalizeCurrencyCodeLoose(
           service.currency || "ARS",
@@ -1210,6 +1315,8 @@ export default function ReceiptForm({
         fee_mode: "NONE",
         fee_value: "",
         operator_id: null,
+        client_id: null,
+        client_credit_mode: "DEBIT",
         credit_account_id: null,
       },
     ]);
@@ -1261,17 +1368,24 @@ export default function ReceiptForm({
     );
   };
 
-  /* ===== Credit accounts (cache por operador) ===== */
+  /* ===== Credit accounts (cache por operador/cliente) ===== */
   const [creditAccountsByOperator, setCreditAccountsByOperator] = useState<
     Record<number, CreditAccountOption[]>
   >({});
   const [loadingCreditAccountsByOperator, setLoadingCreditAccountsByOperator] =
+    useState<Record<number, boolean>>({});
+  const [creditAccountsByClient, setCreditAccountsByClient] = useState<
+    Record<number, CreditAccountOption[]>
+  >({});
+  const [loadingCreditAccountsByClient, setLoadingCreditAccountsByClient] =
     useState<Record<number, boolean>>({});
 
   // si cambia moneda efectiva, limpiamos cache (para no mezclar cuentas por moneda)
   useEffect(() => {
     setCreditAccountsByOperator({});
     setLoadingCreditAccountsByOperator({});
+    setCreditAccountsByClient({});
+    setLoadingCreditAccountsByClient({});
     setPaymentLines((prev) =>
       prev.map((l) => ({ ...l, credit_account_id: null })),
     );
@@ -1380,21 +1494,138 @@ export default function ReceiptForm({
     ],
   );
 
+  const fetchCreditAccountsForClient = useCallback(
+    async (clientId: number): Promise<CreditAccountOption[]> => {
+      if (!token) return [];
+      if (!clientId || clientId <= 0) return [];
+
+      if (creditAccountsByClient[clientId]?.length)
+        return creditAccountsByClient[clientId];
+
+      if (loadingCreditAccountsByClient[clientId])
+        return creditAccountsByClient[clientId] ?? [];
+
+      setLoadingCreditAccountsByClient((m) => ({ ...m, [clientId]: true }));
+      try {
+        const qs = new URLSearchParams();
+        const cur = String(effectiveCurrency || "").toUpperCase();
+        qs.set("client_id", String(clientId));
+        qs.set("clientId", String(clientId)); // compat backend viejo
+        if (cur) qs.set("currency", cur);
+        qs.set("enabled", "true");
+
+        const res = await authFetch(
+          `${CREDIT_ACCOUNTS_ENDPOINT}?${qs.toString()}`,
+          { cache: "no-store" },
+          token,
+        );
+
+        const data = await safeJson<unknown>(res);
+
+        if (!res.ok) {
+          const msg =
+            isRecord(data) && typeof data["error"] === "string"
+              ? String(data["error"])
+              : isRecord(data) && typeof data["message"] === "string"
+                ? String(data["message"])
+                : "No se pudieron cargar las cuentas crédito/corriente.";
+          throw new Error(msg);
+        }
+
+        const rawList: unknown[] = Array.isArray(data)
+          ? data
+          : isRecord(data) && Array.isArray(data["items"])
+            ? (data["items"] as unknown[])
+            : isRecord(data) && Array.isArray(data["accounts"])
+              ? (data["accounts"] as unknown[])
+              : [];
+
+        const items: CreditAccountOption[] = rawList
+          .filter(isRecord)
+          .map((x) => {
+            const id = Number(x["id_credit_account"]);
+            const rawName = typeof x["name"] === "string" ? x["name"] : "";
+
+            return {
+              id_credit_account: id,
+              name:
+                rawName && rawName.trim().length > 0
+                  ? rawName
+                  : `Cuenta N° ${id}`,
+              currency:
+                typeof x["currency"] === "string"
+                  ? String(x["currency"])
+                  : undefined,
+              enabled:
+                typeof x["enabled"] === "boolean"
+                  ? Boolean(x["enabled"])
+                  : undefined,
+              client_id:
+                typeof x["client_id"] === "number"
+                  ? Number(x["client_id"])
+                  : undefined,
+            };
+          })
+          .filter(
+            (a) =>
+              Number.isFinite(a.id_credit_account) && a.id_credit_account > 0,
+          );
+
+        const filtered = items.filter((a) => {
+          const okEnabled = a.enabled === undefined ? true : !!a.enabled;
+          const okCur = a.currency
+            ? String(a.currency).toUpperCase() ===
+              String(effectiveCurrency).toUpperCase()
+            : true;
+          return okEnabled && okCur;
+        });
+
+        setCreditAccountsByClient((m) => ({ ...m, [clientId]: filtered }));
+        return filtered;
+      } finally {
+        setLoadingCreditAccountsByClient((m) => ({
+          ...m,
+          [clientId]: false,
+        }));
+      }
+    },
+    [
+      token,
+      effectiveCurrency,
+      creditAccountsByClient,
+      loadingCreditAccountsByClient,
+    ],
+  );
+
   const setPaymentLineMethod = (key: string, methodId: number | null) => {
     const method = paymentMethodsUi.find((m) => m.id_method === methodId);
-    const isCredit =
-      methodId != null && Number(methodId) === Number(creditMethodId);
+    const isOperatorCredit = isOperatorCreditPayment(methodId);
+    const isClientCredit = isClientCreditPayment(methodId);
 
     setPaymentLines((prev) =>
       prev.map((l) => {
         if (l.key !== key) return l;
 
-        if (isCredit) {
+        if (isOperatorCredit) {
           return {
             ...l,
             payment_method_id: methodId,
             account_id: null,
+            client_id: null,
+            client_credit_mode: "DEBIT",
             // operator_id y credit_account_id se eligen a mano
+          };
+        }
+
+        if (isClientCredit) {
+          return {
+            ...l,
+            payment_method_id: methodId,
+            account_id: null,
+            operator_id: null,
+            client_credit_mode:
+              l.client_credit_mode === "CREDIT" ? "CREDIT" : "DEBIT",
+            // client_id y credit_account_id se eligen a mano
           };
         }
 
@@ -1405,6 +1636,8 @@ export default function ReceiptForm({
             payment_method_id: methodId,
             account_id: null,
             operator_id: null,
+            client_id: null,
+            client_credit_mode: "DEBIT",
             credit_account_id: null,
           };
         }
@@ -1413,6 +1646,8 @@ export default function ReceiptForm({
           ...l,
           payment_method_id: methodId,
           operator_id: null,
+          client_id: null,
+          client_credit_mode: "DEBIT",
           credit_account_id: null,
         };
       }),
@@ -1440,7 +1675,13 @@ export default function ReceiptForm({
     setPaymentLines((prev) =>
       prev.map((l) =>
         l.key === key
-          ? { ...l, operator_id: operatorId, credit_account_id: null }
+          ? {
+              ...l,
+              operator_id: operatorId,
+              client_id: null,
+              client_credit_mode: "DEBIT",
+              credit_account_id: null,
+            }
           : l,
       ),
     );
@@ -1478,6 +1719,62 @@ export default function ReceiptForm({
       });
   };
 
+  const setPaymentLineClient = (key: string, clientId: number | null) => {
+    setPaymentLines((prev) =>
+      prev.map((l) =>
+        l.key === key
+          ? {
+              ...l,
+              client_id: clientId,
+              operator_id: null,
+              credit_account_id: null,
+            }
+          : l,
+      ),
+    );
+
+    if (!clientId) return;
+
+    fetchCreditAccountsForClient(clientId)
+      .then((items) => {
+        const validIds = items.map((a) => a.id_credit_account);
+        setPaymentLines((prev) =>
+          prev.map((l) => {
+            if (l.key !== key) return l;
+            if (l.client_id !== clientId) return l;
+
+            const hasCurrent =
+              l.credit_account_id != null &&
+              validIds.includes(l.credit_account_id);
+
+            if (hasCurrent) return l;
+
+            if (items.length === 1) {
+              return { ...l, credit_account_id: items[0].id_credit_account };
+            }
+
+            return { ...l, credit_account_id: null };
+          }),
+        );
+      })
+      .catch((err) => {
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : "Error cargando cuentas crédito/corriente.",
+        );
+      });
+  };
+
+  const setPaymentLineClientCreditMode = (
+    key: string,
+    mode: "DEBIT" | "CREDIT",
+  ) => {
+    setPaymentLines((prev) =>
+      prev.map((l) => (l.key === key ? { ...l, client_credit_mode: mode } : l)),
+    );
+  };
+
   // aplicar sugeridos: ajusta la ÚLTIMA línea para que el total matchee
   const applySuggestedAmounts = () => {
     if (!suggestions) return;
@@ -1505,6 +1802,8 @@ export default function ReceiptForm({
             fee_mode: "NONE",
             fee_value: "",
             operator_id: null,
+            client_id: null,
+            client_credit_mode: "DEBIT",
             credit_account_id: null,
           },
         ];
@@ -1546,7 +1845,10 @@ export default function ReceiptForm({
     if (base === null && fee === null) return "";
     const total = (base ?? 0) + (fee ?? 0);
     if (!total || total <= 0) return "";
-    return formatCurrencyMoney(total, lockedCurrency || defaultCurrency || "ARS");
+    return formatCurrencyMoney(
+      total,
+      lockedCurrency || defaultCurrency || "ARS",
+    );
   }, [
     clientTotalByCurrency,
     suggestions,
@@ -1592,16 +1894,26 @@ export default function ReceiptForm({
   const removeManualPdfItem = useCallback((key: string) => {
     setManualPdfItems((prev) => prev.filter((item) => item.key !== key));
   }, []);
-  const setManualPdfItemDescription = useCallback((key: string, value: string) => {
-    setManualPdfItems((prev) =>
-      prev.map((item) => (item.key === key ? { ...item, description: value } : item)),
-    );
-  }, []);
-  const setManualPdfItemDateLabel = useCallback((key: string, value: string) => {
-    setManualPdfItems((prev) =>
-      prev.map((item) => (item.key === key ? { ...item, date_label: value } : item)),
-    );
-  }, []);
+  const setManualPdfItemDescription = useCallback(
+    (key: string, value: string) => {
+      setManualPdfItems((prev) =>
+        prev.map((item) =>
+          item.key === key ? { ...item, description: value } : item,
+        ),
+      );
+    },
+    [],
+  );
+  const setManualPdfItemDateLabel = useCallback(
+    (key: string, value: string) => {
+      setManualPdfItems((prev) =>
+        prev.map((item) =>
+          item.key === key ? { ...item, date_label: value } : item,
+        ),
+      );
+    },
+    [],
+  );
   const normalizedManualPdfItems = useMemo(
     () =>
       normalizeReceiptPdfManualItems(
@@ -1680,21 +1992,28 @@ export default function ReceiptForm({
   }, [token]);
 
   const paymentSummary = useMemo(() => {
-    const lines: { label: string; amount: number; fee: number; currency: string }[] =
-      [];
+    const lines: {
+      label: string;
+      amount: number;
+      fee: number;
+      currency: string;
+    }[] = [];
 
     for (const l of paymentLines) {
       const amt = parseAmountInput(l.amount);
       if (!amt || amt <= 0) continue;
 
-      const isCredit =
-        l.payment_method_id != null &&
-        Number(l.payment_method_id) === Number(creditMethodId);
+      const isOperatorCredit = isOperatorCreditPayment(l.payment_method_id);
+      const isClientCredit = isClientCreditPayment(l.payment_method_id);
 
       const m = paymentMethodsUi.find(
         (pm) => pm.id_method === l.payment_method_id,
       );
-      const mName = isCredit ? CREDIT_METHOD_LABEL : m?.name || "Método";
+      const mName = isOperatorCredit
+        ? OPERATOR_CREDIT_METHOD_LABEL
+        : isClientCredit
+          ? CLIENT_CREDIT_METHOD_LABEL
+          : m?.name || "Método";
 
       const lineCurrency = normalizeCurrencyCodeLoose(
         l.payment_currency || effectiveCurrency,
@@ -1729,7 +2048,8 @@ export default function ReceiptForm({
     paymentMethodsUi,
     effectiveCurrency,
     paymentLineFeeByKey,
-    creditMethodId,
+    isOperatorCreditPayment,
+    isClientCreditPayment,
   ]);
 
   /* ===== Conversión (opcional) ===== */
@@ -1751,19 +2071,22 @@ export default function ReceiptForm({
     return Number.isFinite(n) ? n : 0;
   }, []);
 
-  const normalizeCurrencyCode = useCallback((raw: string | null | undefined) => {
-    const s = (raw || "").trim().toUpperCase();
-    if (!s) return "ARS";
-    const map: Record<string, string> = {
-      U$D: "USD",
-      U$S: "USD",
-      US$: "USD",
-      USD$: "USD",
-      AR$: "ARS",
-      $: "ARS",
-    };
-    return map[s] || s;
-  }, []);
+  const normalizeCurrencyCode = useCallback(
+    (raw: string | null | undefined) => {
+      const s = (raw || "").trim().toUpperCase();
+      if (!s) return "ARS";
+      const map: Record<string, string> = {
+        U$D: "USD",
+        U$S: "USD",
+        US$: "USD",
+        USD$: "USD",
+        AR$: "ARS",
+        $: "ARS",
+      };
+      return map[s] || s;
+    },
+    [],
+  );
 
   const formatDebtLabel = useCallback((value: number, currency: string) => {
     const safe = Number.isFinite(value) ? value : 0;
@@ -1785,9 +2108,7 @@ export default function ReceiptForm({
   const [bookingContextLoaded, setBookingContextLoaded] = useState(false);
   const [inheritedUseBookingSaleTotal, setInheritedUseBookingSaleTotal] =
     useState(false);
-  const [, setBillingBreakdownMode] = useState<
-    "auto" | "manual"
-  >("auto");
+  const [, setBillingBreakdownMode] = useState<"auto" | "manual">("auto");
   const [calcConfigLoaded, setCalcConfigLoaded] = useState(false);
 
   useEffect(() => {
@@ -1873,7 +2194,9 @@ export default function ReceiptForm({
           receipt_service_selection_mode?: unknown;
         }>(res);
         if (alive) {
-          setInheritedUseBookingSaleTotal(Boolean(json?.use_booking_sale_total));
+          setInheritedUseBookingSaleTotal(
+            Boolean(json?.use_booking_sale_total),
+          );
           setBillingBreakdownMode(
             String(json?.billing_breakdown_mode || "auto").toLowerCase() ===
               "manual"
@@ -1932,8 +2255,7 @@ export default function ReceiptForm({
 
         const totals = normalizeSaleTotalsLoose(json?.sale_totals);
         const overrideRaw = json?.use_booking_sale_total_override;
-        const override =
-          typeof overrideRaw === "boolean" ? overrideRaw : null;
+        const override = typeof overrideRaw === "boolean" ? overrideRaw : null;
 
         setBookingSaleTotals(totals);
         setBookingSaleOverride(override);
@@ -2078,7 +2400,9 @@ export default function ReceiptForm({
   const relevantReceipts = useMemo(() => {
     if (!bookingReceipts.length) return [];
     const receiptsExcludingCurrent =
-      editingReceiptId && Number.isFinite(editingReceiptId) && editingReceiptId > 0
+      editingReceiptId &&
+      Number.isFinite(editingReceiptId) &&
+      editingReceiptId > 0
         ? bookingReceipts.filter((r) => {
             const receiptId = Number(
               (r as { id_receipt?: unknown; id?: unknown }).id_receipt ??
@@ -2100,7 +2424,8 @@ export default function ReceiptForm({
               r.service_allocations
                 .filter(
                   (alloc) =>
-                    Math.abs(toNum(alloc?.amount_service ?? 0)) > DEBT_TOLERANCE,
+                    Math.abs(toNum(alloc?.amount_service ?? 0)) >
+                    DEBT_TOLERANCE,
                 )
                 .map((alloc) => Number(alloc?.service_id))
                 .filter((id) => Number.isFinite(id) && id > 0)
@@ -2250,9 +2575,7 @@ export default function ReceiptForm({
       normalizedServiceAllocationsForPayload.length > 0
     ) {
       for (const alloc of normalizedServiceAllocationsForPayload) {
-        const currency = normalizeCurrencyCode(
-          alloc.service_currency || "ARS",
-        );
+        const currency = normalizeCurrencyCode(alloc.service_currency || "ARS");
         acc[currency] = round2(
           (acc[currency] || 0) + toNum(alloc.amount_service),
         );
@@ -2261,9 +2584,7 @@ export default function ReceiptForm({
     }
 
     const baseVal = parseAmountInput(baseAmount);
-    const baseCur = baseCurrency
-      ? normalizeCurrencyCode(baseCurrency)
-      : null;
+    const baseCur = baseCurrency ? normalizeCurrencyCode(baseCurrency) : null;
 
     if (baseCur && baseVal != null && baseVal > 0) {
       const feeInBaseCurrency = paymentsFeeByCurrency[baseCur] || 0;
@@ -2278,8 +2599,7 @@ export default function ReceiptForm({
       const lineCurrency = normalizeCurrencyCode(
         line.payment_currency || effectiveCurrency || "ARS",
       );
-      const lineFee =
-        paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line);
+      const lineFee = paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line);
       const totalLine = amountVal + Math.max(0, lineFee);
       if (totalLine <= 0) continue;
       acc[lineCurrency] = round2((acc[lineCurrency] || 0) + totalLine);
@@ -2309,7 +2629,8 @@ export default function ReceiptForm({
     ]);
     currencies.forEach((cur) => {
       const sale = salesByCurrency[cur] || 0;
-      const paid = (paidByCurrency[cur] || 0) + (currentPaidByCurrency[cur] || 0);
+      const paid =
+        (paidByCurrency[cur] || 0) + (currentPaidByCurrency[cur] || 0);
       acc[cur] = sale - paid;
     });
     return acc;
@@ -2446,7 +2767,7 @@ export default function ReceiptForm({
         !manualServiceAllocationsEnabled
       ) {
         e.service_allocations =
-          "Con servicios en múltiples monedas activá \"Ajuste por servicio\" y cargá la conversión por servicio.";
+          'Con servicios en múltiples monedas activá "Ajuste por servicio" y cargá la conversión por servicio.';
       }
       if (manualServiceAllocationsEnabled) {
         if (allocationServices.length === 0) {
@@ -2456,8 +2777,8 @@ export default function ReceiptForm({
           e.service_allocations =
             "Cargá al menos un monto por servicio o desactivá el ajuste manual.";
         } else {
-          const missingConversionService = normalizedServiceAllocationsForPayload.find(
-            (alloc) => {
+          const missingConversionService =
+            normalizedServiceAllocationsForPayload.find((alloc) => {
               const serviceCurrency = normalizeCurrencyCodeLoose(
                 alloc.service_currency || "ARS",
               );
@@ -2467,8 +2788,7 @@ export default function ReceiptForm({
               if (serviceCurrency === paymentCurrency) return false;
               const amountPayment = toNum(alloc.amount_payment);
               return !Number.isFinite(amountPayment) || amountPayment <= 0;
-            },
-          );
+            });
           if (missingConversionService) {
             const service = allocationServices.find(
               (item) => item.id_service === missingConversionService.service_id,
@@ -2490,34 +2810,36 @@ export default function ReceiptForm({
             payments: paymentLines.map((line) => ({
               amount: parseAmountInput(line.amount) ?? 0,
               payment_currency: line.payment_currency || effectiveCurrency,
-              fee_amount: paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line),
+              fee_amount:
+                paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line),
             })),
           });
 
           if (!e.service_allocations) {
             const allocatedByCurrency =
-              normalizedServiceAllocationsForPayload.reduce<Record<string, number>>(
-                (acc, alloc) => {
-                  const serviceCurrency = normalizeCurrencyCodeLoose(
-                    alloc.service_currency || "ARS",
-                  );
-                  const paymentCurrency = normalizeCurrencyCodeLoose(
-                    alloc.payment_currency || serviceCurrency,
-                  );
-                  const amountPayment = toNum(alloc.amount_payment);
-                  const amountService = toNum(alloc.amount_service);
-                  const amount =
-                    Number.isFinite(amountPayment) && amountPayment > 0
-                      ? amountPayment
-                      : amountService;
-                  const code = paymentCurrency || serviceCurrency;
-                  acc[code] = round2((acc[code] || 0) + amount);
-                  return acc;
-                },
-                {},
-              );
+              normalizedServiceAllocationsForPayload.reduce<
+                Record<string, number>
+              >((acc, alloc) => {
+                const serviceCurrency = normalizeCurrencyCodeLoose(
+                  alloc.service_currency || "ARS",
+                );
+                const paymentCurrency = normalizeCurrencyCodeLoose(
+                  alloc.payment_currency || serviceCurrency,
+                );
+                const amountPayment = toNum(alloc.amount_payment);
+                const amountService = toNum(alloc.amount_service);
+                const amount =
+                  Number.isFinite(amountPayment) && amountPayment > 0
+                    ? amountPayment
+                    : amountService;
+                const code = paymentCurrency || serviceCurrency;
+                acc[code] = round2((acc[code] || 0) + amount);
+                return acc;
+              }, {});
 
-            for (const [code, allocated] of Object.entries(allocatedByCurrency)) {
+            for (const [code, allocated] of Object.entries(
+              allocatedByCurrency,
+            )) {
               const available = availableByCurrency[code] || 0;
               if (allocated - available > DEBT_TOLERANCE) {
                 e.service_allocations = `Los montos por servicio exceden el monto disponible en ${code}.`;
@@ -2533,9 +2855,9 @@ export default function ReceiptForm({
       e.payments = "Cargá al menos una línea de pago.";
     } else {
       paymentLines.forEach((l, idx) => {
-        const isCredit =
-          l.payment_method_id != null &&
-          Number(l.payment_method_id) === Number(creditMethodId);
+        const isOperatorCredit = isOperatorCreditPayment(l.payment_method_id);
+        const isClientCredit = isClientCreditPayment(l.payment_method_id);
+        const isCredit = isOperatorCredit || isClientCredit;
 
         const m = paymentMethodsUi.find(
           (pm) => pm.id_method === l.payment_method_id,
@@ -2562,7 +2884,7 @@ export default function ReceiptForm({
         if (l.payment_method_id == null)
           e[`payment_method_${idx}`] = "Elegí método.";
 
-        if (isCredit) {
+        if (isOperatorCredit) {
           const lineCurrencyForError = normalizeCurrencyCodeLoose(
             l.payment_currency || effectiveCurrency,
           );
@@ -2581,21 +2903,38 @@ export default function ReceiptForm({
           }
         }
 
+        if (isClientCredit) {
+          const lineCurrencyForError = normalizeCurrencyCodeLoose(
+            l.payment_currency || effectiveCurrency,
+          );
+          if (!l.client_id)
+            e[`payment_client_${idx}`] = "Elegí cliente pagador.";
+          const accountsForClient =
+            l.client_id != null
+              ? creditAccountsByClient[l.client_id] || []
+              : [];
+          if (!l.credit_account_id) {
+            e[`payment_credit_account_${idx}`] =
+              accountsForClient.length === 0
+                ? `El cliente no tiene cuentas crédito/corriente en ${
+                    lineCurrencyForError || "esta moneda"
+                  }.`
+                : "Elegí la cuenta crédito/corriente.";
+          }
+        }
+
         if (!isCredit && requiresAcc) {
           if (!l.account_id) e[`payment_account_${idx}`] = "Elegí cuenta.";
         }
       });
-
     }
 
     const total =
-      paymentsTotalNum ||
-      (currencyOverride ? 0 : suggestions?.base || 0);
+      paymentsTotalNum || (currencyOverride ? 0 : suggestions?.base || 0);
     if (!total || total <= 0)
       e.amount = "El total es inválido. Cargá importes o usá el sugerido.";
     if (!effectiveCurrency)
-      e.payments =
-        "Elegí una moneda en las líneas de pago para continuar.";
+      e.payments = "Elegí una moneda en las líneas de pago para continuar.";
     const issueDateOk = /^\d{4}-\d{2}-\d{2}$/.test(issueDate);
     if (!issueDateOk) e.issue_date = "Elegí la fecha del recibo.";
     const baseNum = parseAmountInput(baseAmount);
@@ -2701,14 +3040,14 @@ export default function ReceiptForm({
       .map((l): ReceiptPaymentLine => {
         const pmId =
           l.payment_method_id == null ? -1 : Number(l.payment_method_id);
-        const isCredit = pmId === Number(creditMethodId);
+        const isCredit = isAnyCreditPayment(pmId);
         const feeValue = parseAmountInput(l.fee_value);
         const feeAmount = paymentLineFeeByKey[l.key] ?? calcPaymentLineFee(l);
         return {
           amount: parseAmountInput(l.amount) ?? 0,
           payment_method_id:
             l.payment_method_id == null ? null : Number(l.payment_method_id),
-          account_id: isCredit ? null : l.account_id ?? null,
+          account_id: isCredit ? null : (l.account_id ?? null),
           payment_currency: normalizeCurrencyCodeLoose(
             l.payment_currency || effectiveCurrency,
           ),
@@ -2722,12 +3061,15 @@ export default function ReceiptForm({
               : undefined,
           fee_amount: feeAmount > 0 ? feeAmount : undefined,
           operator_id: l.operator_id ?? null,
+          client_id: l.client_id ?? null,
+          client_credit_mode:
+            l.client_credit_mode === "CREDIT" ? "CREDIT" : "DEBIT",
           credit_account_id: l.credit_account_id ?? null,
         };
       })
       .filter((p) => {
         const pmId = Number(p.payment_method_id ?? NaN);
-        const isCredit = pmId === Number(creditMethodId);
+        const isCredit = isAnyCreditPayment(pmId);
         return p.amount > 0 && (pmId > 0 || isCredit);
       });
 
@@ -2747,23 +3089,27 @@ export default function ReceiptForm({
     }
 
     const finalFee = paymentsFeeTotalNum;
-    const paymentFeeForPayload =
-      finalFee > 0 ? finalFee : undefined;
+    const paymentFeeForPayload = finalFee > 0 ? finalFee : undefined;
 
     // para los campos legacy: preferí un pago real (>0), sino el primero (puede ser crédito)
     const primaryPayment =
       normalizedPayments.find(
-        (p) => p.payment_method_id !== Number(creditMethodId),
-      ) ?? normalizedPayments[0] ?? null;
+        (p) => !isAnyCreditPayment(p.payment_method_id),
+      ) ??
+      normalizedPayments[0] ??
+      null;
 
     const single =
       normalizedPayments.length === 1 ? normalizedPayments[0] : null;
 
     const singleMethodName = single
-      ? single.payment_method_id === Number(creditMethodId)
-        ? CREDIT_METHOD_LABEL
-        : paymentMethodsUi.find((m) => m.id_method === single.payment_method_id)
-            ?.name
+      ? isOperatorCreditPayment(single.payment_method_id)
+        ? OPERATOR_CREDIT_METHOD_LABEL
+        : isClientCreditPayment(single.payment_method_id)
+          ? CLIENT_CREDIT_METHOD_LABEL
+          : paymentMethodsUi.find(
+              (m) => m.id_method === single.payment_method_id,
+            )?.name
       : undefined;
 
     const singleAccountName =
@@ -2790,10 +3136,14 @@ export default function ReceiptForm({
     const payloadAmount =
       hasMixedPayments && baseReady ? (baseAmountNum as number) : finalAmount;
     const payloadAmountCurrency =
-      hasMixedPayments && baseReady ? (baseCurrency || effectiveCurrency) : effectiveCurrency;
+      hasMixedPayments && baseReady
+        ? baseCurrency || effectiveCurrency
+        : effectiveCurrency;
 
     const payloadBaseAmount = baseReady ? baseAmountNum : undefined;
-    const payloadBaseCurrency = baseReady ? baseCurrency || undefined : undefined;
+    const payloadBaseCurrency = baseReady
+      ? baseCurrency || undefined
+      : undefined;
 
     const payloadCounterAmount = counterAmountValid
       ? counterAmountNum
@@ -2916,9 +3266,11 @@ export default function ReceiptForm({
 
       for (const [idx, p] of normalizedPayments.entries()) {
         const lineLabel = `línea ${idx + 1}`;
-        const isCredit = p.payment_method_id === Number(creditMethodId);
+        const isOperatorCredit = isOperatorCreditPayment(p.payment_method_id);
+        const isClientCredit = isClientCreditPayment(p.payment_method_id);
+        const isCredit = isOperatorCredit || isClientCredit;
 
-        if (isCredit) {
+        if (isOperatorCredit) {
           const opId = p.operator_id ?? null;
           const caId = p.credit_account_id ?? null;
 
@@ -2936,8 +3288,7 @@ export default function ReceiptForm({
                 token: token!,
                 receiptId: rid,
                 amount: p.amount,
-                currency:
-                  p.payment_currency || apiBody.amountCurrency || "ARS",
+                currency: p.payment_currency || apiBody.amountCurrency || "ARS",
                 concept: apiBody.concept,
                 bookingId: selectedBookingId ?? bookingId ?? undefined,
                 operatorId: opId,
@@ -2956,6 +3307,50 @@ export default function ReceiptForm({
           }
         }
 
+        if (isClientCredit) {
+          const clientId = p.client_id ?? null;
+          const caId = p.credit_account_id ?? null;
+          const clientCreditMode =
+            p.client_credit_mode === "CREDIT" ? "CREDIT" : "DEBIT";
+          const docType =
+            clientCreditMode === "CREDIT" ? "adjust_up" : "adjust_down";
+          const modeLabel =
+            clientCreditMode === "CREDIT" ? "agregar saldo" : "descontar saldo";
+
+          if (!clientId) {
+            clientCreditEntryErrors.push(
+              `Crédito/corriente cliente (${lineLabel}): falta cliente.`,
+            );
+          } else if (!caId) {
+            clientCreditEntryErrors.push(
+              `Crédito/corriente cliente (${lineLabel}): falta cuenta crédito/corriente.`,
+            );
+          } else {
+            try {
+              await createClientCreditEntryForReceipt({
+                token: token!,
+                receiptId: rid,
+                amount: p.amount,
+                currency: p.payment_currency || apiBody.amountCurrency || "ARS",
+                concept: `${apiBody.concept} (${modeLabel})`,
+                bookingId: selectedBookingId ?? bookingId ?? undefined,
+                clientId,
+                agencyId,
+                creditAccountId: caId,
+                docType,
+              });
+            } catch (err) {
+              clientCreditEntryErrors.push(
+                `Crédito/corriente cliente (${lineLabel}): ${
+                  err instanceof Error
+                    ? err.message
+                    : "error creando movimiento de crédito/corriente."
+                }`,
+              );
+            }
+          }
+        }
+
         if (!isCredit && p.account_id != null) {
           try {
             await createFinanceEntryForReceipt({
@@ -2963,8 +3358,7 @@ export default function ReceiptForm({
               accountId: p.account_id,
               receiptId: rid,
               amount: p.amount,
-              currency:
-                p.payment_currency || apiBody.amountCurrency || "ARS",
+              currency: p.payment_currency || apiBody.amountCurrency || "ARS",
               concept: apiBody.concept,
               bookingId: selectedBookingId ?? bookingId ?? undefined,
               agencyId,
@@ -3021,7 +3415,9 @@ export default function ReceiptForm({
           );
         }
         if (financeEntryErrors.length) {
-          details.push(`cuentas financieras: ${financeEntryErrors.join(" | ")}`);
+          details.push(
+            `cuentas financieras: ${financeEntryErrors.join(" | ")}`,
+          );
         }
         if (clientCreditEntryErrors.length) {
           details.push(
@@ -3134,7 +3530,8 @@ export default function ReceiptForm({
               {action === "create" && (
                 <CreateReceiptFields
                   token={token}
-                  creditMethodId={creditMethodId}
+                  creditMethodId={operatorCreditMethodId}
+                  clientCreditMethodId={clientCreditMethodId}
                   issueDate={issueDate}
                   setIssueDate={setIssueDate}
                   clientsCount={clientsCount}
@@ -3174,12 +3571,18 @@ export default function ReceiptForm({
                     paymentLineImpactByKey[key] ?? 0
                   }
                   setPaymentLineOperator={setPaymentLineOperator}
+                  setPaymentLineClient={setPaymentLineClient}
+                  setPaymentLineClientCreditMode={
+                    setPaymentLineClientCreditMode
+                  }
                   setPaymentLineCreditAccount={setPaymentLineCreditAccount}
                   operators={operators}
                   creditAccountsByOperator={creditAccountsByOperator}
+                  creditAccountsByClient={creditAccountsByClient}
                   loadingCreditAccountsByOperator={
                     loadingCreditAccountsByOperator
                   }
+                  loadingCreditAccountsByClient={loadingCreditAccountsByClient}
                   paymentDescription={paymentDescription}
                   setPaymentDescription={handlePaymentDescriptionChange}
                   manualPdfItemsEnabled={manualPdfItemsEnabled}

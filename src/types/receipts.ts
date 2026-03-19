@@ -77,6 +77,8 @@ export type ReceiptPaymentLine = {
 
   // (para UI / movimiento crédito)
   operator_id?: number | null;
+  client_id?: number | null;
+  client_credit_mode?: "DEBIT" | "CREDIT" | null;
 
   // ✅ NUEVO: cuenta crédito elegida
   credit_account_id?: number | null;

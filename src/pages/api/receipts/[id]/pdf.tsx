@@ -652,6 +652,7 @@ export default async function handler(
     paymentDescription: paymentDetailForPdf,
     paymentFeeAmount: paymentFeeAmountTotal,
     payments,
+    services: servicesForPdf,
     base_amount:
       receiptTyped.base_amount != null
         ? toNum(receiptTyped.base_amount, 0)

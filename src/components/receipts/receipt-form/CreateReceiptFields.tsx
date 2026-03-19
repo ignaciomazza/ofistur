@@ -15,13 +15,7 @@ import type { Client } from "@/types";
 import Spinner from "@/components/Spinner";
 import { parseAmountInput } from "@/utils/receipts/receiptForm";
 import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
-import {
-  Field,
-  Section,
-  inputBase,
-  pillBase,
-  pillNeutral,
-} from "./primitives";
+import { Field, Section, inputBase, pillBase, pillNeutral } from "./primitives";
 
 type CreditAccountOption = {
   id_credit_account: number;
@@ -29,6 +23,7 @@ type CreditAccountOption = {
   currency?: string;
   enabled?: boolean;
   operator_id?: number;
+  client_id?: number;
 };
 
 type PaymentDraft = {
@@ -41,6 +36,8 @@ type PaymentDraft = {
   fee_value: string;
 
   operator_id: number | null;
+  client_id: number | null;
+  client_credit_mode: "DEBIT" | "CREDIT";
 
   credit_account_id: number | null;
 };
@@ -59,6 +56,7 @@ export default function CreateReceiptFields(props: {
 
   // ✅ id del método crédito (real si existe, o virtual 0)
   creditMethodId: number;
+  clientCreditMethodId: number;
   issueDate: string;
   setIssueDate: (v: string) => void;
 
@@ -117,13 +115,20 @@ export default function CreateReceiptFields(props: {
   getPaymentLineImpact: (key: string) => number;
 
   setPaymentLineOperator: (key: string, operatorId: number | null) => void;
+  setPaymentLineClient: (key: string, clientId: number | null) => void;
+  setPaymentLineClientCreditMode: (
+    key: string,
+    mode: "DEBIT" | "CREDIT",
+  ) => void;
 
   setPaymentLineCreditAccount: (
     key: string,
     creditAccountId: number | null,
   ) => void;
   creditAccountsByOperator: Record<number, CreditAccountOption[]>;
+  creditAccountsByClient: Record<number, CreditAccountOption[]>;
   loadingCreditAccountsByOperator: Record<number, boolean>;
+  loadingCreditAccountsByClient: Record<number, boolean>;
 
   operators: { id_operator: number; name: string }[];
 
@@ -177,6 +182,7 @@ export default function CreateReceiptFields(props: {
   const {
     token,
     creditMethodId,
+    clientCreditMethodId,
     issueDate,
     setIssueDate,
 
@@ -221,10 +227,14 @@ export default function CreateReceiptFields(props: {
     getPaymentLineFee,
     getPaymentLineImpact,
     setPaymentLineOperator,
+    setPaymentLineClient,
+    setPaymentLineClientCreditMode,
 
     setPaymentLineCreditAccount,
     creditAccountsByOperator,
+    creditAccountsByClient,
     loadingCreditAccountsByOperator,
+    loadingCreditAccountsByClient,
 
     operators,
 
@@ -279,7 +289,9 @@ export default function CreateReceiptFields(props: {
     return "—";
   };
   const selectedAllocationCurrency =
-    allocationPaymentCurrencyOptions[0] || selectedServiceCurrencies[0] || "ARS";
+    allocationPaymentCurrencyOptions[0] ||
+    selectedServiceCurrencies[0] ||
+    "ARS";
   const paymentAvailableForSelectedCurrency =
     paymentAvailableForAllocationByCurrency[selectedAllocationCurrency] || 0;
   const normalizeCode = (raw: string | null | undefined) =>
@@ -289,7 +301,9 @@ export default function CreateReceiptFields(props: {
   const allocationSelectableCurrencies = Array.from(
     new Set(
       [
-        ...currencies.filter((c) => c.enabled).map((c) => normalizeCode(c.code)),
+        ...currencies
+          .filter((c) => c.enabled)
+          .map((c) => normalizeCode(c.code)),
         ...allocationPaymentCurrencyOptions.map((code) => normalizeCode(code)),
         selectedAllocationCurrency,
       ].filter(Boolean),
@@ -299,8 +313,9 @@ export default function CreateReceiptFields(props: {
     (acc, service) => {
       const serviceCurrency = normalizeCode(service.currency || "ARS") || "ARS";
       const paymentCurrency =
-        normalizeCode(serviceAllocationPaymentCurrencyById[service.id_service]) ||
-        serviceCurrency;
+        normalizeCode(
+          serviceAllocationPaymentCurrencyById[service.id_service],
+        ) || serviceCurrency;
       const amountService = parseAmountInput(
         serviceAllocationAmountsById[service.id_service] || "",
       );
@@ -309,7 +324,9 @@ export default function CreateReceiptFields(props: {
         serviceAllocationPaymentAmountsById[service.id_service] || "",
       );
       const allocated =
-        amountPayment != null && amountPayment > 0 ? amountPayment : amountService;
+        amountPayment != null && amountPayment > 0
+          ? amountPayment
+          : amountService;
       acc[paymentCurrency] = (acc[paymentCurrency] || 0) + allocated;
       return acc;
     },
@@ -339,6 +356,8 @@ export default function CreateReceiptFields(props: {
     allocated: number;
     delta: number;
   }>;
+  const [clientCreditConfigOpenByKey, setClientCreditConfigOpenByKey] =
+    React.useState<Record<string, boolean>>({});
 
   return (
     <>
@@ -424,9 +443,7 @@ export default function CreateReceiptFields(props: {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-950/70 dark:text-white/70">
               Costo financiero
             </p>
-            <p className="mt-1 text-sm font-semibold">
-              {feeAmount || "—"}
-            </p>
+            <p className="mt-1 text-sm font-semibold">{feeAmount || "—"}</p>
             <p className="mt-1 text-[11px] text-sky-950/65 dark:text-white/65">
               Sumatoria de costos por pago.
             </p>
@@ -436,9 +453,7 @@ export default function CreateReceiptFields(props: {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-950/70 dark:text-white/70">
               Total cliente
             </p>
-            <p className="mt-1 text-sm font-semibold">
-              {clientTotal || "—"}
-            </p>
+            <p className="mt-1 text-sm font-semibold">{clientTotal || "—"}</p>
             <p className="mt-1 text-[11px] text-sky-950/65 dark:text-white/65">
               Cobro + costo financiero.
             </p>
@@ -478,19 +493,29 @@ export default function CreateReceiptFields(props: {
               (m) => m.id_method === line.payment_method_id,
             );
 
-            const isCredit =
+            const isOperatorCredit =
               line.payment_method_id != null &&
               Number(line.payment_method_id) === Number(creditMethodId);
+            const isClientCredit =
+              line.payment_method_id != null &&
+              Number(line.payment_method_id) === Number(clientCreditMethodId);
 
             const requiresAcc = !!method?.requires_account;
 
             const creditAccounts =
-              line.operator_id != null
+              isOperatorCredit && line.operator_id != null
                 ? creditAccountsByOperator[line.operator_id] || []
-                : [];
-            const loadingCredit =
-              line.operator_id != null
+                : isClientCredit && line.client_id != null
+                  ? creditAccountsByClient[line.client_id] || []
+                  : [];
+            const loadingCredit = isOperatorCredit
+              ? line.operator_id != null
                 ? !!loadingCreditAccountsByOperator[line.operator_id]
+                : false
+              : isClientCredit
+                ? line.client_id != null
+                  ? !!loadingCreditAccountsByClient[line.client_id]
+                  : false
                 : false;
             const filteredAccountsForLine = getFilteredAccountsByCurrency(
               line.payment_currency || effectiveCurrency,
@@ -591,9 +616,8 @@ export default function CreateReceiptFields(props: {
                   </div>
 
                   <div className="md:col-span-4">
-                    {isCredit ? (
+                    {isOperatorCredit ? (
                       <div className="space-y-3">
-                        {/* Operador */}
                         <div>
                           <label className="ml-1 block text-sm font-medium">
                             Operador <span className="text-rose-600">*</span>
@@ -644,8 +668,8 @@ export default function CreateReceiptFields(props: {
                             </p>
                           ) : creditAccounts.length === 0 ? (
                             <p className="text-sm text-sky-950/70 dark:text-white/70">
-                              No hay cuentas crédito/corriente para este operador en{" "}
-                              {lineCurrencyForCredit}.
+                              No hay cuentas crédito/corriente para este
+                              operador en {lineCurrencyForCredit}.
                             </p>
                           ) : creditAccounts.length === 1 ? (
                             <div className="rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm">
@@ -705,8 +729,8 @@ export default function CreateReceiptFields(props: {
                             !loadingCredit &&
                             creditAccounts.length === 0 && (
                               <p className="mt-1 text-xs text-sky-950/70 dark:text-white/70">
-                                No hay cuentas crédito/corriente para este operador en{" "}
-                                {lineCurrencyForCredit}.
+                                No hay cuentas crédito/corriente para este
+                                operador en {lineCurrencyForCredit}.
                               </p>
                             )}
                         </div>
@@ -717,6 +741,180 @@ export default function CreateReceiptFields(props: {
                             cobro.
                           </p>
                         )}
+                      </div>
+                    ) : isClientCredit ? (
+                      <div className="space-y-3 rounded-2xl border border-white/15 bg-white/5 p-3">
+                        {(() => {
+                          const hasClientCreditError = Boolean(
+                            errors[`payment_client_${idx}`] ||
+                              errors[`payment_credit_account_${idx}`],
+                          );
+                          const hasClientConfig =
+                            !!line.client_id && !!line.credit_account_id;
+                          const openConfig =
+                            clientCreditConfigOpenByKey[line.key] ??
+                            (hasClientCreditError || !hasClientConfig);
+
+                          return (
+                            <>
+                              <div className="flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setClientCreditConfigOpenByKey((prev) => ({
+                                      ...prev,
+                                      [line.key]: !openConfig,
+                                    }))
+                                  }
+                                  className="shrink-0 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs hover:bg-white/15"
+                                >
+                                  {openConfig ? "Ocultar" : "Configurar"}
+                                </button>
+                              </div>
+
+                              {openConfig && (
+                                <>
+                                  <div>
+                                    <ClientPicker
+                                      token={token}
+                                      placeholder="Cliente pagador..."
+                                      valueId={line.client_id ?? null}
+                                      onSelect={(client) =>
+                                        setPaymentLineClient(
+                                          line.key,
+                                          client.id_client,
+                                        )
+                                      }
+                                      onClear={() =>
+                                        setPaymentLineClient(line.key, null)
+                                      }
+                                      compact
+                                      hideSelectedSummary
+                                    />
+                                    {errors[`payment_client_${idx}`] && (
+                                      <p className="mt-1 text-xs text-red-600">
+                                        {errors[`payment_client_${idx}`]}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div>
+                                    <div className="grid grid-cols-2 gap-1 rounded-full border border-sky-200/70 bg-transparent p-1 dark:border-white/15 dark:bg-white/5">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPaymentLineClientCreditMode(
+                                            line.key,
+                                            "DEBIT",
+                                          )
+                                        }
+                                        className={`rounded-full px-2.5 py-2 text-xs leading-none tracking-wide transition-colors ${
+                                          (line.client_credit_mode ||
+                                            "DEBIT") === "DEBIT"
+                                            ? "border border-sky-200 bg-sky-50/70 text-sky-950 shadow-sm shadow-sky-700/30 dark:border-sky-200/80 dark:bg-sky-200/10 dark:text-sky-200 dark:shadow-sky-950/30"
+                                            : "bg-transparent text-sky-950/70 hover:bg-sky-100/40 dark:text-white/70 dark:hover:bg-white/10"
+                                        }`}
+                                        aria-pressed={
+                                          (line.client_credit_mode ||
+                                            "DEBIT") === "DEBIT"
+                                        }
+                                      >
+                                        Descontar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPaymentLineClientCreditMode(
+                                            line.key,
+                                            "CREDIT",
+                                          )
+                                        }
+                                        className={`rounded-full px-2.5 py-2 text-xs font-medium leading-none transition-colors ${
+                                          (line.client_credit_mode ||
+                                            "DEBIT") === "CREDIT"
+                                            ? "border border-sky-200 bg-sky-50/70 text-sky-950 shadow-sm shadow-sky-700/30 dark:border-sky-200/80 dark:bg-sky-200/10 dark:text-sky-200 dark:shadow-sky-950/30"
+                                            : "bg-transparent text-sky-950/70 hover:bg-sky-100/40 dark:text-white/70 dark:hover:bg-white/10"
+                                        }`}
+                                        aria-pressed={
+                                          (line.client_credit_mode ||
+                                            "DEBIT") === "CREDIT"
+                                        }
+                                      >
+                                        Agregar
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    {loadingCredit ? (
+                                      <div className="flex h-[42px] items-center">
+                                        <Spinner />
+                                      </div>
+                                    ) : !line.client_id ? (
+                                      <p className="text-sm text-sky-950/70 dark:text-white/70">
+                                        Elegí un cliente para ver sus cuentas.
+                                      </p>
+                                    ) : creditAccounts.length === 0 ? (
+                                      <p className="text-sm text-sky-950/70 dark:text-white/70">
+                                        No hay cuentas crédito/corriente para
+                                        este cliente en {lineCurrencyForCredit}.
+                                      </p>
+                                    ) : creditAccounts.length === 1 ? (
+                                      <div className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm">
+                                        {fallbackCreditAccount?.name}
+                                      </div>
+                                    ) : (
+                                      <select
+                                        className={`${inputBase} cursor-pointer appearance-none`}
+                                        value={line.credit_account_id ?? ""}
+                                        onChange={(e) =>
+                                          setPaymentLineCreditAccount(
+                                            line.key,
+                                            e.target.value
+                                              ? Number(e.target.value)
+                                              : null,
+                                          )
+                                        }
+                                        disabled={
+                                          !line.client_id ||
+                                          creditAccounts.length === 0
+                                        }
+                                      >
+                                        <option value="">
+                                          {!line.client_id
+                                            ? "Elegí cliente primero…"
+                                            : creditAccounts.length
+                                              ? "Seleccionar cuenta…"
+                                              : "No hay cuentas"}
+                                        </option>
+                                        {creditAccounts.map((a) => (
+                                          <option
+                                            key={a.id_credit_account}
+                                            value={a.id_credit_account}
+                                          >
+                                            {a.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+
+                                    {errors[
+                                      `payment_credit_account_${idx}`
+                                    ] && (
+                                      <p className="mt-1 text-xs text-red-600">
+                                        {
+                                          errors[
+                                            `payment_credit_account_${idx}`
+                                          ]
+                                        }
+                                      </p>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     ) : requiresAcc ? (
                       <>
@@ -787,7 +985,10 @@ export default function CreateReceiptFields(props: {
                         {currencies
                           .filter((c) => c.enabled)
                           .map((c) => (
-                            <option key={`${line.key}-${c.code}`} value={c.code}>
+                            <option
+                              key={`${line.key}-${c.code}`}
+                              value={c.code}
+                            >
                               {c.code} {c.name ? `— ${c.name}` : ""}
                             </option>
                           ))}
@@ -927,7 +1128,8 @@ export default function CreateReceiptFields(props: {
             </div>
             {hasMixedPaymentCurrencies ? (
               <p className="mt-2 text-[10px] opacity-70">
-                Con cobro en múltiples monedas, cargá el contravalor manualmente.
+                Con cobro en múltiples monedas, cargá el contravalor
+                manualmente.
               </p>
             ) : (
               <p className="mt-2 text-[10px] opacity-70">
@@ -966,7 +1168,10 @@ export default function CreateReceiptFields(props: {
                   setBaseCurrency(nextCurrency);
                   if (baseAmount) {
                     setBaseAmount(
-                      formatMoneyInput(baseAmount, nextCurrency || lockedCurrency),
+                      formatMoneyInput(
+                        baseAmount,
+                        nextCurrency || lockedCurrency,
+                      ),
                     );
                   }
                 }}
@@ -1005,10 +1210,7 @@ export default function CreateReceiptFields(props: {
                     ),
                   )
                 }
-                placeholder={formatNum(
-                  0,
-                  counterCurrency || effectiveCurrency,
-                )}
+                placeholder={formatNum(0, counterCurrency || effectiveCurrency)}
                 className={inputBase}
               />
               <select
@@ -1018,7 +1220,10 @@ export default function CreateReceiptFields(props: {
                   setCounterCurrency(nextCurrency);
                   if (counterAmount) {
                     setCounterAmount(
-                      formatMoneyInput(counterAmount, nextCurrency || effectiveCurrency),
+                      formatMoneyInput(
+                        counterAmount,
+                        nextCurrency || effectiveCurrency,
+                      ),
                     );
                   }
                 }}
@@ -1078,7 +1283,9 @@ export default function CreateReceiptFields(props: {
                 <span
                   className={[
                     "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
-                    manualServiceAllocationsEnabled ? "translate-x-5" : "translate-x-1",
+                    manualServiceAllocationsEnabled
+                      ? "translate-x-5"
+                      : "translate-x-1",
                   ].join(" ")}
                 />
               </button>
@@ -1090,203 +1297,224 @@ export default function CreateReceiptFields(props: {
               </p>
             )}
 
-            {manualServiceAllocationsEnabled && allocationServices.length > 0 && (
-              <>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap gap-2">
-                      {(
-                        [
-                          { value: "manual", label: "Manual" },
-                          {
-                            value: "split_payment",
-                            label: "Dividir monto del pago",
-                          },
-                          { value: "use_costs", label: "Usar costos" },
-                        ] as Array<{
-                          value: ServiceAllocationPresetMode;
-                          label: string;
-                        }>
-                      ).map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => applyServiceAllocationPreset(opt.value)}
-                          className={[
-                            "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                            serviceAllocationPresetMode === opt.value
-                              ? "border-sky-300/60 bg-sky-500/15 text-sky-700 dark:text-sky-200"
-                              : "border-white/20 bg-white/10 text-sky-950/80 hover:bg-white/15 dark:text-white/80",
-                          ].join(" ")}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
+            {manualServiceAllocationsEnabled &&
+              allocationServices.length > 0 && (
+                <>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        {(
+                          [
+                            { value: "manual", label: "Manual" },
+                            {
+                              value: "split_payment",
+                              label: "Dividir monto del pago",
+                            },
+                            { value: "use_costs", label: "Usar costos" },
+                          ] as Array<{
+                            value: ServiceAllocationPresetMode;
+                            label: string;
+                          }>
+                        ).map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() =>
+                              applyServiceAllocationPreset(opt.value)
+                            }
+                            className={[
+                              "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                              serviceAllocationPresetMode === opt.value
+                                ? "border-sky-300/60 bg-sky-500/15 text-sky-700 dark:text-sky-200"
+                                : "border-white/20 bg-white/10 text-sky-950/80 hover:bg-white/15 dark:text-white/80",
+                            ].join(" ")}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between">
+                      <p className="text-xs text-sky-950/70 dark:text-white/70">
+                        Disponible (cobro + CF) en {selectedAllocationCurrency}:{" "}
+                        {formatNum(
+                          paymentAvailableForSelectedCurrency,
+                          selectedAllocationCurrency,
+                        )}
+                      </p>
                     </div>
                   </div>
 
-                  <div className="mt-3 flex items-center justify-between">
-                    <p className="text-xs text-sky-950/70 dark:text-white/70">
-                      Disponible (cobro + CF) en {selectedAllocationCurrency}:{" "}
-                      {formatNum(
-                        paymentAvailableForSelectedCurrency,
-                        selectedAllocationCurrency,
-                      )}
-                    </p>
+                  {allocationDeltaWarnings.length > 0 && (
+                    <div className="rounded-2xl border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                      {allocationDeltaWarnings.map((warn) => (
+                        <p key={`alloc-delta-${warn.code}`}>
+                          En {warn.code}: asignado{" "}
+                          <b>{formatNum(warn.allocated, warn.code)}</b> vs
+                          cobro+CF <b>{formatNum(warn.available, warn.code)}</b>{" "}
+                          ({warn.delta > 0 ? "exceso" : "faltante"}{" "}
+                          {formatNum(Math.abs(warn.delta), warn.code)}).
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    {allocationServices.map((service) => {
+                      const serviceCurrency = (
+                        service.currency || "ARS"
+                      ).toUpperCase();
+                      const paymentCurrency = (
+                        serviceAllocationPaymentCurrencyById[
+                          service.id_service
+                        ] ||
+                        allocationPaymentCurrencyOptions[0] ||
+                        effectiveCurrency ||
+                        serviceCurrency
+                      ).toUpperCase();
+                      const paymentBudget =
+                        paymentAvailableForAllocationByCurrency[
+                          paymentCurrency
+                        ] || 0;
+                      const rawSale = Number(service.sale_price ?? 0);
+                      const sale = Number.isFinite(rawSale) ? rawSale : 0;
+                      const paymentCurrencyWithoutPayment =
+                        !allocationPaymentCurrencyOptions.includes(
+                          paymentCurrency,
+                        );
+                      return (
+                        <div
+                          key={`alloc-${service.id_service}`}
+                          className="rounded-2xl border border-white/10 bg-white/5 p-4"
+                        >
+                          <div className="mb-3 text-sm font-medium">
+                            Servicio interno N°{" "}
+                            {service.agency_service_id != null
+                              ? service.agency_service_id
+                              : "—"}{" "}
+                            {service.type
+                              ? `· ${service.type}`
+                              : service.description || "Servicio"}
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
+                            <div className="md:col-span-4">
+                              <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                                Monto servicio ({serviceCurrency})
+                              </label>
+                              <input
+                                inputMode="decimal"
+                                value={
+                                  serviceAllocationAmountsById[
+                                    service.id_service
+                                  ] || ""
+                                }
+                                onChange={(e) =>
+                                  setServiceAllocationAmount(
+                                    service.id_service,
+                                    formatMoneyInput(
+                                      e.target.value,
+                                      serviceCurrency,
+                                      {
+                                        preferDotDecimal:
+                                          shouldPreferDotDecimal(e),
+                                      },
+                                    ),
+                                  )
+                                }
+                                placeholder={formatNum(0, serviceCurrency)}
+                                className={inputBase}
+                              />
+                            </div>
+
+                            <div className="md:col-span-3">
+                              <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                                Moneda cobro
+                              </label>
+                              <select
+                                value={paymentCurrency}
+                                onChange={(e) =>
+                                  setServiceAllocationPaymentCurrency(
+                                    service.id_service,
+                                    e.target.value,
+                                  )
+                                }
+                                className={`${inputBase} cursor-pointer appearance-none`}
+                              >
+                                {allocationSelectableCurrencies.map((code) => (
+                                  <option
+                                    key={`alloc-cur-${service.id_service}-${code}`}
+                                    value={code}
+                                  >
+                                    {code}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="md:col-span-5">
+                              {paymentCurrency !== serviceCurrency && (
+                                <>
+                                  <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                                    Contravalor ({paymentCurrency})
+                                  </label>
+                                  <input
+                                    inputMode="decimal"
+                                    value={
+                                      serviceAllocationPaymentAmountsById[
+                                        service.id_service
+                                      ] || ""
+                                    }
+                                    onChange={(e) =>
+                                      setServiceAllocationPaymentAmount(
+                                        service.id_service,
+                                        formatMoneyInput(
+                                          e.target.value,
+                                          paymentCurrency,
+                                          {
+                                            preferDotDecimal:
+                                              shouldPreferDotDecimal(e),
+                                          },
+                                        ),
+                                      )
+                                    }
+                                    placeholder={formatNum(0, paymentCurrency)}
+                                    className={inputBase}
+                                  />
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                            <span className={`${pillBase} ${pillNeutral}`}>
+                              Venta: {formatNum(sale, serviceCurrency)}
+                            </span>
+                            <span className={`${pillBase} ${pillNeutral}`}>
+                              Presupuesto:{" "}
+                              {formatNum(paymentBudget, paymentCurrency)}
+                            </span>
+                          </div>
+                          {paymentCurrencyWithoutPayment && (
+                            <p className="mt-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                              No hay pagos directos en {paymentCurrency}. Cargá
+                              contravalor y verificá que la conversión por
+                              servicio cierre contra cobros y conversión
+                              general.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-
-                {allocationDeltaWarnings.length > 0 && (
-                  <div className="rounded-2xl border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-                    {allocationDeltaWarnings.map((warn) => (
-                      <p key={`alloc-delta-${warn.code}`}>
-                        En {warn.code}: asignado{" "}
-                        <b>{formatNum(warn.allocated, warn.code)}</b> vs cobro+CF{" "}
-                        <b>{formatNum(warn.available, warn.code)}</b>{" "}
-                        ({warn.delta > 0 ? "exceso" : "faltante"}{" "}
-                        {formatNum(Math.abs(warn.delta), warn.code)}).
-                      </p>
-                    ))}
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  {allocationServices.map((service) => {
-                    const serviceCurrency = (
-                      service.currency || "ARS"
-                    ).toUpperCase();
-                    const paymentCurrency = (
-                      serviceAllocationPaymentCurrencyById[service.id_service] ||
-                      allocationPaymentCurrencyOptions[0] ||
-                      effectiveCurrency ||
-                      serviceCurrency
-                    ).toUpperCase();
-                    const paymentBudget =
-                      paymentAvailableForAllocationByCurrency[paymentCurrency] || 0;
-                    const rawSale = Number(service.sale_price ?? 0);
-                    const sale = Number.isFinite(rawSale) ? rawSale : 0;
-                    const paymentCurrencyWithoutPayment =
-                      !allocationPaymentCurrencyOptions.includes(paymentCurrency);
-                    return (
-                      <div
-                        key={`alloc-${service.id_service}`}
-                        className="rounded-2xl border border-white/10 bg-white/5 p-4"
-                      >
-                        <div className="mb-3 text-sm font-medium">
-                          Servicio interno N°{" "}
-                          {service.agency_service_id != null
-                            ? service.agency_service_id
-                            : "—"}{" "}
-                          {service.type
-                            ? `· ${service.type}`
-                            : service.description || "Servicio"}
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
-                          <div className="md:col-span-4">
-                            <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
-                              Monto servicio ({serviceCurrency})
-                            </label>
-                            <input
-                              inputMode="decimal"
-                              value={
-                                serviceAllocationAmountsById[service.id_service] || ""
-                              }
-                              onChange={(e) =>
-                                setServiceAllocationAmount(
-                                  service.id_service,
-                                  formatMoneyInput(e.target.value, serviceCurrency, {
-                                    preferDotDecimal: shouldPreferDotDecimal(e),
-                                  }),
-                                )
-                              }
-                              placeholder={formatNum(0, serviceCurrency)}
-                              className={inputBase}
-                            />
-                          </div>
-
-                          <div className="md:col-span-3">
-                            <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
-                              Moneda cobro
-                            </label>
-                            <select
-                              value={paymentCurrency}
-                              onChange={(e) =>
-                                setServiceAllocationPaymentCurrency(
-                                  service.id_service,
-                                  e.target.value,
-                                )
-                              }
-                              className={`${inputBase} cursor-pointer appearance-none`}
-                            >
-                              {allocationSelectableCurrencies.map((code) => (
-                                <option
-                                  key={`alloc-cur-${service.id_service}-${code}`}
-                                  value={code}
-                                >
-                                  {code}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="md:col-span-5">
-                            {paymentCurrency !== serviceCurrency && (
-                              <>
-                                <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
-                                  Contravalor ({paymentCurrency})
-                                </label>
-                                <input
-                                  inputMode="decimal"
-                                  value={
-                                    serviceAllocationPaymentAmountsById[
-                                      service.id_service
-                                    ] || ""
-                                  }
-                                  onChange={(e) =>
-                                    setServiceAllocationPaymentAmount(
-                                      service.id_service,
-                                      formatMoneyInput(
-                                        e.target.value,
-                                        paymentCurrency,
-                                        {
-                                          preferDotDecimal: shouldPreferDotDecimal(e),
-                                        },
-                                      ),
-                                    )
-                                  }
-                                  placeholder={formatNum(0, paymentCurrency)}
-                                  className={inputBase}
-                                />
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                          <span className={`${pillBase} ${pillNeutral}`}>
-                            Venta: {formatNum(sale, serviceCurrency)}
-                          </span>
-                          <span className={`${pillBase} ${pillNeutral}`}>
-                            Presupuesto: {formatNum(paymentBudget, paymentCurrency)}
-                          </span>
-                        </div>
-                        {paymentCurrencyWithoutPayment && (
-                          <p className="mt-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-                            No hay pagos directos en {paymentCurrency}. Cargá
-                            contravalor y verificá que la conversión por servicio
-                            cierre contra cobros y conversión general.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+                </>
+              )}
 
             {errors.service_allocations && (
-              <p className="text-xs text-red-600">{errors.service_allocations}</p>
+              <p className="text-xs text-red-600">
+                {errors.service_allocations}
+              </p>
             )}
           </div>
         </Section>

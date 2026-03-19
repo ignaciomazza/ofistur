@@ -65,14 +65,19 @@ export async function createClientCreditEntryForReceipt(args: {
   bookingId?: number | null;
   clientId: number;
   agencyId?: number | null;
+  creditAccountId?: number | null;
+  docType?: "receipt" | "adjust_up" | "adjust_down";
 }) {
   const payload: Record<string, unknown> = {
     subject_type: "CLIENT",
     client_id: Number(args.clientId),
+    ...(args.creditAccountId != null
+      ? { account_id: Number(args.creditAccountId) }
+      : {}),
     currency: (args.currency || "ARS").toUpperCase(),
     amount: Math.abs(Number(args.amount || 0)),
     concept: args.concept || `Recibo N° ${args.receiptId}`,
-    doc_type: "receipt",
+    doc_type: args.docType || "receipt",
     receipt_id: args.receiptId,
     booking_id: args.bookingId ?? undefined,
     reference: `REC-${args.receiptId}`,

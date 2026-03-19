@@ -159,18 +159,25 @@ const formatServiceRange = (svc: {
   return "—";
 };
 
-const CREDIT_METHOD_LABEL = "Crédito/corriente operador";
-const VIRTUAL_CREDIT_METHOD_ID = 999000000;
+const OPERATOR_CREDIT_METHOD_LABEL = "Crédito/corriente operador";
+const CLIENT_CREDIT_METHOD_LABEL = "Crédito/corriente cliente";
+const VIRTUAL_OPERATOR_CREDIT_METHOD_ID = 999000000;
+const VIRTUAL_CLIENT_CREDIT_METHOD_ID = 999000001;
 
 const paymentLabel = (p: ReceiptPdfPaymentLine) => {
-  const isVirtualCredit =
+  const isVirtualOperatorCredit =
     typeof p.payment_method_id === "number" &&
-    p.payment_method_id >= VIRTUAL_CREDIT_METHOD_ID;
+    p.payment_method_id === VIRTUAL_OPERATOR_CREDIT_METHOD_ID;
+  const isVirtualClientCredit =
+    typeof p.payment_method_id === "number" &&
+    p.payment_method_id === VIRTUAL_CLIENT_CREDIT_METHOD_ID;
 
   const pm =
     (p.paymentMethodName && p.paymentMethodName.trim()) ||
-    (isVirtualCredit
-      ? CREDIT_METHOD_LABEL
+    (isVirtualOperatorCredit
+      ? OPERATOR_CREDIT_METHOD_LABEL
+      : isVirtualClientCredit
+        ? CLIENT_CREDIT_METHOD_LABEL
       : p.payment_method_id
         ? `Método N° ${p.payment_method_id}`
         : "Método");

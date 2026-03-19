@@ -16,6 +16,8 @@ type Props = {
   excludeIds?: number[]; // ids que no se pueden seleccionar (p.ej. titular o duplicados)
   disabled?: boolean;
   required?: boolean;
+  compact?: boolean;
+  hideSelectedSummary?: boolean;
 };
 
 export default function ClientPicker({
@@ -28,6 +30,8 @@ export default function ClientPicker({
   excludeIds = [],
   disabled,
   required,
+  compact = false,
+  hideSelectedSummary = false,
 }: Props) {
   const [term, setTerm] = useState<string>("");
   const [results, setResults] = useState<Client[]>([]);
@@ -171,8 +175,9 @@ export default function ClientPicker({
     onClear?.();
   };
 
-  const inputBase =
-    "w-full appearance-none rounded-2xl border border-sky-200 bg-white/50 p-2 px-3 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:font-light placeholder:tracking-wide dark:bg-sky-100/10 dark:border-sky-200/60 dark:text-white";
+  const inputBase = compact
+    ? "w-full appearance-none rounded-xl border border-sky-200 bg-white/50 p-2 px-3 text-sm outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:font-light placeholder:tracking-wide dark:bg-sky-100/10 dark:border-sky-200/60 dark:text-white"
+    : "w-full appearance-none rounded-2xl border border-sky-200 bg-white/50 p-2 px-3 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:font-light placeholder:tracking-wide dark:bg-sky-100/10 dark:border-sky-200/60 dark:text-white";
 
   return (
     <div className="relative">
@@ -206,10 +211,14 @@ export default function ClientPicker({
           <button
             type="button"
             onClick={clear}
-            className="rounded-2xl bg-sky-100 px-6 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur"
+            className={
+              compact
+                ? "rounded-xl bg-sky-100 px-3 py-2 text-xs text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur"
+                : "rounded-2xl bg-sky-100 px-6 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur"
+            }
             title="Limpiar selección"
           >
-            Limpiar
+            {compact ? "Limpiar" : "Limpiar"}
           </button>
         )}
       </div>
@@ -245,7 +254,7 @@ export default function ClientPicker({
       )}
 
       {/* Resumen del seleccionado */}
-      {selected && (
+      {selected && !hideSelectedSummary && (
         <div className="mt-2 rounded-xl border border-white/10 bg-white/10 p-2 px-3 text-sm dark:text-white">
           <div className="flex justify-between">
             <span className="font-semibold">
