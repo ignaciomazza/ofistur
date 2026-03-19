@@ -145,6 +145,10 @@ type OperatorPaymentSummaryItem = {
   amount: number;
   booking_amount: number | null;
   currency: string;
+  base_amount: number | null;
+  base_currency: string | null;
+  counter_amount: number | null;
+  counter_currency: string | null;
   operator_id: number | null;
   serviceIds: number[];
   allocations: OperatorPaymentAllocationSummary[];
@@ -339,6 +343,18 @@ function formatCurrencySafe(value: number, currency: string): string {
 
 const PAYMENT_TOLERANCE = 0.01;
 
+const parseOptionalAmount = (value: unknown): number | null => {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
+const parseOptionalCurrency = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? normalizeCurrencyCode(trimmed) : null;
+};
+
 function parseOperatorPaymentSummaryItem(
   raw: unknown,
 ): OperatorPaymentSummaryItem | null {
@@ -351,6 +367,10 @@ function parseOperatorPaymentSummaryItem(
   const bookingAmount =
     bookingAmountRaw == null ? null : toNum(bookingAmountRaw as number | string);
   const currency = normalizeCurrencyCode(String(raw.currency || "ARS"));
+  const baseCurrency = parseOptionalCurrency(raw.base_currency);
+  const counterCurrency = parseOptionalCurrency(raw.counter_currency);
+  const baseAmountRaw = parseOptionalAmount(raw.base_amount);
+  const counterAmountRaw = parseOptionalAmount(raw.counter_amount);
   const operatorId = toPositiveInt(raw.operator_id);
   const serviceIds = parseServiceIdArray(raw.serviceIds);
 
@@ -381,6 +401,10 @@ function parseOperatorPaymentSummaryItem(
     amount,
     booking_amount: bookingAmount,
     currency,
+    base_amount: baseCurrency != null ? baseAmountRaw : null,
+    base_currency: baseCurrency,
+    counter_amount: counterCurrency != null ? counterAmountRaw : null,
+    counter_currency: counterCurrency,
     operator_id: operatorId,
     serviceIds,
     allocations,
@@ -1327,9 +1351,9 @@ export default function SummaryCard({
         });
         if (usedAllocations) return;
 
-        const amount =
+        const scopedAmount =
           payment.booking_amount != null ? payment.booking_amount : payment.amount;
-        if (Math.abs(amount) <= PAYMENT_TOLERANCE) return;
+        if (Math.abs(scopedAmount) <= PAYMENT_TOLERANCE) return;
 
         const paymentCurrency = normalizeCurrencyCode(payment.currency || "ARS");
         let targetServiceIds = payment.serviceIds.filter((id) =>
@@ -1347,15 +1371,75 @@ export default function SummaryCard({
           );
         }
         if (targetServiceIds.length === 0) {
-          addPaid(null, paymentCurrency, amount);
+          addPaid(null, paymentCurrency, scopedAmount);
           return;
         }
 
-        const sameCurrencyTargets = targetServiceIds.filter(
-          (id) => serviceMeta.get(id)?.currency === paymentCurrency,
+        const fullAmount = payment.amount;
+        const rawScopeRatio =
+          payment.booking_amount != null && Math.abs(fullAmount) > PAYMENT_TOLERANCE
+            ? scopedAmount / fullAmount
+            : 1;
+        const scopeRatio =
+          Number.isFinite(rawScopeRatio) && rawScopeRatio > 0
+            ? rawScopeRatio
+            : 1;
+        const scaleAmount = (value: number | null): number | null => {
+          if (value == null) return null;
+          const scaled = value * scopeRatio;
+          return Number.isFinite(scaled) ? scaled : null;
+        };
+
+        const baseCurrency = payment.base_currency
+          ? normalizeCurrencyCode(payment.base_currency)
+          : null;
+        const counterCurrency = payment.counter_currency
+          ? normalizeCurrencyCode(payment.counter_currency)
+          : null;
+        const scopedBaseAmount = scaleAmount(payment.base_amount);
+        const scopedCounterAmount = scaleAmount(payment.counter_amount);
+
+        const amountForCurrency = (targetCurrency: string): number | null => {
+          const normalized = normalizeCurrencyCode(targetCurrency);
+          if (
+            baseCurrency &&
+            normalized === baseCurrency &&
+            scopedBaseAmount != null &&
+            Math.abs(scopedBaseAmount) > PAYMENT_TOLERANCE
+          ) {
+            return scopedBaseAmount;
+          }
+          if (
+            counterCurrency &&
+            normalized === counterCurrency &&
+            scopedCounterAmount != null &&
+            Math.abs(scopedCounterAmount) > PAYMENT_TOLERANCE
+          ) {
+            return scopedCounterAmount;
+          }
+          if (normalized === paymentCurrency) return scopedAmount;
+          return null;
+        };
+
+        const candidateCurrencies = Array.from(
+          new Set(
+            [paymentCurrency, baseCurrency, counterCurrency].filter(
+              (cur): cur is string => Boolean(cur),
+            ),
+          ),
         );
-        if (sameCurrencyTargets.length > 0) {
+
+        let amountToAllocate = scopedAmount;
+        for (const targetCurrency of candidateCurrencies) {
+          const sameCurrencyTargets = targetServiceIds.filter(
+            (id) => serviceMeta.get(id)?.currency === targetCurrency,
+          );
+          if (sameCurrencyTargets.length === 0) continue;
+          const resolvedAmount = amountForCurrency(targetCurrency);
+          if (resolvedAmount == null) continue;
           targetServiceIds = sameCurrencyTargets;
+          amountToAllocate = resolvedAmount;
+          break;
         }
 
         const weights = targetServiceIds.map((id) => {
@@ -1371,8 +1455,8 @@ export default function SummaryCard({
           if (!meta) return;
           const allocated =
             weightSum > 0
-              ? (amount * weights[idx]) / weightSum
-              : amount / targetServiceIds.length;
+              ? (amountToAllocate * weights[idx]) / weightSum
+              : amountToAllocate / targetServiceIds.length;
           addPaid(id, meta.currency, allocated);
         });
       });
