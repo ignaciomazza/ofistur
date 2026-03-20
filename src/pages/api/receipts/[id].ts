@@ -838,6 +838,10 @@ export default async function handler(
   }
   const auth = authUser as DecodedUser;
 
+  if (decoded && decoded.a !== authAgencyId) {
+    return res.status(403).json({ error: "Sin permisos" });
+  }
+
   const financeGrants = await getFinanceSectionGrants(
     authAgencyId,
     authUserId,
@@ -860,7 +864,13 @@ export default async function handler(
   const id = decoded
     ? (
         await prisma.receipt.findFirst({
-          where: { id_agency: authAgencyId, agency_receipt_id: decoded.i },
+          where: {
+            agency_receipt_id: decoded.i,
+            OR: [
+              { id_agency: authAgencyId },
+              { booking: { id_agency: authAgencyId } },
+            ],
+          },
           select: { id_receipt: true },
         })
       )?.id_receipt
@@ -1341,7 +1351,7 @@ export default async function handler(
           where: { id_receipt: id },
           data: {
             booking: { connect: { id_booking: bookingId } },
-            agency: { disconnect: true },
+            agency: { connect: { id_agency: authAgencyId } },
             serviceIds: resolvedServiceIds,
             service_allocations: { deleteMany: {} },
             ...(nextClientIds !== undefined ? { clientIds: nextClientIds } : {}),

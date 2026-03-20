@@ -361,7 +361,13 @@ export default async function handler(
   // 1) Recibo + relaciones
   const receipt = await prisma.receipt.findFirst({
     where: decoded
-      ? { id_agency: decoded.a, agency_receipt_id: decoded.i }
+      ? {
+          agency_receipt_id: decoded.i,
+          OR: [
+            { id_agency: decoded.a },
+            { booking: { id_agency: decoded.a } },
+          ],
+        }
       : {
           id_receipt: parsedId,
           OR: [

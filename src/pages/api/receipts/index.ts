@@ -1191,22 +1191,99 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
     // 2) Búsqueda libre
     if (q) {
       const maybeNum = Number(q);
-      whereAND.push({
-        OR: [
-          { concept: { contains: q, mode: "insensitive" } },
-          { amount_string: { contains: q, mode: "insensitive" } },
-          { receipt_number: { contains: q, mode: "insensitive" } },
-          ...(Number.isFinite(maybeNum)
-            ? [{ agency_receipt_id: maybeNum }]
-            : []),
-          ...(Number.isFinite(maybeNum)
-            ? [
-                { booking: { id_booking: maybeNum } },
-                { booking: { agency_booking_id: maybeNum } },
-              ]
-            : []),
-        ],
-      });
+      const freeSearchOr: Prisma.ReceiptWhereInput[] = [
+        { concept: { contains: q, mode: "insensitive" } },
+        { amount_string: { contains: q, mode: "insensitive" } },
+        { receipt_number: { contains: q, mode: "insensitive" } },
+        ...(Number.isFinite(maybeNum) ? [{ agency_receipt_id: maybeNum }] : []),
+        ...(Number.isFinite(maybeNum)
+          ? [
+              { booking: { id_booking: maybeNum } },
+              { booking: { agency_booking_id: maybeNum } },
+            ]
+          : []),
+      ];
+
+      const term = q.trim();
+      const words = term.split(/\s+/).filter(Boolean);
+      const clientSearchFilters: Prisma.ClientWhereInput[] = [];
+
+      if (term.length >= 2) {
+        clientSearchFilters.push(
+          { first_name: { contains: term, mode: "insensitive" } },
+          { last_name: { contains: term, mode: "insensitive" } },
+          { company_name: { contains: term, mode: "insensitive" } },
+          { email: { contains: term, mode: "insensitive" } },
+          { dni_number: { contains: term, mode: "insensitive" } },
+          { passport_number: { contains: term, mode: "insensitive" } },
+          { tax_id: { contains: term, mode: "insensitive" } },
+        );
+      }
+
+      if (words.length >= 2) {
+        const firstWord = words[0];
+        const restWords = words.slice(1).join(" ");
+        if (firstWord && restWords) {
+          clientSearchFilters.push(
+            {
+              AND: [
+                { first_name: { contains: firstWord, mode: "insensitive" } },
+                { last_name: { contains: restWords, mode: "insensitive" } },
+              ],
+            },
+            {
+              AND: [
+                { first_name: { contains: restWords, mode: "insensitive" } },
+                { last_name: { contains: firstWord, mode: "insensitive" } },
+              ],
+            },
+          );
+        }
+      }
+
+      if (Number.isFinite(maybeNum) && maybeNum > 0) {
+        clientSearchFilters.push(
+          { id_client: maybeNum },
+          { agency_client_id: maybeNum },
+        );
+      }
+
+      if (clientSearchFilters.length > 0) {
+        const matchedClients = await prisma.client.findMany({
+          where: {
+            id_agency: authAgencyId,
+            OR: clientSearchFilters,
+          },
+          select: { id_client: true },
+          take: 250,
+        });
+
+        const matchedClientIds = Array.from(
+          new Set(
+            matchedClients
+              .map((client) => Number(client.id_client))
+              .filter((id) => Number.isFinite(id) && id > 0),
+          ),
+        );
+
+        if (matchedClientIds.length > 0) {
+          freeSearchOr.push({
+            OR: [
+              { clientIds: { hasSome: matchedClientIds } },
+              {
+                booking: {
+                  OR: [
+                    { titular_id: { in: matchedClientIds } },
+                    { clients: { some: { id_client: { in: matchedClientIds } } } },
+                  ],
+                },
+              },
+            ],
+          });
+        }
+      }
+
+      whereAND.push({ OR: freeSearchOr });
     }
 
     // 3) Filtros por moneda / texto

@@ -1685,7 +1685,7 @@ export default function ReceiptsPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleSearch();
               }}
-              placeholder="Buscar por N° recibo, concepto o N° reserva..."
+              placeholder="Buscar por N° recibo, concepto, N° reserva o pax..."
             />
             <button
               type="button"
