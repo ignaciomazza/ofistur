@@ -1,7 +1,7 @@
 // src/components/templates/TemplatePdfDownload.tsx
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { pdf } from "@react-pdf/renderer";
 import {
   Variant,
@@ -384,6 +384,10 @@ const isDataViewRangeError = (err: unknown) => {
     /Offset is outside/i.test(String(m))
   );
 };
+
+function isDataImageUrl(src: string): boolean {
+  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(src);
+}
 /* ========================================================================
  * Búsqueda de bloque ofensivo (texto)
  * ====================================================================== */
@@ -439,6 +443,62 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
   } = props;
 
   const [busy, setBusy] = useState(false);
+  const imageSrcCacheRef = useRef<Map<string, string>>(new Map());
+
+  const resolveImageSourceForPdf = useCallback(
+    async (rawSrc?: string | null): Promise<string> => {
+      const src = String(rawSrc ?? "").trim();
+      if (!src || isDataImageUrl(src)) return src;
+
+      let parsed: URL;
+      try {
+        parsed = new URL(src, window.location.origin);
+      } catch {
+        return src;
+      }
+
+      // Evitamos proxy para recursos locales/same-origin.
+      if (parsed.origin === window.location.origin) return src;
+
+      const absoluteSrc = parsed.toString();
+      const cached = imageSrcCacheRef.current.get(absoluteSrc);
+      if (cached) return cached;
+
+      try {
+        const res = await fetch(
+          `/api/pdf/image-proxy?url=${encodeURIComponent(absoluteSrc)}`,
+          {
+            method: "GET",
+            credentials: "include",
+          },
+        );
+        if (!res.ok) {
+          if (debug) {
+            console.warn(
+              "[PDF] image-proxy non-ok:",
+              absoluteSrc,
+              "status",
+              res.status,
+            );
+          }
+          return src;
+        }
+        const json = (await res.json()) as { dataUrl?: unknown };
+        const dataUrl =
+          typeof json.dataUrl === "string" ? json.dataUrl.trim() : "";
+        if (!dataUrl || !isDataImageUrl(dataUrl)) return src;
+
+        imageSrcCacheRef.current.set(absoluteSrc, dataUrl);
+        return dataUrl;
+      } catch (error) {
+        if (debug) {
+          console.warn("[PDF] image-proxy error:", absoluteSrc, error);
+        }
+        return src;
+      }
+    },
+    [debug],
+  );
 
   // Fallbacks desde cfg
   const selectedCoverUrlFromCfg = cfg?.coverImage?.url || "";
@@ -484,8 +544,19 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
   );
 
   const buildOnce = useCallback(
-    async (variant: Variant, why: string) => {
+    async (
+      variant: Variant,
+      why: string,
+      docOverrides?: {
+        agency?: Partial<Agency>;
+        selectedCoverUrl?: string;
+      },
+    ) => {
       const sanitized = sanitizeBlocks(effectiveBlocks, variant);
+      const docAgency = docOverrides?.agency ?? agency;
+      const docCoverUrl =
+        docOverrides?.selectedCoverUrl ??
+        (selectedCoverUrl ?? selectedCoverUrlFromCfg);
 
       if (debug) {
         console.groupCollapsed(
@@ -507,11 +578,14 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       const doc = (
         <TemplatePdfDocument
           rCfg={cfg}
-          rAgency={{ ...(agency || {}), logo_url: agency.logo_url }}
+          rAgency={{
+            ...(docAgency || {}),
+            logo_url: docAgency?.logo_url,
+          }}
           rUser={user}
           blocks={sanitized}
           docLabel={docLabel}
-          selectedCoverUrl={selectedCoverUrl ?? selectedCoverUrlFromCfg}
+          selectedCoverUrl={docCoverUrl}
           paymentSelected={paymentSelected ?? paymentSelectedFromCfg}
         />
       );
@@ -546,9 +620,32 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
         return;
       }
 
+      const coverSource = selectedCoverUrl ?? selectedCoverUrlFromCfg;
+      const [resolvedLogoSrc, resolvedCoverSrc] = await Promise.all([
+        resolveImageSourceForPdf(agency.logo_url),
+        resolveImageSourceForPdf(coverSource),
+      ]);
+      const docAgency: Partial<Agency> = {
+        ...(agency || {}),
+        logo_url: resolvedLogoSrc,
+      };
+      const docPropsForRun: Omit<TemplatePdfDownloadProps, "blocks"> = {
+        ...baseDocProps,
+        agency: docAgency,
+        selectedCoverUrl: resolvedCoverSrc,
+      };
+      const docOverrides = {
+        agency: docAgency,
+        selectedCoverUrl: resolvedCoverSrc,
+      };
+
       // 1) Multilínea completa
       try {
-        const blob = await buildOnce("full", "multilínea completa");
+        const blob = await buildOnce(
+          "full",
+          "multilínea completa",
+          docOverrides,
+        );
         saveBlob(blob, fileName);
         if (onDownloaded) await onDownloaded(fileName);
         return;
@@ -560,7 +657,11 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
 
       // 2) Soft (recorta saltos en blanco)
       try {
-        const blob = await buildOnce("soft", "recorte de saltos en blanco");
+        const blob = await buildOnce(
+          "soft",
+          "recorte de saltos en blanco",
+          docOverrides,
+        );
         saveBlob(blob, fileName);
         if (onDownloaded) await onDownloaded(fileName);
         return;
@@ -572,7 +673,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
 
       // 3) Hard (single-line)
       try {
-        const blob = await buildOnce("hard", "forzado single-line");
+        const blob = await buildOnce("hard", "forzado single-line", docOverrides);
         saveBlob(blob, fileName);
         if (onDownloaded) await onDownloaded(fileName);
         return;
@@ -585,7 +686,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       // 5) Diagnóstico por bloque (texto)
       if (debug) console.log("[PDF][DIAG] starting offender search…");
       const fullSanitized = sanitizeBlocks(effectiveBlocks, "full");
-      const offenderIdx = await findOffenderBlock(baseDocProps, fullSanitized);
+      const offenderIdx = await findOffenderBlock(docPropsForRun, fullSanitized);
       if (offenderIdx != null && offenderIdx >= 0 && debug) {
         const b = fullSanitized[offenderIdx]!;
         console.warn(
@@ -608,7 +709,19 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
     } finally {
       setBusy(false);
     }
-  }, [busy, effectiveBlocks, buildOnce, baseDocProps, fileName, debug, onDownloaded]);
+  }, [
+    busy,
+    effectiveBlocks,
+    buildOnce,
+    baseDocProps,
+    fileName,
+    debug,
+    onDownloaded,
+    selectedCoverUrl,
+    selectedCoverUrlFromCfg,
+    agency,
+    resolveImageSourceForPdf,
+  ]);
 
   return (
     <button
