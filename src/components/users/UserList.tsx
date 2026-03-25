@@ -7,7 +7,7 @@ import UserCard from "./UserCard";
 interface UserListProps {
   users: User[];
   startEditingUser: (user: User) => void;
-  deleteUser: (id: number) => void;
+  deleteUser: (user: User) => void;
   /** Solo gerentes/desarrolladores -> true */
   isManager?: boolean;
 }

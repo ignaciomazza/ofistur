@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from "framer-motion";
 interface UserCardProps {
   user: User;
   startEditingUser: (user: User) => void;
-  deleteUser: (id: number) => void;
+  deleteUser: (user: User) => void;
   isManager?: boolean; // gerente/desarrollador
 }
 
@@ -210,11 +210,7 @@ export default function UserCard({
 
   const handleDelete = async () => {
     if (!isManager) return;
-    const ok = window.confirm(
-      `¿Eliminar al usuario ${user.first_name} ${user.last_name}?`,
-    );
-    if (!ok) return;
-    deleteUser(user.id_user);
+    deleteUser(user);
   };
 
   return (

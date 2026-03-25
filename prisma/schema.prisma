@@ -2687,3 +2687,32 @@ model CreditEntry {
   @@index([investment_id])
   @@index([operator_due_id])
 }
+
+model UserDataMigrationJob {
+  id_job                  Int      @id @default(autoincrement())
+  id_agency               Int
+  source_user_id          Int
+  target_user_id          Int
+  started_by              Int
+  status                  String   @default("pending")
+  total_records           Int      @default(0)
+  processed_records       Int      @default(0)
+  failed_records          Int      @default(0)
+  progress_pct            Float    @default(0)
+  retry_count             Int      @default(0)
+  last_error              String?
+  scope_stats             Json?
+  failed_items            Json?
+  summary                 Json?
+  retry_scope_keys        Json?
+  delete_source_on_success Boolean @default(true)
+  started_at              DateTime?
+  finished_at             DateTime?
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  @@index([id_agency, source_user_id])
+  @@index([id_agency, target_user_id])
+  @@index([id_agency, status])
+  @@index([created_at])
+}

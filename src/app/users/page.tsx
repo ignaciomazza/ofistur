@@ -1,7 +1,7 @@
 // src/app/users/page.tsx
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import UserForm from "@/components/users/UserForm";
 import UserList from "@/components/users/UserList";
@@ -40,6 +40,56 @@ type ProfileResponse = {
   };
 };
 
+type MigrationScopeSummary = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+type MigrationTargetUser = {
+  id_user: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  role: string;
+};
+
+type MigrationPreviewResponse = {
+  sourceUser: {
+    id_user: number;
+    first_name: string;
+    last_name: string;
+    email: string;
+    role: string;
+  };
+  scopes: MigrationScopeSummary[];
+  totalCount: number;
+  targetUsers: MigrationTargetUser[];
+  managerTargets?: MigrationTargetUser[];
+};
+
+type MigrationFailedItem = {
+  scopeKey: string;
+  label: string;
+  error: string;
+  retryable: boolean;
+  pendingCount: number;
+};
+
+type MigrationJobResponse = {
+  id_job: number;
+  source_user_id: number;
+  target_user_id: number;
+  status: "pending" | "running" | "success" | "partial_failed" | "failed";
+  progress_pct: number;
+  total_records: number;
+  processed_records: number;
+  failed_records: number;
+  retry_count: number;
+  last_error: string | null;
+  failed_items: MigrationFailedItem[];
+};
+
 /* ============ helpers ============ */
 
 function normalizeRole(r?: string) {
@@ -48,6 +98,34 @@ function normalizeRole(r?: string) {
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
     .replace(/^leader$/, "lider");
+}
+
+function roleLabel(role?: string) {
+  const normalized = normalizeRole(role);
+  if (normalized === "gerente") return "Gerente";
+  if (normalized === "desarrollador" || normalized === "developer") {
+    return "Desarrollador";
+  }
+  if (normalized === "lider") return "Líder";
+  if (normalized === "vendedor") return "Vendedor";
+  return "Usuario";
+}
+
+function migrationStatusLabel(status?: string) {
+  switch (status) {
+    case "pending":
+      return "En espera";
+    case "running":
+      return "En proceso";
+    case "success":
+      return "Completada";
+    case "partial_failed":
+      return "Completada con pendientes";
+    case "failed":
+      return "No completada";
+    default:
+      return "En espera";
+  }
 }
 
 function isStrongPassword(pw: string) {
@@ -122,8 +200,43 @@ export default function UsersPage() {
   const [showNew, setShowNew] = useState(false);
   const [showRepeat, setShowRepeat] = useState(false);
 
+  // modal migración/eliminación
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [migrationPreview, setMigrationPreview] =
+    useState<MigrationPreviewResponse | null>(null);
+  const [selectedTargetUserId, setSelectedTargetUserId] = useState<number | null>(
+    null,
+  );
+  const [startingMigration, setStartingMigration] = useState(false);
+  const [retryingMigration, setRetryingMigration] = useState(false);
+  const [deletingDirectly, setDeletingDirectly] = useState(false);
+  const [migrationJob, setMigrationJob] = useState<MigrationJobResponse | null>(
+    null,
+  );
+
   const role = useMemo(() => normalizeRole(profile?.role), [profile]);
   const isManager = role === "gerente" || role === "desarrollador";
+  const migrationRunning =
+    migrationJob?.status === "pending" || migrationJob?.status === "running";
+  const previewScopesWithData = useMemo(
+    () =>
+      (migrationPreview?.scopes || []).filter(
+        (scope) => Number(scope.count || 0) > 0,
+      ),
+    [migrationPreview],
+  );
+  const availableTargetUsers = useMemo(
+    () =>
+      migrationPreview?.targetUsers ??
+      migrationPreview?.managerTargets ??
+      [],
+    [migrationPreview],
+  );
+  const canRetryMigration = Boolean(
+    migrationJob?.failed_items?.some((item) => item.retryable),
+  );
 
   // cargar perfil
   useEffect(() => {
@@ -157,19 +270,12 @@ export default function UsersPage() {
     return () => controller.abort();
   }, [token]);
 
-  // cargar usuarios (API ya filtra según rol)
-  useEffect(() => {
-    if (!token) return;
-
-    const controller = new AbortController();
-    const load = async () => {
+  const loadUsers = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!token) return;
       try {
         setLoadingUsers(true);
-        const res = await authFetch(
-          "/api/users",
-          { signal: controller.signal },
-          token,
-        );
+        const res = await authFetch("/api/users", { signal }, token);
         if (!res.ok) {
           const msg = await getResponseMessage(
             res,
@@ -184,13 +290,19 @@ export default function UsersPage() {
         console.error("Error fetching users:", error);
         toast.error(getErrorMessage(error, "No se pudieron cargar los usuarios."));
       } finally {
-        if (!controller.signal.aborted) setLoadingUsers(false);
+        if (!signal?.aborted) setLoadingUsers(false);
       }
-    };
-    load();
+    },
+    [token],
+  );
 
+  // cargar usuarios (API ya filtra según rol)
+  useEffect(() => {
+    if (!token) return;
+    const controller = new AbortController();
+    void loadUsers(controller.signal);
     return () => controller.abort();
-  }, [token]);
+  }, [token, loadUsers]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
@@ -298,7 +410,19 @@ export default function UsersPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const deleteUser = async (id_user: number) => {
+  const closeDeleteModal = () => {
+    setDeleteModalOpen(false);
+    setUserToDelete(null);
+    setMigrationPreview(null);
+    setSelectedTargetUserId(null);
+    setMigrationJob(null);
+    setPreviewLoading(false);
+    setStartingMigration(false);
+    setRetryingMigration(false);
+    setDeletingDirectly(false);
+  };
+
+  const deleteUserDirect = async (id_user: number) => {
     try {
       const response = await authFetch(
         `/api/users/${id_user}`,
@@ -316,11 +440,167 @@ export default function UsersPage() {
         prevUsers.filter((user) => user.id_user !== id_user),
       );
       toast.success("Usuario eliminado.");
+      closeDeleteModal();
     } catch (error: unknown) {
       console.error("Error al eliminar el usuario:", error);
       toast.error(getErrorMessage(error, "No se pudo eliminar el usuario."));
     }
   };
+
+  const openDeleteUserModal = async (user: User) => {
+    setDeleteModalOpen(true);
+    setUserToDelete(user);
+    setMigrationPreview(null);
+    setMigrationJob(null);
+    setSelectedTargetUserId(null);
+    setPreviewLoading(true);
+
+    try {
+      const response = await authFetch(
+        `/api/users/migrations/preview?sourceUserId=${user.id_user}`,
+        { cache: "no-store" },
+        token,
+      );
+      if (!response.ok) {
+        const msg = await getResponseMessage(
+          response,
+          "No se pudo preparar la migración.",
+        );
+        throw new Error(msg);
+      }
+      const preview = (await response.json()) as MigrationPreviewResponse;
+      setMigrationPreview(preview);
+      setSelectedTargetUserId(
+        preview.targetUsers?.[0]?.id_user ??
+          preview.managerTargets?.[0]?.id_user ??
+          null,
+      );
+    } catch (error: unknown) {
+      console.error("Error preview migración:", error);
+      toast.error(getErrorMessage(error, "No se pudo preparar la migración."));
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const startMigrationAndDelete = async () => {
+    if (!userToDelete?.id_user) return;
+    if (!selectedTargetUserId) {
+      toast.error("Seleccioná un usuario destino.");
+      return;
+    }
+
+    try {
+      setStartingMigration(true);
+      const response = await authFetch(
+        "/api/users/migrations/start",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            sourceUserId: userToDelete.id_user,
+            targetUserId: selectedTargetUserId,
+          }),
+        },
+        token,
+      );
+
+      if (!response.ok) {
+        const msg = await getResponseMessage(
+          response,
+          "No se pudo iniciar la migración.",
+        );
+        throw new Error(msg);
+      }
+
+      const payload = (await response.json()) as {
+        reused?: boolean;
+        job?: MigrationJobResponse;
+      };
+
+      if (!payload?.job) {
+        throw new Error("No se recibió información del trabajo de migración.");
+      }
+
+      setMigrationJob(payload.job);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "No se pudo iniciar la migración."));
+    } finally {
+      setStartingMigration(false);
+    }
+  };
+
+  const retryMigration = async () => {
+    if (!migrationJob?.id_job) return;
+    try {
+      setRetryingMigration(true);
+      const response = await authFetch(
+        `/api/users/migrations/${migrationJob.id_job}/retry`,
+        {
+          method: "POST",
+        },
+        token,
+      );
+      if (!response.ok) {
+        const msg = await getResponseMessage(
+          response,
+          "No se pudo reintentar la migración.",
+        );
+        throw new Error(msg);
+      }
+      const updated = (await response.json()) as MigrationJobResponse;
+      setMigrationJob(updated);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "No se pudo reintentar la migración."));
+    } finally {
+      setRetryingMigration(false);
+    }
+  };
+
+  const handleDeleteWithoutMigration = async () => {
+    if (!userToDelete?.id_user) return;
+    try {
+      setDeletingDirectly(true);
+      await deleteUserDirect(userToDelete.id_user);
+    } finally {
+      setDeletingDirectly(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!deleteModalOpen || !migrationJob?.id_job) return;
+    if (!migrationRunning) return;
+
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await authFetch(
+          `/api/users/migrations/${migrationJob.id_job}`,
+          { cache: "no-store" },
+          token,
+        );
+        if (!response.ok) return;
+        const updated = (await response.json()) as MigrationJobResponse;
+        setMigrationJob(updated);
+
+        if (updated.status === "success") {
+          toast.success("Migración completada y usuario eliminado.");
+          closeDeleteModal();
+          await loadUsers();
+        }
+      } catch (error) {
+        console.error("Error polling migración:", error);
+      }
+    }, 1200);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [
+    deleteModalOpen,
+    migrationJob?.id_job,
+    migrationRunning,
+    token,
+    loadUsers,
+  ]);
 
   /* ========= handlers modal password (self-service) ========= */
 
@@ -430,7 +710,7 @@ export default function UsersPage() {
               <UserList
                 users={users}
                 startEditingUser={startEditingUser}
-                deleteUser={deleteUser}
+                deleteUser={openDeleteUserModal}
                 isManager={isManager}
               />
             )}
@@ -616,6 +896,213 @@ export default function UsersPage() {
                     </button>
                   </div>
                 </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {deleteModalOpen && (
+            <motion.div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-sky-950/30 p-4"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <motion.div
+                className="w-full max-w-2xl rounded-3xl border border-white/10 bg-white/10 p-6 text-sky-950 shadow-lg backdrop-blur dark:text-white"
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 20, opacity: 0 }}
+              >
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-xl font-semibold">
+                      Eliminar usuario con migración
+                    </h3>
+                    <p className="text-sm opacity-75">
+                      Usuario origen:{" "}
+                      <strong>
+                        {userToDelete?.first_name} {userToDelete?.last_name}
+                      </strong>{" "}
+                      ({userToDelete?.email})
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeDeleteModal}
+                    className="rounded-full bg-sky-100 px-4 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 dark:bg-white/10 dark:text-white"
+                  >
+                    No eliminar usuario
+                  </button>
+                </div>
+
+                {previewLoading ? (
+                  <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/20 p-4">
+                    <Spinner />
+                    <p className="text-sm opacity-80">
+                      Preparando migración de datos...
+                    </p>
+                  </div>
+                ) : migrationJob ? (
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-white/10 bg-white/20 p-4">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium">
+                          Estado: {migrationStatusLabel(migrationJob.status)}
+                        </p>
+                        <p className="text-sm font-semibold">
+                          {Math.round(migrationJob.progress_pct || 0)}%
+                        </p>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-white/20">
+                        <div
+                          className="h-full bg-emerald-500 transition-all duration-300"
+                          style={{
+                            width: `${Math.max(
+                              0,
+                              Math.min(100, Math.round(migrationJob.progress_pct || 0)),
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="mt-2 grid grid-cols-1 gap-2 text-xs opacity-80 md:grid-cols-3">
+                        <p>
+                          Total:{" "}
+                          <strong>{migrationJob.total_records || 0}</strong>
+                        </p>
+                        <p>
+                          Procesados:{" "}
+                          <strong>{migrationJob.processed_records || 0}</strong>
+                        </p>
+                        <p>
+                          Fallidos:{" "}
+                          <strong>{migrationJob.failed_records || 0}</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    {!migrationRunning && migrationJob.failed_items?.length > 0 && (
+                      <div className="rounded-2xl border border-red-300/40 bg-red-200/20 p-4">
+                        <p className="mb-2 text-sm font-medium">
+                          Errores detectados
+                        </p>
+                        <ul className="space-y-2 text-xs">
+                          {migrationJob.failed_items.slice(0, 6).map((item) => (
+                            <li
+                              key={`${item.scopeKey}-${item.label}`}
+                              className="rounded-xl border border-red-300/40 bg-red-100/20 p-2"
+                            >
+                              <p className="font-medium">
+                                {item.label}{" "}
+                                {!item.retryable && "(requiere acción manual)"}
+                              </p>
+                              <p className="opacity-80">{item.error}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-2">
+                      {canRetryMigration && (
+                        <button
+                          type="button"
+                          className="rounded-full bg-sky-100 px-6 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-white/10 dark:text-white dark:backdrop-blur"
+                          disabled={retryingMigration || migrationRunning}
+                          onClick={retryMigration}
+                        >
+                          {retryingMigration
+                            ? "Volviendo a intentar..."
+                            : "Volver a intentar lo pendiente"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded-full bg-sky-100 px-6 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white dark:backdrop-blur"
+                        onClick={closeDeleteModal}
+                      >
+                        Cerrar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-white/10 bg-white/20 p-4 text-sm">
+                      <p>
+                        Registros comerciales a migrar:{" "}
+                        <strong>{migrationPreview?.totalCount || 0}</strong>
+                      </p>
+                      {previewScopesWithData.length > 0 && (
+                        <ul className="mt-2 space-y-1 text-xs opacity-80">
+                          {previewScopesWithData.slice(0, 8).map((scope) => (
+                            <li key={scope.key}>
+                              {scope.label}: <strong>{scope.count}</strong>
+                            </li>
+                          ))}
+                          {previewScopesWithData.length > 8 && (
+                            <li>
+                              +{previewScopesWithData.length - 8} categorías más
+                            </li>
+                          )}
+                        </ul>
+                      )}
+                    </div>
+
+                    {(migrationPreview?.totalCount || 0) > 0 ? (
+                      <div className="space-y-3 rounded-2xl border border-white/10 bg-white/20 p-4">
+                        <label className="block text-sm font-medium">
+                          Asignar datos a usuario
+                        </label>
+                        <select
+                          value={selectedTargetUserId ?? ""}
+                          onChange={(e) =>
+                            setSelectedTargetUserId(Number(e.target.value) || null)
+                          }
+                          className="w-full rounded-2xl border border-sky-950/10 bg-white/60 p-2 px-3 outline-none dark:border-white/10 dark:bg-white/10 dark:text-white"
+                        >
+                          <option value="">Seleccionar usuario</option>
+                          {availableTargetUsers.map((target) => (
+                            <option key={target.id_user} value={target.id_user}>
+                              {target.first_name} {target.last_name} ({target.email}
+                              {" - "}
+                              {roleLabel(target.role)})
+                            </option>
+                          ))}
+                        </select>
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            className="rounded-full bg-sky-100 px-6 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-white/10 dark:text-white dark:backdrop-blur"
+                            disabled={
+                              startingMigration ||
+                              !selectedTargetUserId ||
+                              availableTargetUsers.length === 0
+                            }
+                            onClick={startMigrationAndDelete}
+                          >
+                            {startingMigration
+                              ? "Iniciando..."
+                              : "Asignar y eliminar usuario"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          className="rounded-full bg-red-500/90 px-6 py-2 text-white shadow-sm transition-transform hover:scale-95 active:scale-90 disabled:opacity-60"
+                          disabled={deletingDirectly}
+                          onClick={handleDeleteWithoutMigration}
+                        >
+                          {deletingDirectly
+                            ? "Eliminando..."
+                            : "Eliminar usuario"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </motion.div>
             </motion.div>
           )}

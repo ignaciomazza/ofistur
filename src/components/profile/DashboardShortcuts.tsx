@@ -244,6 +244,11 @@ const toNum = (v: number | string | null | undefined) => {
 };
 
 const clampPct = (value: number) => Math.max(0, Math.min(100, value));
+const COMMISSION_VAT_21_RATE = 0.21;
+const COMMISSION_VAT_10_5_RATE = 0.105;
+const COMMISSION_VAT_TOTAL_RATE =
+  COMMISSION_VAT_21_RATE + COMMISSION_VAT_10_5_RATE;
+const COMMISSION_VISIBLE_EPSILON = 0.01;
 
 const makeZeroCommission = () => ({
   commissionTotal: 0,
@@ -254,6 +259,16 @@ const makeZeroCommission = () => ({
   debtTotal: 0,
   paymentRate: 0,
 });
+
+const hasVisibleCommissionValues = (
+  summary: ReturnType<typeof makeZeroCommission>,
+) =>
+  Math.abs(summary.commissionTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.paidTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.debtTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.seller) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.leader) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.agency) > COMMISSION_VISIBLE_EPSILON;
 
 const normCurrency = (raw: string | null | undefined): "ARS" | "USD" => {
   const s = String(raw || "")
@@ -274,11 +289,13 @@ const normalizeDashboardRole = (raw?: string | null): string => {
   if (normalized === "admin" || normalized.startsWith("administr")) {
     return "administrativo";
   }
+  if (["dev", "developer"].includes(normalized)) return "desarrollador";
+  if (normalized.startsWith("desarrollador")) return "desarrollador";
   return normalized;
 };
 
 const isMacroDashboardRole = (role: string) =>
-  role === "gerente" || role === "administrativo";
+  role === "gerente" || role === "desarrollador";
 
 /* ===================== UI helpers ===================== */
 const glass =
@@ -354,6 +371,14 @@ export default function DashboardShortcuts() {
   const [teamsMine, setTeamsMine] = useState<SalesTeam[]>([]);
   const [calcMode, setCalcMode] = useState<"auto" | "manual">("auto");
   const [useBookingSaleTotal, setUseBookingSaleTotal] = useState(false);
+
+  const macroCurrencyCodes = useMemo(
+    () =>
+      currencyCodes.filter((code) =>
+        hasVisibleCommissionValues(commissionByCur[code] || makeZeroCommission()),
+      ),
+    [currencyCodes, commissionByCur],
+  );
 
   const abortedRef = useRef(false);
   const commissionReqIdRef = useRef(0);
@@ -945,93 +970,115 @@ export default function DashboardShortcuts() {
                       ? "Actualizando comisiones..."
                       : `Filtro aplicado: ${macroMinPaidPctApplied}%`}
                   </p>
+                  <p className="text-[10px] opacity-70">
+                    La ganancia total mostrada es libre de impuestos.
+                  </p>
                 </div>
               </div>
-
-              <div className="grid gap-3 xl:grid-cols-2">
-                {currencyCodes.map((code) => {
-                  const summary = commissionByCur[code] || makeZeroCommission();
-                  const ratePct = Math.round((summary.paymentRate || 0) * 100);
-                  return (
-                    <div
-                      key={code}
-                      className="rounded-xl border border-emerald-800/10 bg-white/20 p-3 dark:bg-white/5"
-                    >
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <p className="text-sm font-semibold">{code}</p>
-                        <span className="rounded-full border border-white/25 bg-white/20 px-2 py-0.5 text-[10px]">
-                          Tasa pago {ratePct}%
-                        </span>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-[10px] uppercase tracking-wide opacity-70">
-                              Ganancia total
-                            </p>
-                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                              {fmt(summary.commissionTotal, code as CurrencyCode)}
-                            </p>
-                          </div>
+              {macroCurrencyCodes.length === 0 ? (
+                <p className="rounded-xl border border-white/15 bg-white/15 p-3 text-sm opacity-80">
+                  {loadingCommissionPanel
+                    ? "Cargando comisiones..."
+                    : "Aún no hay servicios para calcular comisiones."}
+                </p>
+              ) : (
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {macroCurrencyCodes.map((code) => {
+                    const summary = commissionByCur[code] || makeZeroCommission();
+                    const ratePct = Math.round((summary.paymentRate || 0) * 100);
+                    const commissionVat =
+                      Math.max(summary.commissionTotal, 0) * COMMISSION_VAT_TOTAL_RATE;
+                    return (
+                      <div
+                        key={code}
+                        className="rounded-xl border border-emerald-800/10 bg-white/20 p-3 dark:bg-white/5"
+                      >
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold">{code}</p>
+                          <span className="rounded-full border border-white/25 bg-white/20 px-2 py-0.5 text-[10px]">
+                            Tasa pago {ratePct}%
+                          </span>
                         </div>
-                        <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 p-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-[10px] uppercase tracking-wide opacity-70">
-                              Cobrado
-                            </p>
-                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                              {fmt(summary.paidTotal, code as CurrencyCode)}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-[10px] uppercase tracking-wide opacity-70">
-                              Pendiente
-                            </p>
-                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                              {fmt(summary.debtTotal, code as CurrencyCode)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
 
-                      <div className="mt-2 border-t border-white/10 pt-2">
-                        <p className="mb-1.5 text-[10px] uppercase tracking-wide opacity-60">
-                          Distribucion
-                        </p>
                         <div className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
-                            <p className="text-[10px] uppercase tracking-wide opacity-70">
-                              Vendedor
-                            </p>
-                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                              {fmt(summary.seller, code as CurrencyCode)}
-                            </p>
+                          <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                Ganancia total
+                              </p>
+                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                {fmt(summary.commissionTotal, code as CurrencyCode)}
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
-                            <p className="text-[10px] uppercase tracking-wide opacity-70">
-                              Lider
-                            </p>
-                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                              {fmt(summary.leader, code as CurrencyCode)}
-                            </p>
+                          <div className="rounded-lg border border-violet-400/20 bg-violet-500/10 p-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                IVA de comisiones
+                              </p>
+                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                {fmt(commissionVat, code as CurrencyCode)}
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
-                            <p className="text-[10px] uppercase tracking-wide opacity-70">
-                              Agencia
-                            </p>
-                            <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                              {fmt(summary.agency, code as CurrencyCode)}
-                            </p>
+                          <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 p-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                Cobrado
+                              </p>
+                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                {fmt(summary.paidTotal, code as CurrencyCode)}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                Pendiente
+                              </p>
+                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                {fmt(summary.debtTotal, code as CurrencyCode)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-2 border-t border-white/10 pt-2">
+                          <p className="mb-1.5 text-[10px] uppercase tracking-wide opacity-60">
+                            Distribucion
+                          </p>
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                              <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                Vendedor
+                              </p>
+                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                {fmt(summary.seller, code as CurrencyCode)}
+                              </p>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                              <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                Lider
+                              </p>
+                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                {fmt(summary.leader, code as CurrencyCode)}
+                              </p>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                              <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                Agencia
+                              </p>
+                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                {fmt(summary.agency, code as CurrencyCode)}
+                              </p>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           ) : (
             <>

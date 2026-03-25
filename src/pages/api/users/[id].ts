@@ -4,6 +4,7 @@ import { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcrypt";
 import { jwtVerify, JWTPayload } from "jose";
+import { buildUserDataMigrationPreview } from "@/services/users/userDataMigration";
 
 /* ================== Auth Helpers ================== */
 
@@ -176,6 +177,16 @@ export default async function handler(
     if (!isManager) return res.status(403).json({ error: "No autorizado" });
 
     try {
+      const preview = await buildUserDataMigrationPreview({
+        id_agency: auth.id_agency,
+        source_user_id: targetUserId,
+      });
+      if ((preview.totalCount || 0) > 0) {
+        return res.status(409).json({
+          error:
+            "El usuario tiene datos comerciales. Primero ejecutá una migración/asignación a otro usuario.",
+        });
+      }
       await prisma.userTeam.deleteMany({ where: { id_user: targetUserId } });
       await prisma.user.delete({ where: { id_user: targetUserId } });
       return res.status(200).json({ message: "Usuario eliminado con éxito" });
