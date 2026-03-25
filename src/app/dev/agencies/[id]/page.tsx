@@ -179,6 +179,7 @@ export default function DevAgencyDetailPage() {
   >(null);
   const [certText, setCertText] = useState("");
   const [keyText, setKeyText] = useState("");
+  const [afipExpanded, setAfipExpanded] = useState(false);
 
   // Carga de agencia
   useEffect(() => {
@@ -484,7 +485,7 @@ export default function DevAgencyDetailPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={goBack}
-              className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-100/20 px-4 py-2 text-amber-900 shadow-sm shadow-amber-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-amber-200"
+              className="inline-flex items-center gap-2 rounded-full border border-sky-300/40 bg-sky-100/20 px-4 py-2 text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-sky-200"
             >
               <ArrowLeftIcon />
               Volver
@@ -496,7 +497,7 @@ export default function DevAgencyDetailPage() {
             <IconButton
               title="Editar agencia"
               onClick={goEdit}
-              className="border-amber-300/40 bg-amber-100/20 text-amber-900 dark:text-amber-200"
+              className="border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200"
             >
               <PencilIcon />
             </IconButton>
@@ -512,9 +513,7 @@ export default function DevAgencyDetailPage() {
 
         <div className="mb-4 flex flex-wrap gap-2">
           {([
-            { key: "overview", label: "Resumen" },
-            { key: "logo", label: "Logo" },
-            { key: "afip", label: "Certificados" },
+            { key: "overview", label: "Resumen, Logo y Certificados" },
             { key: "billing", label: "Facturacion" },
             { key: "storage", label: "Storage" },
             { key: "users", label: "Usuarios" },
@@ -527,8 +526,8 @@ export default function DevAgencyDetailPage() {
                 onClick={() => setActiveSection(tab.key)}
                 className={`rounded-full border px-4 py-1.5 text-xs shadow-sm transition-transform hover:scale-95 active:scale-90 ${
                   active
-                    ? "border-emerald-300/50 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200"
-                    : "border-white/10 bg-white/10 text-sky-950/70 hover:border-amber-300/40 hover:bg-amber-100/20 dark:text-white/70"
+                    ? "border-sky-300/50 bg-sky-100/20 text-sky-900 dark:text-sky-200"
+                    : "border-white/10 bg-white/10 text-sky-950/70 hover:border-sky-300/40 hover:bg-sky-100/20 dark:text-white/70"
                 }`}
               >
                 {tab.label}
@@ -597,18 +596,18 @@ export default function DevAgencyDetailPage() {
             {activeSection === "overview" && (
               <div className="space-y-6">
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full border border-emerald-300/40 bg-emerald-100/20 px-3 py-1 text-emerald-900 dark:text-emerald-200">
+                  <span className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-sky-900 dark:text-sky-200">
                     Usuarios: {agency.counts?.users ?? "—"}
                   </span>
-                  <span className="rounded-full border border-amber-300/40 bg-amber-100/20 px-3 py-1 text-amber-900 dark:text-amber-200">
+                  <span className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-sky-900 dark:text-sky-200">
                     Pasajeros: {agency.counts?.clients ?? "—"}
                   </span>
-                  <span className="rounded-full border border-amber-300/40 bg-amber-100/20 px-3 py-1 text-amber-900 dark:text-amber-200">
+                  <span className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-sky-900 dark:text-sky-200">
                     Reservas: {agency.counts?.bookings ?? "—"}
                   </span>
                 </div>
 
-                <div className="space-y-3 rounded-3xl border border-amber-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
+                <div className="space-y-3 rounded-3xl border border-sky-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
                   <p className="font-light">
                     <span className="mr-2 font-semibold dark:font-medium">
                       Dirección
@@ -628,7 +627,7 @@ export default function DevAgencyDetailPage() {
                     {agency.email ? (
                       <a
                         href={`mailto:${agency.email}`}
-                        className="underline decoration-amber-300/60 underline-offset-4"
+                        className="underline decoration-sky-300/60 underline-offset-4"
                       >
                         {agency.email}
                       </a>
@@ -645,7 +644,7 @@ export default function DevAgencyDetailPage() {
                         href={agency.website}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="underline decoration-amber-300/60 underline-offset-4"
+                        className="underline decoration-sky-300/60 underline-offset-4"
                       >
                         {agency.website}
                       </a>
@@ -663,8 +662,8 @@ export default function DevAgencyDetailPage() {
               </div>
             )}
 
-            {activeSection === "logo" && (
-              <div className="mb-6 space-y-4 rounded-3xl border border-emerald-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
+            {activeSection === "overview" && (
+              <div className="mb-6 mt-8 space-y-4 rounded-3xl border border-sky-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-medium">Logo</h3>
                   <span className="text-xs text-sky-950/60 dark:text-white/60">
@@ -673,7 +672,7 @@ export default function DevAgencyDetailPage() {
                 </div>
 
                 <div className="flex items-center gap-4">
-                  <div className="size-24 overflow-hidden rounded-2xl border border-emerald-300/30 bg-white/40 dark:bg-white/10">
+                  <div className="size-24 overflow-hidden rounded-2xl border border-sky-300/30 bg-white/40 dark:bg-white/10">
                     {agency.logo_url ? (
                       <img
                         src={agency.logo_url}
@@ -699,7 +698,7 @@ export default function DevAgencyDetailPage() {
                       type="button"
                       onClick={onPickFile}
                       disabled={logoWorking !== null}
-                      className="rounded-full border border-emerald-300/40 bg-emerald-100/20 px-6 py-2 text-emerald-900 shadow-sm shadow-emerald-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-50 dark:text-emerald-200"
+                      className="rounded-full border border-sky-300/40 bg-sky-100/20 px-6 py-2 text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-50 dark:text-sky-200"
                     >
                       {logoWorking === "upload"
                         ? "Subiendo..."
@@ -725,31 +724,30 @@ export default function DevAgencyDetailPage() {
               </div>
             )}
 
-            {activeSection === "afip" && (
-              <div className="space-y-4 rounded-3xl border border-amber-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium">
+            {activeSection === "overview" && (
+              <div className="mt-8 space-y-4 rounded-3xl border border-sky-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAfipExpanded((prev) => !prev)}
+                    className="inline-flex items-center gap-2 rounded-full bg-white/0 px-3 py-1.5 text-sm text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/10"
+                  >
+                    <span className="text-lg leading-none">
+                      {afipExpanded ? "-" : "+"}
+                    </span>
                     AFIP – Certificado & Clave
-                  </h3>
+                  </button>
 
                   {!afipLoading && afipStatus && (
                     <div className="flex gap-2">
                       <span
-                        className={`rounded-full border px-3 py-1 text-xs ${
-                          afipStatus.certUploaded
-                            ? "border-emerald-300/40 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200"
-                            : "border-amber-300/40 bg-amber-100/20 text-amber-900 dark:text-amber-200"
-                        }`}
+                        className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-xs text-sky-900 dark:text-sky-200"
                         title="Estado del Certificado"
                       >
                         Cert: {afipStatus.certUploaded ? "Cargado" : "Falta"}
                       </span>
                       <span
-                        className={`rounded-full border px-3 py-1 text-xs ${
-                          afipStatus.keyUploaded
-                            ? "border-emerald-300/40 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200"
-                            : "border-amber-300/40 bg-amber-100/20 text-amber-900 dark:text-amber-200"
-                        }`}
+                        className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-xs text-sky-900 dark:text-sky-200"
                         title="Estado de la Clave"
                       >
                         Key: {afipStatus.keyUploaded ? "Cargada" : "Falta"}
@@ -758,114 +756,123 @@ export default function DevAgencyDetailPage() {
                   )}
                 </div>
 
-                {afipForbidden && (
-                  <p className="text-sm text-sky-950/70 dark:text-white/70">
-                    No tenés permisos para editar estas credenciales.
-                  </p>
+                {afipExpanded && (
+                  <>
+                    {afipForbidden && (
+                      <p className="text-sm text-sky-950/70 dark:text-white/70">
+                        No tenés permisos para editar estas credenciales.
+                      </p>
+                    )}
+
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="ml-1 block text-sm">
+                          Certificado (.pem/.crt) — pegá el contenido
+                        </label>
+                        <textarea
+                          disabled={afipLoading || afipForbidden}
+                          value={certText}
+                          onChange={(e) => setCertText(e.target.value)}
+                          placeholder="-----BEGIN CERTIFICATE-----\nMIIC...==\n-----END CERTIFICATE-----"
+                          className="min-h-[120px] w-full rounded-2xl border border-sky-950/10 bg-white/50 p-3 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
+                        />
+                        {afipStatus?.certUploaded && (
+                          <button
+                            type="button"
+                            onClick={() => deleteAfip("cert")}
+                            disabled={
+                              afipLoading ||
+                              deletingAfip === "cert" ||
+                              afipForbidden
+                            }
+                            className="rounded-full bg-red-600/90 px-4 py-2 text-red-50 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
+                          >
+                            {deletingAfip === "cert"
+                              ? "Eliminando..."
+                              : "Eliminar Cert"}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="ml-1 block text-sm">
+                          Clave privada (.key/.pem) — pegá el contenido
+                        </label>
+                        <textarea
+                          disabled={afipLoading || afipForbidden}
+                          value={keyText}
+                          onChange={(e) => setKeyText(e.target.value)}
+                          placeholder="-----BEGIN PRIVATE KEY-----\nMIIE...==\n-----END PRIVATE KEY-----"
+                          className="min-h-[120px] w-full rounded-2xl border border-sky-950/10 bg-white/50 p-3 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
+                        />
+                        {afipStatus?.keyUploaded && (
+                          <button
+                            type="button"
+                            onClick={() => deleteAfip("key")}
+                            disabled={
+                              afipLoading || deletingAfip === "key" || afipForbidden
+                            }
+                            className="rounded-full bg-red-600/90 px-4 py-2 text-red-50 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
+                          >
+                            {deletingAfip === "key"
+                              ? "Eliminando..."
+                              : "Eliminar Key"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={saveAfip}
+                        disabled={!canSaveAfip || savingAfip}
+                        className={`rounded-full px-6 py-2 shadow-sm transition-transform hover:scale-95 active:scale-90 ${
+                          canSaveAfip
+                            ? "border border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200"
+                            : "bg-gray-300 text-gray-500 dark:bg-white/10 dark:text-white/40"
+                        }`}
+                      >
+                        {savingAfip ? "Guardando..." : "Guardar credenciales"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCertText("");
+                          setKeyText("");
+                        }}
+                        disabled={afipLoading || afipForbidden}
+                        className="rounded-full border border-sky-300/40 bg-sky-100/20 px-6 py-2 text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-sky-200"
+                      >
+                        Limpiar campos
+                      </button>
+
+                      {(afipStatus?.certUploaded || afipStatus?.keyUploaded) && (
+                        <button
+                          type="button"
+                          onClick={() => deleteAfip("both")}
+                          disabled={
+                            afipLoading ||
+                            deletingAfip === "both" ||
+                            afipForbidden
+                          }
+                          className="rounded-full bg-red-600/90 px-6 py-2 text-red-50 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
+                        >
+                          {deletingAfip === "both"
+                            ? "Eliminando..."
+                            : "Eliminar Cert & Key"}
+                        </button>
+                      )}
+                    </div>
+
+                    <p className="mt-2 text-xs text-sky-950/70 dark:text-white/60">
+                      Las credenciales se almacenan cifradas y nunca se devuelven
+                      por la API. Pegá el contenido en texto plano (PEM/CRT/KEY) o
+                      base64.
+                    </p>
+                  </>
                 )}
-
-                <div className="grid gap-2 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="ml-1 block text-sm">
-                      Certificado (.pem/.crt) — pegá el contenido
-                    </label>
-                    <textarea
-                      disabled={afipLoading || afipForbidden}
-                      value={certText}
-                      onChange={(e) => setCertText(e.target.value)}
-                      placeholder="-----BEGIN CERTIFICATE-----\nMIIC...==\n-----END CERTIFICATE-----"
-                      className="min-h-[120px] w-full rounded-2xl border border-sky-950/10 bg-white/50 p-3 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
-                    />
-                    {afipStatus?.certUploaded && (
-                      <button
-                        type="button"
-                        onClick={() => deleteAfip("cert")}
-                        disabled={
-                          afipLoading || deletingAfip === "cert" || afipForbidden
-                        }
-                        className="rounded-full bg-red-600/90 px-4 py-2 text-red-50 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
-                      >
-                        {deletingAfip === "cert"
-                          ? "Eliminando..."
-                          : "Eliminar Cert"}
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="ml-1 block text-sm">
-                      Clave privada (.key/.pem) — pegá el contenido
-                    </label>
-                    <textarea
-                      disabled={afipLoading || afipForbidden}
-                      value={keyText}
-                      onChange={(e) => setKeyText(e.target.value)}
-                      placeholder="-----BEGIN PRIVATE KEY-----\nMIIE...==\n-----END PRIVATE KEY-----"
-                      className="min-h-[120px] w-full rounded-2xl border border-sky-950/10 bg-white/50 p-3 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
-                    />
-                    {afipStatus?.keyUploaded && (
-                      <button
-                        type="button"
-                        onClick={() => deleteAfip("key")}
-                        disabled={
-                          afipLoading || deletingAfip === "key" || afipForbidden
-                        }
-                        className="rounded-full bg-red-600/90 px-4 py-2 text-red-50 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
-                      >
-                        {deletingAfip === "key"
-                          ? "Eliminando..."
-                          : "Eliminar Key"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={saveAfip}
-                    disabled={!canSaveAfip || savingAfip}
-                    className={`rounded-full px-6 py-2 shadow-sm transition-transform hover:scale-95 active:scale-90 ${
-                      canSaveAfip
-                        ? "border border-emerald-300/40 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200"
-                        : "bg-gray-300 text-gray-500 dark:bg-white/10 dark:text-white/40"
-                    }`}
-                  >
-                    {savingAfip ? "Guardando..." : "Guardar credenciales"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCertText("");
-                      setKeyText("");
-                    }}
-                    disabled={afipLoading || afipForbidden}
-                    className="rounded-full border border-amber-300/40 bg-amber-100/20 px-6 py-2 text-amber-900 shadow-sm shadow-amber-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-amber-200"
-                  >
-                    Limpiar campos
-                  </button>
-
-                  {(afipStatus?.certUploaded || afipStatus?.keyUploaded) && (
-                    <button
-                      type="button"
-                      onClick={() => deleteAfip("both")}
-                      disabled={
-                        afipLoading || deletingAfip === "both" || afipForbidden
-                      }
-                      className="rounded-full bg-red-600/90 px-6 py-2 text-red-50 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
-                    >
-                      {deletingAfip === "both"
-                        ? "Eliminando..."
-                        : "Eliminar Cert & Key"}
-                    </button>
-                  )}
-                </div>
-
-                <p className="mt-2 text-xs text-sky-950/70 dark:text-white/60">
-                  Las credenciales se almacenan cifradas y nunca se devuelven por
-                  la API. Pegá el contenido en texto plano (PEM/CRT/KEY) o base64.
-                </p>
               </div>
             )}
 

@@ -8,17 +8,17 @@ export const PLAN_DATA: Record<
   basico: {
     label: "Basico",
     base: 20,
-    short: "Pasajeros, reservas, facturacion y recibos",
+    short: "Incluye 128 GB de storage y 256 GB de transferencia por mes",
   },
   medio: {
-    label: "Medio",
+    label: "Pro",
     base: 40,
-    short: "Calendario, templates, gastos e insights",
+    short: "Incluye 500 GB de storage y 1 TB de transferencia por mes",
   },
   pro: {
-    label: "Pro",
-    base: 50,
-    short: "Asesoramiento, capacitaciones, nuevas funcionalidades",
+    label: "Max",
+    base: 70,
+    short: "Incluye 1 TB de storage y 2 TB de transferencia por mes",
   },
 };
 

@@ -56,9 +56,9 @@ function statusChipStyle(status: string) {
   if (s === "PENDING")
     return "bg-sky-100 text-sky-900 border border-sky-300/80";
   if (s === "CONTACTED")
-    return "bg-amber-100 text-amber-900 border border-amber-300/80";
+    return "bg-sky-100 text-sky-900 border border-sky-300/80";
   if (s === "CLOSED")
-    return "bg-emerald-50/70 text-emerald-900 border border-emerald-300/50";
+    return "bg-sky-50/70 text-sky-900 border border-sky-300/50";
   return "bg-slate-100 text-slate-900 border border-slate-300/80";
 }
 
@@ -475,7 +475,7 @@ function LeadCard({
       <div className="mt-2 flex flex-wrap justify-end gap-2">
         <button
           onClick={() => setOpenConvert((v) => !v)}
-          className="rounded-full border border-emerald-300/50 bg-emerald-50/70 px-4 py-2 text-xs text-emerald-900 shadow-sm shadow-emerald-950/5 transition-transform hover:scale-95 active:scale-90"
+          className="rounded-full border border-sky-300/50 bg-sky-50/70 px-4 py-2 text-xs text-sky-900 shadow-sm shadow-sky-950/5 transition-transform hover:scale-95 active:scale-90"
         >
           {openConvert ? "Cancelar" : "Convertir a agencia"}
         </button>
@@ -550,7 +550,7 @@ function LeadCard({
             <button
               type="submit"
               disabled={converting}
-              className="rounded-full border border-emerald-300/50 bg-emerald-50/70 px-5 py-2 text-emerald-900 shadow-sm shadow-emerald-950/5 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60"
+              className="rounded-full border border-sky-300/50 bg-sky-50/70 px-5 py-2 text-sky-900 shadow-sm shadow-sky-950/5 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60"
             >
               {converting ? "Convirtiendo..." : "Confirmar conversión"}
             </button>

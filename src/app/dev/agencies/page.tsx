@@ -77,7 +77,7 @@ function getBillingBadge(status?: BillingStatus) {
       return {
         label: "Pagado",
         className:
-          "border-emerald-300/40 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200",
+          "border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200",
       };
     case "OVERDUE":
       return {
@@ -89,7 +89,7 @@ function getBillingBadge(status?: BillingStatus) {
       return {
         label: "Pendiente",
         className:
-          "border-amber-300/40 bg-amber-100/20 text-amber-900 dark:text-amber-200",
+          "border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200",
       };
     default:
       return {
@@ -486,13 +486,13 @@ export default function DevAgenciesPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => router.push("/dev/agencies/stats")}
-              className="rounded-full border border-amber-300/40 bg-amber-100/20 px-5 py-2 text-amber-900 shadow-sm shadow-amber-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-amber-200"
+              className="rounded-full border border-sky-300/40 bg-sky-100/20 px-5 py-2 text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-sky-200"
             >
               Estadisticas generales
             </button>
             <button
               onClick={openCreate}
-              className="rounded-full border border-emerald-300/40 bg-emerald-100/20 px-5 py-2 text-emerald-900 shadow-sm shadow-emerald-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-emerald-200"
+              className="rounded-full border border-sky-300/40 bg-sky-100/20 px-5 py-2 text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-sky-200"
             >
               Nueva agencia
             </button>
@@ -714,7 +714,7 @@ export default function DevAgenciesPage() {
               {items.map((a) => (
                 <div
                   key={a.id_agency}
-                  className="space-y-3 rounded-3xl border border-emerald-200/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur"
+                  className="space-y-3 rounded-3xl border border-sky-200/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur"
                 >
                   <div className="min-w-0">
                     <h3 className="truncate text-lg font-semibold">{a.name}</h3>
@@ -727,13 +727,13 @@ export default function DevAgenciesPage() {
                   </div>
 
                   <div className="flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full border border-emerald-300/40 bg-emerald-100/20 px-3 py-1 text-emerald-900 dark:text-emerald-200">
+                    <span className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-sky-900 dark:text-sky-200">
                       Usuarios: {a.counts?.users ?? "—"}
                     </span>
-                    <span className="rounded-full border border-amber-300/40 bg-amber-100/20 px-3 py-1 text-amber-900 dark:text-amber-200">
+                    <span className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-sky-900 dark:text-sky-200">
                       Pasajeros: {a.counts?.clients ?? "—"}
                     </span>
-                    <span className="rounded-full border border-amber-300/40 bg-amber-100/20 px-3 py-1 text-amber-900 dark:text-amber-200">
+                    <span className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-sky-900 dark:text-sky-200">
                       Reservas: {a.counts?.bookings ?? "—"}
                     </span>
                   </div>
@@ -789,14 +789,14 @@ export default function DevAgenciesPage() {
                     <IconButton
                       title="Editar agencia"
                       onClick={() => openEdit(a.id_agency)}
-                      className="border-amber-300/40 bg-amber-100/20 text-amber-900 dark:text-amber-200"
+                      className="border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200"
                     >
                       <PencilIcon />
                     </IconButton>
                     <IconButton
                       title="Ver detalle"
                       onClick={() => goDetail(a.id_agency)}
-                      className="border-emerald-300/40 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200"
+                      className="border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200"
                     >
                       <EyeIcon />
                     </IconButton>

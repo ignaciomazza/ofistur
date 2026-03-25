@@ -154,7 +154,7 @@ export default function DevFinanceStatsPage() {
               <button
                 type="button"
                 onClick={() => router.push("/dev/agencies")}
-                className="rounded-full border border-amber-300/40 bg-amber-100/20 px-4 py-1.5 text-xs text-amber-900 shadow-sm shadow-amber-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-amber-200"
+                className="rounded-full border border-sky-300/40 bg-sky-100/20 px-4 py-1.5 text-xs text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-sky-200"
               >
                 Volver a agencias
               </button>
@@ -186,8 +186,8 @@ export default function DevFinanceStatsPage() {
                     onClick={() => setPeriod(p.key)}
                     className={`rounded-full border px-4 py-1.5 text-xs shadow-sm transition-transform hover:scale-95 active:scale-90 ${
                       active
-                        ? "border-emerald-300/40 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200"
-                        : "border-white/10 bg-white/10 text-sky-950/70 hover:border-amber-300/40 hover:bg-amber-100/20 dark:text-white/70"
+                        ? "border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200"
+                        : "border-white/10 bg-white/10 text-sky-950/70 hover:border-sky-300/40 hover:bg-sky-100/20 dark:text-white/70"
                     }`}
                   >
                     {p.label}
@@ -198,7 +198,7 @@ export default function DevFinanceStatsPage() {
                 type="button"
                 onClick={() => fetchStats(period, true)}
                 disabled={refreshing}
-                className="rounded-full border border-amber-300/40 bg-amber-100/20 px-4 py-1.5 text-xs text-amber-900 shadow-sm shadow-amber-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:text-amber-200"
+                className="rounded-full border border-sky-300/40 bg-sky-100/20 px-4 py-1.5 text-xs text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:text-sky-200"
               >
                 {refreshing ? "Actualizando..." : "Actualizar"}
               </button>
@@ -219,8 +219,8 @@ export default function DevFinanceStatsPage() {
           ) : (
             <>
               <div className="grid gap-4 lg:grid-cols-3">
-                <div className="rounded-3xl border border-emerald-300/30 bg-white/10 p-4 shadow-md shadow-emerald-950/10 backdrop-blur">
-                  <p className="text-xs text-emerald-900/70 dark:text-emerald-200/70">
+                <div className="rounded-3xl border border-sky-300/30 bg-white/10 p-4 shadow-md shadow-sky-950/10 backdrop-blur">
+                  <p className="text-xs text-sky-900/70 dark:text-sky-200/70">
                     Cobrado
                   </p>
                   <p className="mt-2 text-2xl font-semibold">
@@ -239,16 +239,16 @@ export default function DevFinanceStatsPage() {
                     </p>
                   </div>
                 </div>
-                <div className="rounded-3xl border border-emerald-300/30 bg-white/10 p-4 shadow-md shadow-emerald-950/10 backdrop-blur">
-                  <p className="text-xs text-emerald-900/70 dark:text-emerald-200/70">
+                <div className="rounded-3xl border border-sky-300/30 bg-white/10 p-4 shadow-md shadow-sky-950/10 backdrop-blur">
+                  <p className="text-xs text-sky-900/70 dark:text-sky-200/70">
                     Pendientes (ultimo cobro)
                   </p>
                   <p className="mt-2 text-2xl font-semibold">
                     {stats.counts.agencies_pending_latest}
                   </p>
                 </div>
-                <div className="rounded-3xl border border-amber-300/30 bg-white/10 p-4 shadow-md shadow-amber-950/10 backdrop-blur">
-                  <p className="text-xs text-amber-900/70 dark:text-amber-200/70">
+                <div className="rounded-3xl border border-sky-300/30 bg-white/10 p-4 shadow-md shadow-sky-950/10 backdrop-blur">
+                  <p className="text-xs text-sky-900/70 dark:text-sky-200/70">
                     Cobros pendientes
                   </p>
                   <p className="mt-2 text-2xl font-semibold">
@@ -306,7 +306,7 @@ export default function DevFinanceStatsPage() {
                     {mrrSplit.map((item) => (
                       <span
                         key={item.label}
-                        className="rounded-full border border-emerald-300/40 bg-emerald-100/20 px-3 py-1 text-xs text-emerald-900 dark:text-emerald-200"
+                        className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-xs text-sky-900 dark:text-sky-200"
                       >
                         {item.label}: {item.value}
                       </span>
@@ -323,7 +323,7 @@ export default function DevFinanceStatsPage() {
                       stats.recent_payments.map((row) => (
                         <div
                           key={row.id_charge}
-                          className="flex items-center justify-between rounded-2xl border border-emerald-300/30 bg-emerald-100/10 px-3 py-2"
+                          className="flex items-center justify-between rounded-2xl border border-sky-300/30 bg-sky-100/10 px-3 py-2"
                         >
                           <div>
                             <p className="font-semibold">{row.agency_name}</p>
@@ -354,7 +354,7 @@ export default function DevFinanceStatsPage() {
                     stats.pending_latest.map((row) => (
                       <div
                         key={row.id_agency}
-                        className="rounded-2xl border border-amber-300/30 bg-amber-100/10 p-3 text-xs text-sky-950/70 dark:text-white/70"
+                        className="rounded-2xl border border-sky-300/30 bg-sky-100/10 p-3 text-xs text-sky-950/70 dark:text-white/70"
                       >
                         <p className="text-sm font-semibold">{row.name}</p>
                         <p className="text-[11px] text-sky-950/60 dark:text-white/60">

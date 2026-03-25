@@ -191,7 +191,7 @@ export default function StorageAdminCard({ agencyId }: Props) {
     );
 
   return (
-    <div className="space-y-4 rounded-3xl border border-emerald-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
+    <div className="space-y-4 rounded-3xl border border-sky-300/30 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-lg font-medium">Plan de almacenamiento</h3>
@@ -201,13 +201,13 @@ export default function StorageAdminCard({ agencyId }: Props) {
               : "Aplica solo a esta agencia"}
           </p>
         </div>
-        <span className="rounded-full border border-emerald-300/40 bg-emerald-100/20 px-3 py-1 text-xs text-emerald-900 dark:text-emerald-200">
+        <span className="rounded-full border border-sky-300/40 bg-sky-100/20 px-3 py-1 text-xs text-sky-900 dark:text-sky-200">
           {targetLabel}
         </span>
       </div>
 
       {!isOwner && scope === "group" && (
-        <p className="text-xs text-amber-900/80 dark:text-amber-200">
+        <p className="text-xs text-sky-900/80 dark:text-sky-200">
           La configuracion se guarda en la agencia owner del grupo.
         </p>
       )}
@@ -257,7 +257,7 @@ export default function StorageAdminCard({ agencyId }: Props) {
                 Math.max(1, Number(e.target.value || 1)),
               )
             }
-            className="mt-2 w-full rounded-2xl border border-emerald-300/30 bg-white/60 px-3 py-2 text-sm outline-none dark:bg-white/10"
+            className="mt-2 w-full rounded-2xl border border-sky-300/30 bg-white/60 px-3 py-2 text-sm outline-none dark:bg-white/10"
           />
           <span className="mt-1 block text-xs text-sky-950/60 dark:text-white/60">
             {totalStorageGb} GB total
@@ -276,7 +276,7 @@ export default function StorageAdminCard({ agencyId }: Props) {
                 Math.max(1, Number(e.target.value || 1)),
               )
             }
-            className="mt-2 w-full rounded-2xl border border-emerald-300/30 bg-white/60 px-3 py-2 text-sm outline-none dark:bg-white/10"
+            className="mt-2 w-full rounded-2xl border border-sky-300/30 bg-white/60 px-3 py-2 text-sm outline-none dark:bg-white/10"
           />
           <span className="mt-1 block text-xs text-sky-950/60 dark:text-white/60">
             {totalTransferGb} GB/mes total
@@ -289,7 +289,7 @@ export default function StorageAdminCard({ agencyId }: Props) {
         <textarea
           value={form.notes}
           onChange={(e) => handleChange("notes", e.target.value)}
-          className="mt-2 min-h-[80px] w-full rounded-2xl border border-emerald-300/30 bg-white/60 px-3 py-2 text-sm outline-none dark:bg-white/10"
+          className="mt-2 min-h-[80px] w-full rounded-2xl border border-sky-300/30 bg-white/60 px-3 py-2 text-sm outline-none dark:bg-white/10"
         />
       </label>
 
@@ -301,7 +301,7 @@ export default function StorageAdminCard({ agencyId }: Props) {
           type="button"
           onClick={saveConfig}
           disabled={saving}
-          className="rounded-full border border-emerald-300/40 bg-emerald-100/20 px-6 py-2 text-xs text-emerald-900 shadow-sm shadow-emerald-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-50 dark:text-emerald-200"
+          className="rounded-full border border-sky-300/40 bg-sky-100/20 px-6 py-2 text-xs text-sky-900 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-50 dark:text-sky-200"
         >
           {saving ? "Guardando..." : "Guardar"}
         </button>

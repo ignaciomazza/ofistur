@@ -50,6 +50,18 @@ function genPassword(len = 12) {
 
 type Props = { agencyId: number };
 
+function formatRoleLabel(role: string) {
+  return String(role || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatCreationDate(value: string) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("es-AR");
+}
+
 export default function UsersAdminCard({ agencyId }: Props) {
   const { token } = useAuth();
 
@@ -319,112 +331,168 @@ export default function UsersAdminCard({ agencyId }: Props) {
     }
   }
 
+  const distinctRoles = useMemo(
+    () => new Set(items.map((item) => item.role)).size,
+    [items],
+  );
+  const usersWithPosition = useMemo(
+    () => items.filter((item) => item.position?.trim()).length,
+    [items],
+  );
+  const inputClassName =
+    "w-full rounded-2xl border border-sky-950/10 bg-white/50 px-3 py-2 text-sm outline-none backdrop-blur transition-colors focus:border-sky-400/50 dark:border-white/10 dark:bg-white/10 dark:text-white";
+  const selectClassName =
+    "w-full cursor-pointer rounded-2xl border border-sky-950/10 bg-white/50 px-3 py-2 text-sm outline-none backdrop-blur transition-colors focus:border-sky-400/50 dark:border-white/10 dark:bg-white/10 dark:text-white";
+
   // -------- render
   return (
-    <div className="space-y-4 rounded-3xl border border-white/10 bg-white/10 p-6 shadow-md shadow-sky-950/10 backdrop-blur">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-lg font-medium">Usuarios de la agencia</h3>
+    <div className="space-y-6 rounded-3xl border border-white/10 bg-white/10 p-6 text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur dark:text-white">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-medium">Usuarios de la agencia</h3>
+            <p className="text-xs text-sky-950/70 dark:text-white/70">
+              Alta, edición y mantenimiento de accesos en un solo panel.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded-full bg-sky-100 px-4 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
+          >
+            Nuevo usuario
+          </button>
+        </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 md:flex-row">
           <input
             ref={qRef}
             type="search"
             placeholder="Buscar por nombre o email"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            className="rounded-2xl border border-white/10 bg-white/50 px-3 py-2 text-sm outline-none dark:bg-white/10 dark:text-white"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void fetchList(true, q.trim());
+              }
+            }}
+            className={inputClassName}
           />
           <button
             type="button"
             onClick={() => fetchList(true, q.trim())}
-            className="rounded-full bg-white/0 px-4 py-2 text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/10"
+            className="rounded-full bg-white/0 px-5 py-2 text-sm text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/10"
           >
             Buscar
           </button>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="rounded-full bg-sky-100 px-4 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
-          >
-            Nuevo usuario
-          </button>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-white/20 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+              Usuarios cargados
+            </p>
+            <p className="mt-1 text-xl font-semibold">{items.length}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/20 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+              Roles activos
+            </p>
+            <p className="mt-1 text-xl font-semibold">{distinctRoles}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/20 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+              Con puesto definido
+            </p>
+            <p className="mt-1 text-xl font-semibold">{usersWithPosition}</p>
+          </div>
         </div>
       </div>
 
       {forbidden ? (
-        <p className="text-sm text-sky-950/70 dark:text-white/70">
+        <div className="rounded-2xl border border-white/10 bg-white/10 p-4 text-sm text-sky-950/70 dark:text-white/70">
           No tenés permisos para ver/editar usuarios.
-        </p>
+        </div>
       ) : loading ? (
-        <div> Cargando… </div>
+        <div className="rounded-2xl border border-white/10 bg-white/10 p-4 text-sm text-sky-950/70 dark:text-white/70">
+          Cargando usuarios...
+        </div>
       ) : items.length === 0 ? (
-        <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-          No hay usuarios.
+        <div className="rounded-2xl border border-white/10 bg-white/10 p-4 text-sm text-sky-950/70 dark:text-white/70">
+          No hay usuarios cargados para esta agencia.
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {items.map((u) => (
-              <div
-                key={u.id_user}
-                className="space-y-2 rounded-2xl border border-white/10 bg-white/10 p-4 shadow-sm"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {u.first_name} {u.last_name}
-                  </p>
-                  <p className="truncate text-xs text-sky-950/70 dark:text-white/60">
-                    {u.email}
-                  </p>
-                </div>
+          <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/10">
+            <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,0.8fr)_auto] gap-3 border-b border-white/10 bg-white/10 px-4 py-2 text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60 md:grid">
+              <span>Usuario</span>
+              <span>Rol</span>
+              <span>Puesto</span>
+              <span>Alta</span>
+              <span className="text-right">Acciones</span>
+            </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="block text-[10px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                      Rol
-                    </span>
-                    <span className="font-medium">{u.role}</span>
+            <div className="divide-y divide-white/10">
+              {items.map((u) => (
+                <div
+                  key={u.id_user}
+                  className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,0.8fr)_auto] md:items-center"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {u.first_name} {u.last_name}
+                    </p>
+                    <p className="truncate text-xs text-sky-950/70 dark:text-white/60">
+                      {u.email}
+                    </p>
                   </div>
-                  <div>
-                    <span className="block text-[10px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                      Puesto
-                    </span>
-                    <span className="font-medium">
-                      {u.position?.trim() || "—"}
-                    </span>
-                  </div>
-                </div>
 
-                <div className="mt-2 flex flex-wrap justify-end gap-2">
-                  <button
-                    onClick={() => openEdit(u)}
-                    className="rounded-full bg-sky-100 px-4 py-1.5 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
-                  >
-                    Editar
-                  </button>
-                  <button
-                    onClick={() => onResetPassword(u.id_user)}
-                    className="rounded-full bg-amber-500/90 px-4 py-1.5 text-amber-50 shadow-sm transition-transform hover:scale-95 active:scale-90"
-                  >
-                    Reset pass
-                  </button>
-                  <button
-                    onClick={() => onDelete(u.id_user)}
-                    className="rounded-full bg-red-600/90 px-4 py-1.5 text-red-50 shadow-sm transition-transform hover:scale-95 active:scale-90"
-                  >
-                    Eliminar
-                  </button>
+                  <div className="text-sm">{formatRoleLabel(u.role)}</div>
+
+                  <div className="text-sm text-sky-950/80 dark:text-white/80">
+                    {u.position?.trim() || "—"}
+                  </div>
+
+                  <div className="text-sm text-sky-950/70 dark:text-white/70">
+                    {formatCreationDate(u.creation_date)}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 md:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(u)}
+                      className="rounded-full bg-sky-100 px-3 py-1.5 text-xs text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onResetPassword(u.id_user)}
+                      className="rounded-full bg-white/0 px-3 py-1.5 text-xs text-sky-950 shadow-sm ring-1 ring-sky-950/15 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/20"
+                    >
+                      Reset pass
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(u.id_user)}
+                      className="rounded-full bg-red-600/90 px-3 py-1.5 text-xs text-red-50 shadow-sm transition-transform hover:scale-95 active:scale-90"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
 
-          <div className="mt-4 flex justify-center">
+          <div className="flex justify-center">
             {nextCursor != null ? (
               <button
+                type="button"
                 onClick={loadMore}
                 disabled={loadingMore}
-                className="rounded-full bg-sky-100 px-5 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-white/10 dark:text-white"
+                className="rounded-full bg-sky-100 px-5 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-white/10 dark:text-white"
               >
                 {loadingMore ? "Cargando..." : "Ver más"}
               </button>
@@ -437,105 +505,122 @@ export default function UsersAdminCard({ agencyId }: Props) {
         </>
       )}
 
-      {/* Form */}
       {openForm && (
         <form
           onSubmit={onSubmit}
-          className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-4"
+          className="space-y-4 rounded-2xl border border-white/10 bg-white/10 p-5"
         >
-          <h4 className="text-base font-medium">
-            {editingId ? "Editar usuario" : "Crear usuario"}
-          </h4>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h4 className="text-base font-medium">
+                {editingId ? "Editar usuario" : "Crear usuario"}
+              </h4>
+              <p className="text-xs text-sky-950/60 dark:text-white/60">
+                Los cambios impactan directamente en los accesos de la agencia.
+              </p>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div className="space-y-1">
-              <label className="text-xs">Nombre</label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                Nombre
+              </span>
               <input
                 value={form.first_name}
                 onChange={(e) =>
-                  setForm((p) => ({ ...p, first_name: e.target.value }))
+                  setForm((prev) => ({ ...prev, first_name: e.target.value }))
                 }
                 required
-                className="w-full rounded-xl border border-white/10 bg-white/50 px-3 py-2 outline-none dark:bg-white/10 dark:text-white"
+                className={inputClassName}
               />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs">Apellido</label>
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                Apellido
+              </span>
               <input
                 value={form.last_name}
                 onChange={(e) =>
-                  setForm((p) => ({ ...p, last_name: e.target.value }))
+                  setForm((prev) => ({ ...prev, last_name: e.target.value }))
                 }
                 required
-                className="w-full rounded-xl border border-white/10 bg-white/50 px-3 py-2 outline-none dark:bg-white/10 dark:text-white"
+                className={inputClassName}
               />
-            </div>
+            </label>
 
-            <div className="space-y-1">
-              <label className="text-xs">Email</label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                Email
+              </span>
               <input
                 type="email"
                 value={form.email}
                 onChange={(e) =>
-                  setForm((p) => ({ ...p, email: e.target.value }))
+                  setForm((prev) => ({ ...prev, email: e.target.value }))
                 }
                 required
-                className="w-full rounded-xl border border-white/10 bg-white/50 px-3 py-2 outline-none dark:bg-white/10 dark:text-white"
+                className={inputClassName}
               />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs">Rol</label>
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                Rol
+              </span>
               <select
                 value={form.role}
                 onChange={(e) =>
-                  setForm((p) => ({
-                    ...p,
+                  setForm((prev) => ({
+                    ...prev,
                     role: e.target.value as (typeof ROLES)[number],
                   }))
                 }
-                className="w-full rounded-xl border border-white/10 bg-white/50 px-3 py-2 outline-none dark:bg-white/10 dark:text-white"
+                className={selectClassName}
               >
                 {ROLES.map((r) => (
                   <option key={r} value={r}>
-                    {r}
+                    {formatRoleLabel(r)}
                   </option>
                 ))}
               </select>
-            </div>
+            </label>
 
-            <div className="space-y-1 md:col-span-2">
-              <label className="text-xs">Puesto (opcional)</label>
+            <label className="block md:col-span-2">
+              <span className="mb-1 block text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                Puesto (opcional)
+              </span>
               <input
                 value={form.position}
                 onChange={(e) =>
-                  setForm((p) => ({ ...p, position: e.target.value }))
+                  setForm((prev) => ({ ...prev, position: e.target.value }))
                 }
-                className="w-full rounded-xl border border-white/10 bg-white/50 px-3 py-2 outline-none dark:bg-white/10 dark:text-white"
+                className={inputClassName}
               />
-            </div>
+            </label>
 
             {!editingId && (
-              <div className="space-y-1 md:col-span-2">
-                <label className="text-xs">
-                  Contraseña (mín. 8, con mayúscula, minúscula, número y
-                  símbolo)
-                </label>
-                <div className="flex gap-2">
+              <div className="space-y-2 md:col-span-2">
+                <span className="block text-[11px] uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                  Contraseña de alta
+                </span>
+                <div className="flex flex-col gap-2 md:flex-row">
                   <input
                     type="text"
                     value={form.password}
                     onChange={(e) =>
-                      setForm((p) => ({ ...p, password: e.target.value }))
+                      setForm((prev) => ({ ...prev, password: e.target.value }))
                     }
                     placeholder="••••••••"
-                    className="w-full rounded-xl border border-white/10 bg-white/50 px-3 py-2 outline-none dark:bg-white/10 dark:text-white"
+                    className={inputClassName}
                   />
                   <button
                     type="button"
                     onClick={() =>
-                      setForm((p) => ({ ...p, password: genPassword(12) }))
+                      setForm((prev) => ({ ...prev, password: genPassword(12) }))
                     }
-                    className="rounded-full bg-white/0 px-4 py-2 text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/10"
+                    className="rounded-full bg-white/0 px-4 py-2 text-sm text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/10"
                   >
                     Generar
                   </button>
@@ -556,7 +641,7 @@ export default function UsersAdminCard({ agencyId }: Props) {
                 setOpenForm(false);
                 setEditingId(null);
               }}
-              className="rounded-full bg-white/0 px-6 py-2 text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/10"
+              className="rounded-full bg-white/0 px-6 py-2 text-sm text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:text-white dark:ring-white/10"
               disabled={saving}
             >
               Cancelar
@@ -564,7 +649,7 @@ export default function UsersAdminCard({ agencyId }: Props) {
             <button
               type="submit"
               disabled={!canSubmit || saving}
-              className="rounded-full bg-sky-100 px-6 py-2 text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-white/10 dark:text-white"
+              className="rounded-full bg-sky-100 px-6 py-2 text-sm text-sky-950 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:bg-white/10 dark:text-white"
             >
               {saving ? "Guardando..." : editingId ? "Guardar" : "Crear"}
             </button>
