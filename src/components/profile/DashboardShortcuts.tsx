@@ -57,6 +57,11 @@ type CommissionByCurrency = Record<
   string,
   {
     commissionTotal: number;
+    saleTotal: number;
+    receiptsTotal: number;
+    paymentsTotal: number;
+    nonOperatorExpenseTotal: number;
+    netTotal: number;
     seller: number;
     leader: number;
     agency: number;
@@ -252,6 +257,11 @@ const COMMISSION_VISIBLE_EPSILON = 0.01;
 
 const makeZeroCommission = () => ({
   commissionTotal: 0,
+  saleTotal: 0,
+  receiptsTotal: 0,
+  paymentsTotal: 0,
+  nonOperatorExpenseTotal: 0,
+  netTotal: 0,
   seller: 0,
   leader: 0,
   agency: 0,
@@ -264,6 +274,11 @@ const hasVisibleCommissionValues = (
   summary: ReturnType<typeof makeZeroCommission>,
 ) =>
   Math.abs(summary.commissionTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.saleTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.receiptsTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.paymentsTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.nonOperatorExpenseTotal) > COMMISSION_VISIBLE_EPSILON ||
+  Math.abs(summary.netTotal) > COMMISSION_VISIBLE_EPSILON ||
   Math.abs(summary.paidTotal) > COMMISSION_VISIBLE_EPSILON ||
   Math.abs(summary.debtTotal) > COMMISSION_VISIBLE_EPSILON ||
   Math.abs(summary.seller) > COMMISSION_VISIBLE_EPSILON ||
@@ -352,9 +367,6 @@ export default function DashboardShortcuts() {
   const [commissionByCur, setCommissionByCur] = useState<CommissionByCurrency>(
     {},
   );
-  const [macroMinPaidPct, setMacroMinPaidPct] = useState(0);
-  const [macroMinPaidPctDebounced, setMacroMinPaidPctDebounced] = useState(0);
-  const [macroMinPaidPctApplied, setMacroMinPaidPctApplied] = useState(0);
   const [loadingCommissionPanel, setLoadingCommissionPanel] = useState(false);
   const [newClientsCount, setNewClientsCount] = useState(0);
   const [totalBookings, setTotalBookings] = useState(0);
@@ -398,11 +410,7 @@ export default function DashboardShortcuts() {
   }, [token]);
 
   const fetchEarnings = useCallback(
-    async (
-      curCodes: string[],
-      scope: EarningsScope,
-      minPaidPct: number = 0,
-    ): Promise<CommissionByCurrency> => {
+    async (curCodes: string[], scope: EarningsScope): Promise<CommissionByCurrency> => {
       const toCurrencyMap = (pool?: Totals): CommissionByCurrency => {
         const out: CommissionByCurrency = {};
         for (const code of curCodes) {
@@ -437,17 +445,167 @@ export default function DashboardShortcuts() {
             from: monthFrom,
             to: monthTo,
           });
-          qs.set("minPaidPct", String(clampPct(minPaidPct)));
-          const r = await authFetch(
-            `/api/earnings?${qs.toString()}`,
-            { cache: "no-store" },
-            token || undefined,
-          );
-          if (!r.ok) {
-            console.error("[dashboard] earnings status:", r.status);
+          qs.set("minPaidPct", "0");
+
+          const sumInvestmentsByCurrency = async (
+            excludeOperator: boolean,
+          ): Promise<Totals> => {
+            const totals: Totals = {};
+            let cursor: number | null = null;
+
+            for (let i = 0; i < 30; i++) {
+              const invQs = new URLSearchParams({
+                paidFrom: monthFrom,
+                paidTo: monthTo,
+                take: "100",
+              });
+              if (excludeOperator) invQs.set("excludeOperator", "1");
+              if (cursor) invQs.set("cursor", String(cursor));
+
+              const invResp = await authFetch(
+                `/api/investments?${invQs.toString()}`,
+                { cache: "no-store" },
+                token || undefined,
+              );
+              if (!invResp.ok) {
+                console.error(
+                  "[dashboard] investments status:",
+                  invResp.status,
+                  "excludeOperator=",
+                  excludeOperator,
+                );
+                throw new Error("Error inversiones");
+              }
+
+              const payload = (await invResp.json()) as {
+                items?: Array<{
+                  amount?: number | string | null;
+                  currency?: string | null;
+                }>;
+                nextCursor?: number | null;
+              };
+              for (const row of payload.items || []) {
+                const cur = String(row.currency || "ARS")
+                  .trim()
+                  .toUpperCase();
+                if (!cur) continue;
+                const amount = toNum(row.amount ?? 0);
+                if (!Number.isFinite(amount)) continue;
+                totals[cur] = (totals[cur] || 0) + amount;
+              }
+
+              const nextCursor =
+                typeof payload.nextCursor === "number" &&
+                Number.isFinite(payload.nextCursor)
+                  ? payload.nextCursor
+                  : null;
+              if (!nextCursor || nextCursor === cursor) break;
+              cursor = nextCursor;
+            }
+
+            return totals;
+          };
+
+          const sumReceiptsByCurrency = async (): Promise<Totals> => {
+            const totals: Totals = {};
+            let cursor: number | null = null;
+
+            for (let i = 0; i < 40; i++) {
+              const rcQs = new URLSearchParams({
+                from: monthFrom,
+                to: monthTo,
+                take: "100",
+              });
+              if (cursor) rcQs.set("cursor", String(cursor));
+
+              const rcResp = await authFetch(
+                `/api/receipts?${rcQs.toString()}`,
+                { cache: "no-store" },
+                token || undefined,
+              );
+              if (!rcResp.ok) {
+                console.error("[dashboard] receipts status:", rcResp.status);
+                throw new Error("Error recibos");
+              }
+
+              const payload = (await rcResp.json()) as {
+                items?: Array<{
+                  amount?: number | string | null;
+                  amount_currency?: string | null;
+                  payment_fee_amount?: number | string | null;
+                  base_amount?: number | string | null;
+                  base_currency?: string | null;
+                }>;
+                nextCursor?: number | null;
+              };
+
+              for (const row of payload.items || []) {
+                const baseCur = row.base_currency
+                  ? String(row.base_currency).trim().toUpperCase()
+                  : "";
+                const amountCur = row.amount_currency
+                  ? String(row.amount_currency).trim().toUpperCase()
+                  : "";
+                const feeRaw = toNum(row.payment_fee_amount ?? 0);
+                const fee = Number.isFinite(feeRaw) ? feeRaw : 0;
+
+                if (baseCur) {
+                  const amountRaw = toNum(row.base_amount ?? 0);
+                  const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+                  if (amount !== 0 || fee !== 0) {
+                    totals[baseCur] = (totals[baseCur] || 0) + amount + fee;
+                  }
+                  continue;
+                }
+
+                if (amountCur) {
+                  const amountRaw = toNum(row.amount ?? 0);
+                  const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+                  if (amount !== 0 || fee !== 0) {
+                    totals[amountCur] = (totals[amountCur] || 0) + amount + fee;
+                  }
+                }
+              }
+
+              const nextCursor =
+                typeof payload.nextCursor === "number" &&
+                Number.isFinite(payload.nextCursor)
+                  ? payload.nextCursor
+                  : null;
+              if (!nextCursor || nextCursor === cursor) break;
+              cursor = nextCursor;
+            }
+
+            return totals;
+          };
+
+          const [earningsResp, allPaymentsByCur, nonOperatorByCur, receiptsByCur] =
+            await Promise.all([
+              authFetch(
+                `/api/earnings?${qs.toString()}`,
+                { cache: "no-store" },
+                token || undefined,
+              ),
+              sumInvestmentsByCurrency(false).catch((err) => {
+                console.error("[dashboard] inversiones totales:", err);
+                return {} as Totals;
+              }),
+              sumInvestmentsByCurrency(true).catch((err) => {
+                console.error("[dashboard] inversiones sin operador:", err);
+                return {} as Totals;
+              }),
+              sumReceiptsByCurrency().catch((err) => {
+                console.error("[dashboard] recibos:", err);
+                return {} as Totals;
+              }),
+            ]);
+
+          if (!earningsResp.ok) {
+            console.error("[dashboard] earnings status:", earningsResp.status);
             throw new Error("Error comisiones agencia");
           }
-          const data = (await r.json()) as AgencyEarningsResponse;
+
+          const data = (await earningsResp.json()) as AgencyEarningsResponse;
           const out: CommissionByCurrency = {};
           for (const code of curCodes) {
             const seller = Number(data?.totals?.sellerComm?.[code] ?? 0);
@@ -457,13 +615,26 @@ export default function DashboardShortcuts() {
             const commissionTotal = Number(
               stats?.commissionTotal ?? seller + leader + agency,
             );
-            const paidTotal = Number(stats?.paidTotal ?? 0);
+            const saleTotal = Number(stats?.saleTotal ?? 0);
+            const receiptsTotal = Number(receiptsByCur?.[code] ?? 0);
+            const paidTotal = receiptsTotal;
             const debtTotal = Number(stats?.debtTotal ?? 0);
             const paymentRate = Number(stats?.paymentRate ?? 0);
+            const paymentsTotal = Number(allPaymentsByCur?.[code] ?? 0);
+            const nonOperatorExpenseTotal = Number(nonOperatorByCur?.[code] ?? 0);
+            const netTotal = commissionTotal - nonOperatorExpenseTotal;
+
             out[code] = {
               commissionTotal: Number.isFinite(commissionTotal)
                 ? commissionTotal
                 : 0,
+              saleTotal: Number.isFinite(saleTotal) ? saleTotal : 0,
+              receiptsTotal: Number.isFinite(receiptsTotal) ? receiptsTotal : 0,
+              paymentsTotal: Number.isFinite(paymentsTotal) ? paymentsTotal : 0,
+              nonOperatorExpenseTotal: Number.isFinite(nonOperatorExpenseTotal)
+                ? nonOperatorExpenseTotal
+                : 0,
+              netTotal: Number.isFinite(netTotal) ? netTotal : 0,
               seller: Number.isFinite(seller) ? seller : 0,
               leader: Number.isFinite(leader) ? leader : 0,
               agency: Number.isFinite(agency) ? agency : 0,
@@ -818,14 +989,6 @@ export default function DashboardShortcuts() {
   ]);
 
   useEffect(() => {
-    if (!isMacroView) return;
-    const timeoutId = window.setTimeout(() => {
-      setMacroMinPaidPctDebounced(macroMinPaidPct);
-    }, 250);
-    return () => window.clearTimeout(timeoutId);
-  }, [isMacroView, macroMinPaidPct]);
-
-  useEffect(() => {
     if (!token || !profile) return;
 
     let cancelled = false;
@@ -833,21 +996,15 @@ export default function DashboardShortcuts() {
       enabledCurrencies.length > 0
         ? enabledCurrencies.map((c) => c.code)
         : (["ARS", "USD"] as string[]);
-    const requestedPaidPct = isMacroView ? macroMinPaidPctDebounced : 0;
     const reqId = commissionReqIdRef.current + 1;
     commissionReqIdRef.current = reqId;
 
     setLoadingCommissionPanel(true);
 
-    fetchEarnings(
-      curCodes,
-      isMacroView ? "agency" : "personal",
-      requestedPaidPct,
-    )
+    fetchEarnings(curCodes, isMacroView ? "agency" : "personal")
       .then((commission) => {
         if (cancelled || reqId !== commissionReqIdRef.current) return;
         setCommissionByCur(commission);
-        setMacroMinPaidPctApplied(requestedPaidPct);
       })
       .catch((e) => {
         console.error("[dashboard] earnings error:", e);
@@ -871,7 +1028,6 @@ export default function DashboardShortcuts() {
     profile,
     enabledCurrencies,
     isMacroView,
-    macroMinPaidPctDebounced,
     fetchEarnings,
   ]);
 
@@ -915,7 +1071,11 @@ export default function DashboardShortcuts() {
             hidden: { opacity: 0, y: 16 },
             visible: { opacity: 1, y: 0 },
           }}
-          className={`${glass} ${spanCls(2, 1)} ${isMacroView ? "p-5" : "p-6"}`}
+          className={`${glass} ${
+            isMacroView
+              ? "col-span-1 p-5 md:col-span-3 lg:col-span-4"
+              : `${spanCls(2, 1)} p-6`
+          }`}
         >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium text-sky-900/80 dark:text-sky-100">
@@ -932,62 +1092,22 @@ export default function DashboardShortcuts() {
           </div>
           {isMacroView ? (
             <>
-              <div className="mb-3 rounded-xl border border-white/20 bg-white/20 px-3 py-2.5 dark:bg-white/5">
-                <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <p className="text-xs font-medium opacity-80">
-                    Cobro minimo para incluir
-                  </p>
-                  <span className="rounded-full border border-sky-300/30 bg-sky-100/40 px-2 py-0.5 text-[11px] font-semibold text-sky-900 dark:text-sky-100">
-                    {macroMinPaidPct}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={5}
-                  value={macroMinPaidPct}
-                  onChange={(e) => {
-                    setLoadingCommissionPanel(true);
-                    setMacroMinPaidPct(clampPct(Number(e.target.value)));
-                  }}
-                  className="h-1.5 w-full accent-sky-500 hover:cursor-pointer"
-                />
-                <div className="mt-1.5 space-y-0.5">
-                  <p className="text-[10px] opacity-70">
-                    Referencia: porcentaje cobrado sobre el total de la reserva
-                    para incluirla.
-                  </p>
-                  <p className="inline-flex items-center gap-1 text-[10px] font-medium opacity-80">
-                    <span
-                      className={`inline-block size-1.5 rounded-full ${
-                        loadingCommissionPanel
-                          ? "animate-pulse bg-sky-400"
-                          : "bg-emerald-400/80"
-                      }`}
-                    />
-                    {loadingCommissionPanel
-                      ? "Actualizando comisiones..."
-                      : `Filtro aplicado: ${macroMinPaidPctApplied}%`}
-                  </p>
-                  <p className="text-[10px] opacity-70">
-                    La ganancia total mostrada es libre de impuestos.
-                  </p>
-                </div>
-              </div>
               {macroCurrencyCodes.length === 0 ? (
                 <p className="rounded-xl border border-white/15 bg-white/15 p-3 text-sm opacity-80">
                   {loadingCommissionPanel
-                    ? "Cargando comisiones..."
-                    : "Aún no hay servicios para calcular comisiones."}
+                    ? "Cargando datos..."
+                    : "Aún no hay datos del mes para mostrar."}
                 </p>
               ) : (
                 <div className="grid gap-3 xl:grid-cols-2">
                   {macroCurrencyCodes.map((code) => {
                     const summary = commissionByCur[code] || makeZeroCommission();
-                    const ratePct = Math.round((summary.paymentRate || 0) * 100);
+                    const ratePct = Math.round(clampPct((summary.paymentRate || 0) * 100));
                     const commissionVat =
                       Math.max(summary.commissionTotal, 0) * COMMISSION_VAT_TOTAL_RATE;
+                    const netTotal =
+                      summary.commissionTotal -
+                      summary.nonOperatorExpenseTotal;
                     return (
                       <div
                         key={code}
@@ -996,81 +1116,115 @@ export default function DashboardShortcuts() {
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <p className="text-sm font-semibold">{code}</p>
                           <span className="rounded-full border border-white/25 bg-white/20 px-2 py-0.5 text-[10px]">
-                            Tasa pago {ratePct}%
+                            Tasa de pago {ratePct}%
                           </span>
                         </div>
 
-                        <div className="space-y-1.5">
-                          <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-[10px] uppercase tracking-wide opacity-70">
-                                Ganancia total
-                              </p>
-                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                                {fmt(summary.commissionTotal, code as CurrencyCode)}
-                              </p>
+                        <div className="space-y-2">
+                          <div className="rounded-lg border border-white/10 bg-white/10 p-2">
+                            <p className="mb-1.5 text-[10px] uppercase tracking-wide opacity-60">
+                              Resultado del mes
+                            </p>
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Comisión del mes
+                                </p>
+                                <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.commissionTotal, code as CurrencyCode)}
+                                </p>
+                              </div>
+                              <div className="flex items-center justify-between gap-3 rounded-lg border border-violet-400/20 bg-violet-500/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  IVA de comisiones (informativo)
+                                </p>
+                                <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(commissionVat, code as CurrencyCode)}
+                                </p>
+                              </div>
+                              <div className="flex items-center justify-between gap-3 rounded-lg border border-rose-400/20 bg-rose-500/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Inversión / gastos del mes
+                                </p>
+                                <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.nonOperatorExpenseTotal, code as CurrencyCode)}
+                                </p>
+                              </div>
+                              <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Ganancia total
+                                </p>
+                                <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(netTotal, code as CurrencyCode)}
+                                </p>
+                              </div>
                             </div>
+                            <p className="mt-1.5 text-[10px] opacity-70">
+                              Ganancia total = Comisión del mes - Inversión / gastos.
+                            </p>
                           </div>
-                          <div className="rounded-lg border border-violet-400/20 bg-violet-500/10 p-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-[10px] uppercase tracking-wide opacity-70">
-                                IVA de comisiones
-                              </p>
-                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                                {fmt(commissionVat, code as CurrencyCode)}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 p-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-[10px] uppercase tracking-wide opacity-70">
-                                Cobrado
-                              </p>
-                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                                {fmt(summary.paidTotal, code as CurrencyCode)}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-[10px] uppercase tracking-wide opacity-70">
-                                Pendiente
-                              </p>
-                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                                {fmt(summary.debtTotal, code as CurrencyCode)}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
 
-                        <div className="mt-2 border-t border-white/10 pt-2">
-                          <p className="mb-1.5 text-[10px] uppercase tracking-wide opacity-60">
-                            Distribucion
-                          </p>
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide opacity-70">
-                                Vendedor
-                              </p>
-                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                                {fmt(summary.seller, code as CurrencyCode)}
-                              </p>
+                          <div className="rounded-lg border border-white/10 bg-white/10 p-2">
+                            <p className="mb-1.5 text-[10px] uppercase tracking-wide opacity-60">
+                              Actividad del mes
+                            </p>
+                            <div className="grid gap-1.5 sm:grid-cols-3">
+                              <div className="rounded-lg border border-sky-400/20 bg-sky-500/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Facturación total
+                                </p>
+                                <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.saleTotal, code as CurrencyCode)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-indigo-400/20 bg-indigo-500/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Recibos del mes
+                                </p>
+                                <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.receiptsTotal, code as CurrencyCode)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Pagos del mes
+                                </p>
+                                <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.paymentsTotal, code as CurrencyCode)}
+                                </p>
+                              </div>
                             </div>
-                            <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide opacity-70">
-                                Lider
-                              </p>
-                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                                {fmt(summary.leader, code as CurrencyCode)}
-                              </p>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
-                              <p className="text-[10px] uppercase tracking-wide opacity-70">
-                                Agencia
-                              </p>
-                              <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                                {fmt(summary.agency, code as CurrencyCode)}
-                              </p>
+                          </div>
+
+                          <div className="rounded-lg border border-white/10 bg-white/10 p-2">
+                            <p className="mb-1.5 text-[10px] uppercase tracking-wide opacity-60">
+                              Distribución de comisión
+                            </p>
+                            <div className="grid gap-1.5 sm:grid-cols-3">
+                              <div className="rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Vendedor
+                                </p>
+                                <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.seller, code as CurrencyCode)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Líder
+                                </p>
+                                <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.leader, code as CurrencyCode)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/10 px-2 py-1.5">
+                                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                                  Agencia
+                                </p>
+                                <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                                  {fmt(summary.agency, code as CurrencyCode)}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
