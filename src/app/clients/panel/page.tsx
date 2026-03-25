@@ -18,6 +18,8 @@ import "react-toastify/dist/ReactToastify.css";
 type MoneyMap = Record<string, number>;
 type RoleInBooking = "ALL" | "TITULAR" | "COMPANION";
 type DateMode = "creation" | "travel";
+type CustomFieldFilter = { key: string; value: string };
+type CustomFieldFilterDraft = CustomFieldFilter & { id: string };
 type SortKey =
   | "last_booking_desc"
   | "next_trip_asc"
@@ -353,12 +355,34 @@ function roleLabel(role: "TITULAR" | "ACOMPANANTE"): string {
   return role === "TITULAR" ? "Titular" : "Acompañante";
 }
 
+function buildCustomFieldFilterId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sanitizeCustomFieldFilters(
+  filters: CustomFieldFilter[],
+): CustomFieldFilter[] {
+  const seen = new Set<string>();
+  const out: CustomFieldFilter[] = [];
+  filters.forEach((filter) => {
+    const key = String(filter.key || "")
+      .trim()
+      .toLowerCase();
+    const value = String(filter.value || "").trim();
+    if (!key || !value || seen.has(key)) return;
+    seen.add(key);
+    out.push({ key, value });
+  });
+  return out.slice(0, 8);
+}
+
 type QueryOverrides = Partial<{
   q: string;
   roleInBooking: RoleInBooking;
   dateMode: DateMode;
   profileKey: string;
   ownerId: number;
+  customFieldFilters: CustomFieldFilter[];
   from: string;
   to: string;
   includeEmpty: boolean;
@@ -389,6 +413,9 @@ export default function ClientsPanelPage() {
 
   const [profileKey, setProfileKey] = useState("all");
   const [ownerId, setOwnerId] = useState<number>(0);
+  const [customFieldFilters, setCustomFieldFilters] = useState<
+    CustomFieldFilterDraft[]
+  >([]);
   const [dateMode, setDateMode] = useState<DateMode>("travel");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -412,6 +439,15 @@ export default function ClientsPanelPage() {
     profileOptions.forEach((profile) => map.set(profile.key, profile.label));
     return map;
   }, [profileOptions]);
+  const customFieldLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    profileOptions.forEach((profile) => {
+      profile.custom_fields.forEach((field) => {
+        if (!map.has(field.key)) map.set(field.key, field.label);
+      });
+    });
+    return map;
+  }, [profileOptions]);
 
   const ownerLabelMap = useMemo(() => {
     const map = new Map<number, string>();
@@ -421,6 +457,38 @@ export default function ClientsPanelPage() {
     });
     return map;
   }, [ownerOptions]);
+  const selectedProfile = useMemo(
+    () => profileOptions.find((profile) => profile.key === profileKey) ?? null,
+    [profileKey, profileOptions],
+  );
+  const selectedProfileCustomFields = useMemo(
+    () => selectedProfile?.custom_fields ?? [],
+    [selectedProfile],
+  );
+  const selectedProfileCustomFieldMap = useMemo(
+    () =>
+      new Map(selectedProfileCustomFields.map((field) => [field.key, field])),
+    [selectedProfileCustomFields],
+  );
+  const normalizedCustomFieldFilters = useMemo(
+    () =>
+      sanitizeCustomFieldFilters(
+        customFieldFilters.map((filter) => ({
+          key: filter.key,
+          value: filter.value,
+        })),
+      ),
+    [customFieldFilters],
+  );
+
+  useEffect(() => {
+    setCustomFieldFilters((prev) => {
+      if (profileKey === "all") return prev.length ? [] : prev;
+      const validKeys = new Set(selectedProfileCustomFields.map((field) => field.key));
+      const next = prev.filter((filter) => validKeys.has(filter.key));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [profileKey, selectedProfileCustomFields]);
 
   useEffect(() => {
     if (!token) return;
@@ -490,6 +558,8 @@ export default function ClientsPanelPage() {
       const effectiveDateMode = overrides?.dateMode ?? dateMode;
       const effectiveProfileKey = overrides?.profileKey ?? profileKey;
       const effectiveOwnerId = overrides?.ownerId ?? ownerId;
+      const effectiveCustomFieldFilters =
+        overrides?.customFieldFilters ?? normalizedCustomFieldFilters;
       const effectiveFrom = overrides?.from ?? from;
       const effectiveTo = overrides?.to ?? to;
       const effectiveIncludeEmpty = overrides?.includeEmpty ?? includeEmpty;
@@ -506,6 +576,12 @@ export default function ClientsPanelPage() {
       if (canSelectOwner && effectiveOwnerId > 0) {
         params.set("ownerId", String(effectiveOwnerId));
       }
+      if (effectiveCustomFieldFilters.length > 0) {
+        params.set(
+          "custom_filters",
+          JSON.stringify(effectiveCustomFieldFilters),
+        );
+      }
       if (effectiveFrom) params.set("from", effectiveFrom);
       if (effectiveTo) params.set("to", effectiveTo);
       if (effectiveIncludeEmpty) params.set("include_empty", "1");
@@ -518,6 +594,7 @@ export default function ClientsPanelPage() {
       profileKey,
       canSelectOwner,
       ownerId,
+      normalizedCustomFieldFilters,
       from,
       to,
       includeEmpty,
@@ -624,11 +701,35 @@ export default function ClientsPanelPage() {
     setRoleInBooking("ALL");
     setProfileKey("all");
     setOwnerId(0);
+    setCustomFieldFilters([]);
     setDateMode("travel");
     setFrom("");
     setTo("");
     setIncludeEmpty(false);
   };
+
+  const addCustomFieldFilter = useCallback(() => {
+    if (profileKey === "all" || selectedProfileCustomFields.length === 0) return;
+    setCustomFieldFilters((prev) => {
+      const usedKeys = new Set(prev.map((filter) => filter.key));
+      const available = selectedProfileCustomFields.find(
+        (field) => !usedKeys.has(field.key),
+      );
+      if (!available) return prev;
+      return [
+        ...prev,
+        {
+          id: buildCustomFieldFilterId(),
+          key: available.key,
+          value: "",
+        },
+      ];
+    });
+  }, [profileKey, selectedProfileCustomFields]);
+
+  const removeCustomFieldFilter = useCallback((id: string) => {
+    setCustomFieldFilters((prev) => prev.filter((filter) => filter.id !== id));
+  }, []);
 
   const sortedRows = useMemo(() => {
     const rowsCopy = [...rows];
@@ -682,6 +783,10 @@ export default function ClientsPanelPage() {
     if (canSelectOwner && ownerId > 0) {
       labels.push(`Vendedor: ${ownerLabelMap.get(ownerId) || `N° ${ownerId}`}`);
     }
+    normalizedCustomFieldFilters.forEach((filter) => {
+      const fieldLabel = customFieldLabelMap.get(filter.key) || filter.key;
+      labels.push(`${fieldLabel}: ${filter.value}`);
+    });
     if (from) labels.push(`Desde: ${from}`);
     if (to) labels.push(`Hasta: ${to}`);
     if (dateMode === "creation") labels.push("Base: creación");
@@ -695,11 +800,17 @@ export default function ClientsPanelPage() {
     canSelectOwner,
     ownerId,
     ownerLabelMap,
+    customFieldLabelMap,
+    normalizedCustomFieldFilters,
     from,
     to,
     dateMode,
     includeEmpty,
   ]);
+  const canAddCustomFieldFilter =
+    profileKey !== "all" &&
+    selectedProfileCustomFields.length > 0 &&
+    customFieldFilters.length < selectedProfileCustomFields.length;
 
   return (
     <ProtectedRoute>
@@ -869,6 +980,7 @@ export default function ClientsPanelPage() {
                     roleInBooking: "ALL",
                     profileKey: "all",
                     ownerId: 0,
+                    customFieldFilters: [],
                     dateMode: "travel",
                     from: "",
                     to: "",
@@ -896,8 +1008,8 @@ export default function ClientsPanelPage() {
           </div>
 
           {filtersOpen && (
-            <div className="mt-4 grid grid-cols-1 gap-3 rounded-2xl border border-white/15 bg-white/10 p-3 lg:grid-cols-5">
-              <div className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-3 lg:col-span-2">
+            <div className="mt-4 grid grid-cols-1 gap-3 rounded-2xl border border-white/15 bg-white/10 p-3 lg:grid-cols-12">
+              <div className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-3 lg:col-span-4">
                 <p className="text-[11px] uppercase tracking-[0.16em] opacity-65">
                   Segmentación
                 </p>
@@ -943,7 +1055,121 @@ export default function ClientsPanelPage() {
                 )}
               </div>
 
-              <div className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-3 lg:col-span-3">
+              <div className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-3 lg:col-span-4">
+                <p className="text-[11px] uppercase tracking-[0.16em] opacity-65">
+                  Campos personalizados
+                </p>
+
+                {profileKey === "all" ? (
+                  <p className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-80">
+                    Seleccioná un tipo de pax para habilitar filtros por campos
+                    personalizados.
+                  </p>
+                ) : selectedProfileCustomFields.length === 0 ? (
+                  <p className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-80">
+                    Este tipo de pax no tiene campos personalizados configurados.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs opacity-75">
+                      La búsqueda es parcial y no distingue mayúsculas.
+                    </p>
+                    <div className="space-y-2">
+                      {customFieldFilters.length === 0 && (
+                        <p className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-70">
+                          Todavía no agregaste campos para filtrar.
+                        </p>
+                      )}
+                      {customFieldFilters.map((filter) => {
+                        const selectedField =
+                          selectedProfileCustomFieldMap.get(filter.key);
+                        const usedByOthers = new Set(
+                          customFieldFilters
+                            .filter((item) => item.id !== filter.id)
+                            .map((item) => item.key),
+                        );
+                        const rowOptions = selectedProfileCustomFields.filter(
+                          (field) =>
+                            field.key === filter.key || !usedByOthers.has(field.key),
+                        );
+
+                        return (
+                          <div
+                            key={filter.id}
+                            className="grid grid-cols-1 gap-2 rounded-2xl border border-white/10 bg-white/10 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                          >
+                            <select
+                              value={filter.key}
+                              onChange={(e) => {
+                                const nextKey = e.target.value;
+                                setCustomFieldFilters((prev) =>
+                                  prev.map((item) =>
+                                    item.id === filter.id
+                                      ? { ...item, key: nextKey }
+                                      : item,
+                                  ),
+                                );
+                              }}
+                              className={SELECT}
+                            >
+                              {rowOptions.map((field) => (
+                                <option key={field.key} value={field.key}>
+                                  {field.label}
+                                </option>
+                              ))}
+                            </select>
+
+                            <input
+                              type={
+                                selectedField?.type === "number"
+                                  ? "number"
+                                  : selectedField?.type === "date"
+                                    ? "date"
+                                    : "text"
+                              }
+                              value={filter.value}
+                              onChange={(e) => {
+                                const nextValue = e.target.value;
+                                setCustomFieldFilters((prev) =>
+                                  prev.map((item) =>
+                                    item.id === filter.id
+                                      ? { ...item, value: nextValue }
+                                      : item,
+                                  ),
+                                );
+                              }}
+                              placeholder={
+                                selectedField?.placeholder ||
+                                "Escribí un valor para filtrar"
+                              }
+                              className={INPUT}
+                            />
+
+                            <button
+                              type="button"
+                              className={`${BTN} px-3`}
+                              onClick={() => removeCustomFieldFilter(filter.id)}
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <button
+                      type="button"
+                      className={`${BTN} w-full`}
+                      onClick={addCustomFieldFilter}
+                      disabled={!canAddCustomFieldFilter}
+                    >
+                      Agregar campo
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-3 lg:col-span-4">
                 <p className="text-[11px] uppercase tracking-[0.16em] opacity-65">
                   Tiempo y orden
                 </p>
@@ -1046,7 +1272,7 @@ export default function ClientsPanelPage() {
               </div>
 
               {from && to && from > to && (
-                <p className="text-xs text-rose-700 dark:text-rose-300 lg:col-span-5">
+                <p className="text-xs text-rose-700 dark:text-rose-300 lg:col-span-12">
                   El rango de fechas es inválido: &quot;Desde&quot; debe ser menor
                   o igual a &quot;Hasta&quot;.
                 </p>

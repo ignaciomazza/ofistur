@@ -31,6 +31,7 @@ type VisibilityMode = "all" | "team" | "own";
 type RoleInBooking = "ALL" | "TITULAR" | "COMPANION";
 type DateMode = "creation" | "travel";
 type MoneyMap = Record<string, number>;
+type CustomFieldFilter = { key: string; value: string };
 
 type PanelRecentBooking = {
   id_booking: number;
@@ -99,12 +100,14 @@ type ClientLite = {
   first_name: string;
   last_name: string;
   profile_key: string;
+  custom_fields: Prisma.JsonValue | null;
   id_user: number;
   user: { id_user: number; first_name: string; last_name: string } | null;
 };
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
+const CUSTOM_FIELD_KEY_REGEX = /^[a-z0-9_]{1,40}$/;
 
 function getTokenFromRequest(req: NextApiRequest): string | null {
   if (req.cookies?.token) return req.cookies.token;
@@ -178,6 +181,74 @@ function normalizeDateMode(value: unknown): DateMode {
   return String(value || "").trim().toLowerCase() === "creation"
     ? "creation"
     : "travel";
+}
+
+function normalizeFilterText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+function normalizeCustomFieldFilters(value: unknown): CustomFieldFilter[] {
+  if (value == null) return [];
+
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  const seen = new Set<string>();
+  const out: CustomFieldFilter[] = [];
+
+  parsed.forEach((rawItem) => {
+    if (!rawItem || typeof rawItem !== "object") return;
+    const item = rawItem as Record<string, unknown>;
+    const key = String(item.key ?? "")
+      .trim()
+      .toLowerCase();
+    const filterValue = String(item.value ?? "").trim();
+    if (!key || !filterValue || !CUSTOM_FIELD_KEY_REGEX.test(key)) return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ key, value: filterValue });
+  });
+
+  return out.slice(0, 8);
+}
+
+function readCustomFieldValue(
+  customFields: Prisma.JsonValue | null,
+  key: string,
+): string {
+  if (!customFields || typeof customFields !== "object" || Array.isArray(customFields)) {
+    return "";
+  }
+  const record = customFields as Record<string, unknown>;
+  return String(record[key] ?? "").trim();
+}
+
+function matchesCustomFieldFilters(
+  customFields: Prisma.JsonValue | null,
+  filters: CustomFieldFilter[],
+): boolean {
+  if (filters.length === 0) return true;
+
+  return filters.every((filter) => {
+    const currentValue = readCustomFieldValue(customFields, filter.key);
+    if (!currentValue) return false;
+    const currentNorm = normalizeFilterText(currentValue);
+    const expectedNorm = normalizeFilterText(filter.value);
+    if (!expectedNorm) return false;
+    return currentNorm.includes(expectedNorm);
+  });
 }
 
 async function getUserFromAuth(
@@ -667,6 +738,11 @@ export default async function handler(
         ? req.query.date_mode[0]
         : req.query.date_mode,
     );
+    const customFilters = normalizeCustomFieldFilters(
+      Array.isArray(req.query.custom_filters)
+        ? req.query.custom_filters[0]
+        : req.query.custom_filters,
+    );
 
     const from = String(
       Array.isArray(req.query.from) ? req.query.from[0] : req.query.from || "",
@@ -754,6 +830,7 @@ export default async function handler(
           first_name: true,
           last_name: true,
           profile_key: true,
+          custom_fields: true,
           id_user: true,
           user: {
             select: {
@@ -775,13 +852,20 @@ export default async function handler(
 
       const hasMoreBatch = rawClients.length > batchSize;
       const batchClients = (hasMoreBatch ? rawClients.slice(0, batchSize) : rawClients) as ClientLite[];
+      const filteredBatchClients = customFilters.length
+        ? batchClients.filter((client) =>
+            matchesCustomFieldFilters(client.custom_fields, customFilters),
+          )
+        : batchClients;
 
       cursor = batchClients[batchClients.length - 1]?.id_client;
       if (!hasMoreBatch) exhausted = true;
 
+      if (!filteredBatchClients.length) continue;
+
       const rows = await buildRowsForClients(
         auth.id_agency,
-        batchClients,
+        filteredBatchClients,
         roleFilter,
         dateMode,
         from,
