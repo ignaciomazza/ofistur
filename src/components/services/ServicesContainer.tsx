@@ -2553,6 +2553,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                         isFormVisible={receiptFormVisible}
                         setIsFormVisible={setReceiptFormVisible}
                         bookingId={booking.id_booking}
+                        bookingDisplayId={booking.agency_booking_id ?? undefined}
                         allowAgency={false}
                         enableAttachAction={!editingReceipt}
                         initialServiceIds={editingReceipt?.serviceIds ?? []}

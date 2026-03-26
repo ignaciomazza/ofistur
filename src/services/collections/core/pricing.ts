@@ -106,7 +106,7 @@ export async function buildCyclePricingSnapshot(
 ): Promise<PricingSnapshot> {
   const config = getBillingConfig();
 
-  const [billingConfig, adjustments] = await Promise.all([
+  const [billingConfig, adjustments, storageConfig] = await Promise.all([
     input.tx.agencyBillingConfig.findUnique({
       where: { id_agency: input.agencyId },
       select: {
@@ -132,6 +132,10 @@ export async function buildCyclePricingSnapshot(
       },
       orderBy: [{ id_adjustment: "asc" }],
     }),
+    input.tx.agencyStorageConfig.findUnique({
+      where: { id_agency: input.agencyId },
+      select: { enabled: true },
+    }),
   ]);
 
   const planKey: PlanKey =
@@ -139,7 +143,11 @@ export async function buildCyclePricingSnapshot(
       ? billingConfig.plan_key
       : "basico";
   const billingUsers = normalizeUsersCount(billingConfig?.billing_users ?? 3);
-  const basePlanUsd = round2(calcMonthlyBase(planKey, billingUsers));
+  const basePlanUsd = round2(
+    calcMonthlyBase(planKey, billingUsers, {
+      storageEnabled: Boolean(storageConfig?.enabled),
+    }),
+  );
 
   const addonsSnapshot: AddonSnapshot[] = adjustments.map((item) => {
     const computed = adjustmentToUsd(basePlanUsd, {

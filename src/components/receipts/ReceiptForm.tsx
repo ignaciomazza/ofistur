@@ -466,6 +466,7 @@ export interface ReceiptFormProps {
   setIsFormVisible?: React.Dispatch<React.SetStateAction<boolean>>;
 
   bookingId?: number;
+  bookingDisplayId?: number;
   allowAgency?: boolean;
 
   searchBookings?: (q: string) => Promise<BookingOption[]>;
@@ -562,6 +563,7 @@ export default function ReceiptForm({
   isFormVisible,
   setIsFormVisible,
   bookingId,
+  bookingDisplayId,
   allowAgency = true,
   searchBookings,
   loadServicesForBooking,
@@ -940,8 +942,19 @@ export default function ReceiptForm({
   const selectedBookingDisplayId = useMemo(() => {
     if (!selectedBookingId) return null;
     const opt = bookingOptions.find((b) => b.id_booking === selectedBookingId);
-    return opt?.agency_booking_id ?? selectedBookingId;
-  }, [bookingOptions, selectedBookingId]);
+    if (typeof opt?.agency_booking_id === "number" && opt.agency_booking_id > 0) {
+      return opt.agency_booking_id;
+    }
+    if (
+      selectedBookingId === bookingId &&
+      typeof bookingDisplayId === "number" &&
+      Number.isFinite(bookingDisplayId) &&
+      bookingDisplayId > 0
+    ) {
+      return Math.trunc(bookingDisplayId);
+    }
+    return selectedBookingId;
+  }, [bookingDisplayId, bookingId, bookingOptions, selectedBookingId]);
 
   const lockedCurrency = useMemo(() => {
     if (!userSelectedServices.length) return null;
@@ -3497,6 +3510,7 @@ export default function ReceiptForm({
                 clearBookingContext={clearBookingContext}
                 forcedBookingMode={forcedBookingMode}
                 bookingId={bookingId}
+                selectedBookingDisplayId={selectedBookingDisplayId}
                 bookingQuery={bookingQuery}
                 setBookingQuery={setBookingQuery}
                 bookingOptions={bookingOptions}

@@ -9,7 +9,9 @@ import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
 import {
   IVA_RATE,
   PLAN_DATA,
+  STORAGE_PLAN_DATA,
   applyVat,
+  calcStorageAddon,
   calcExtraUsersCost,
   calcInfraCost,
   calcMonthlyBaseWithVat,
@@ -107,15 +109,6 @@ type StorageStatusPayload = {
 
 const FIXED_ACCOUNT = "Banco Nación";
 const FIXED_PAYMENT_METHOD = "Transferencia";
-
-const PLAN_STORAGE_INCLUDED: Record<
-  PlanKey,
-  { storage_gb: number; transfer_gb: number }
-> = {
-  basico: { storage_gb: 128, transfer_gb: 256 },
-  medio: { storage_gb: 500, transfer_gb: 1024 },
-  pro: { storage_gb: 1024, transfer_gb: 2048 },
-};
 
 function isDateOnly(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -366,8 +359,10 @@ export default function BillingAdminCard({ agencyId }: Props) {
     "w-full cursor-pointer rounded-xl border border-white/10 bg-white/50 px-3 py-2 text-sm outline-none transition-colors hover:border-sky-400/40 focus:border-sky-400/50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/10 dark:text-white";
 
   const monthlyBase = useMemo(() => {
-    return calcMonthlyBaseWithVat(config.plan_key, config.billing_users);
-  }, [config.plan_key, config.billing_users]);
+    return calcMonthlyBaseWithVat(config.plan_key, config.billing_users, {
+      storageEnabled: hasStorageContract,
+    });
+  }, [config.plan_key, config.billing_users, hasStorageContract]);
   const monthlyTotals = useMemo(() => {
     return calcTotals(monthlyBase, adjustments, new Date());
   }, [monthlyBase, adjustments]);
@@ -384,9 +379,15 @@ export default function BillingAdminCard({ agencyId }: Props) {
   const infraVat = useMemo(() => {
     return applyVat(calcInfraCost(config.billing_users));
   }, [config.billing_users]);
-  const storageIncluded = useMemo(() => {
-    return PLAN_STORAGE_INCLUDED[config.plan_key];
+  const storagePlan = useMemo(() => {
+    return STORAGE_PLAN_DATA[config.plan_key];
   }, [config.plan_key]);
+  const storageAddonBase = useMemo(() => {
+    return calcStorageAddon(config.plan_key, hasStorageContract);
+  }, [config.plan_key, hasStorageContract]);
+  const storageAddonVat = useMemo(() => {
+    return applyVat(storageAddonBase);
+  }, [storageAddonBase]);
   const chargeDiscountValue = useMemo(() => {
     if (chargeDiscountMode === "percent") {
       const base = Number(chargeForm.base_amount_usd || 0);
@@ -1465,8 +1466,9 @@ export default function BillingAdminCard({ agencyId }: Props) {
                     limite interno.
                   </p>
                   <p className="mt-1 text-[11px] text-sky-950/60 dark:text-white/60">
-                    Storage incluido: {formatStorageUnits(storageIncluded.storage_gb)} +{" "}
-                    transferencia {formatStorageUnits(storageIncluded.transfer_gb)} por mes.
+                    {hasStorageContract
+                      ? `Storage activo (${storagePlan.label}): USD ${storagePlan.base} + IVA. Incluye ${formatStorageUnits(storagePlan.storage_gb)} + ${formatStorageUnits(storagePlan.transfer_gb)} de transferencia/mes.`
+                      : "El storage se factura por separado y solo aplica cuando esta activado en la seccion Storage."}
                   </p>
                 </div>
               </div>
@@ -1573,16 +1575,15 @@ export default function BillingAdminCard({ agencyId }: Props) {
 
                 <div className="rounded-xl border border-white/10 bg-white/30 p-3 text-xs text-sky-950/70 dark:bg-white/10 dark:text-white/70">
                   <div className="flex justify-between">
-                    <span>Plan base (incluye storage)</span>
+                    <span>Plan base</span>
                     <span>{formatMoney(basePlanVat)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Storage y transferencia incluidos</span>
-                    <span>
-                      {formatStorageUnits(storageIncluded.storage_gb)} /{" "}
-                      {formatStorageUnits(storageIncluded.transfer_gb)}
-                    </span>
-                  </div>
+                  {hasStorageContract && (
+                    <div className="flex justify-between">
+                      <span>Storage ({storagePlan.label})</span>
+                      <span>{formatMoney(storageAddonVat)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span>Usuarios extra</span>
                     <span>
@@ -1909,9 +1910,10 @@ export default function BillingAdminCard({ agencyId }: Props) {
               </p>
               {hasStorageContract && (
                 <p className="text-[11px] text-sky-950/60 dark:text-white/60">
-                  Este cobro ya incluye el storage del plan:{" "}
-                  {formatStorageUnits(storageIncluded.storage_gb)} +{" "}
-                  {formatStorageUnits(storageIncluded.transfer_gb)} de transferencia.
+                  Storage activo ({storagePlan.label}): USD {storagePlan.base} + IVA (
+                  {formatMoney(storageAddonVat)}), incluye{" "}
+                  {formatStorageUnits(storagePlan.storage_gb)} +{" "}
+                  {formatStorageUnits(storagePlan.transfer_gb)} de transferencia.
                 </p>
               )}
 

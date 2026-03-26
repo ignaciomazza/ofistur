@@ -691,6 +691,9 @@ export default function PaymentPlansPage() {
   );
 
   const settleBookingId = settlePayments[0]?.booking_id;
+  const settleBookingDisplayId =
+    toPositiveInt(settlePayments[0]?.booking?.agency_booking_id) ??
+    settleBookingId;
   const settleClientId = settlePayments[0]?.client_id;
   const settleCurrency = normalizeCurrency(settlePayments[0]?.currency);
   const settleServiceIds = useMemo(
@@ -1173,7 +1176,7 @@ export default function PaymentPlansPage() {
             </div>
             <div>
               <p className="text-xs opacity-70">Reserva</p>
-              <p className="font-medium">N {settleBookingId ?? "-"}</p>
+              <p className="font-medium">N {settleBookingDisplayId ?? "-"}</p>
             </div>
           </div>
 
@@ -1192,6 +1195,7 @@ export default function PaymentPlansPage() {
             <ReceiptForm
               token={token || null}
               bookingId={settleBookingId}
+              bookingDisplayId={settleBookingDisplayId}
               isFormVisible={receiptFormVisible}
               setIsFormVisible={setReceiptFormVisible}
               loadServicesForBooking={loadServicesForBooking}

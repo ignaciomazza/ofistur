@@ -1561,6 +1561,7 @@ export default function ReceiptsPage() {
           token={token || null}
           allowAgency={true}
           bookingId={editingReceipt?.booking?.id_booking ?? undefined}
+          bookingDisplayId={editingReceipt?.booking?.agency_booking_id ?? undefined}
           editingReceiptId={editingReceipt?.id_receipt ?? null}
           isFormVisible={formVisible}
           setIsFormVisible={setFormVisible}

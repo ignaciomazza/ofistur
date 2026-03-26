@@ -8,17 +8,41 @@ export const PLAN_DATA: Record<
   basico: {
     label: "Basico",
     base: 20,
-    short: "Incluye 128 GB de storage y 256 GB de transferencia por mes",
+    short: "Pasajeros, reservas, facturacion y recibos",
   },
   medio: {
     label: "Medio",
     base: 40,
-    short: "Incluye 500 GB de storage y 1 TB de transferencia por mes",
+    short: "Calendario, templates, gastos y analisis",
   },
   pro: {
     label: "Pro",
+    base: 50,
+    short: "Asesoramiento, capacitaciones, nuevas funcionalidades",
+  },
+};
+
+export const STORAGE_PLAN_DATA: Record<
+  PlanKey,
+  { label: string; base: number; storage_gb: number; transfer_gb: number }
+> = {
+  basico: {
+    label: "Basico",
+    base: 20,
+    storage_gb: 128,
+    transfer_gb: 256,
+  },
+  medio: {
+    label: "Pro",
+    base: 40,
+    storage_gb: 500,
+    transfer_gb: 1024,
+  },
+  pro: {
+    label: "Max",
     base: 70,
-    short: "Incluye 1 TB de storage y 2 TB de transferencia por mes",
+    storage_gb: 1024,
+    transfer_gb: 2048,
   },
 };
 
@@ -46,8 +70,24 @@ export function calcInfraCost(users: number): number {
   return 30 + (n - 12) * 10;
 }
 
-export function calcMonthlyBase(planKey: PlanKey, users: number): number {
-  return PLAN_DATA[planKey].base + calcExtraUsersCost(users) + calcInfraCost(users);
+export function calcStorageAddon(
+  planKey: PlanKey,
+  enabled = false,
+): number {
+  return enabled ? STORAGE_PLAN_DATA[planKey].base : 0;
+}
+
+export function calcMonthlyBase(
+  planKey: PlanKey,
+  users: number,
+  opts?: { storageEnabled?: boolean },
+): number {
+  return (
+    PLAN_DATA[planKey].base +
+    calcExtraUsersCost(users) +
+    calcInfraCost(users) +
+    calcStorageAddon(planKey, Boolean(opts?.storageEnabled))
+  );
 }
 
 export function applyVat(value: number, rate: number = IVA_RATE): number {
@@ -55,8 +95,12 @@ export function applyVat(value: number, rate: number = IVA_RATE): number {
   return safe * (1 + rate);
 }
 
-export function calcMonthlyBaseWithVat(planKey: PlanKey, users: number): number {
-  return applyVat(calcMonthlyBase(planKey, users));
+export function calcMonthlyBaseWithVat(
+  planKey: PlanKey,
+  users: number,
+  opts?: { storageEnabled?: boolean },
+): number {
+  return applyVat(calcMonthlyBase(planKey, users, opts));
 }
 
 export function calcVatFromTotal(totalWithVat: number, rate: number = IVA_RATE): number {

@@ -132,10 +132,11 @@ function calcTotals(
 function estimateForMonths(
   planKey: PlanKey,
   billingUsers: number,
+  storageEnabled: boolean,
   adjustments: Adjustment[],
   months: number,
 ) {
-  const base = calcMonthlyBaseWithVat(planKey, billingUsers);
+  const base = calcMonthlyBaseWithVat(planKey, billingUsers, { storageEnabled });
   let total = 0;
   const start = new Date();
   for (let i = 0; i < months; i += 1) {
@@ -189,7 +190,7 @@ export default async function handler(
     const id_agency = parseAgencyId(req.query.id);
     const billingOwnerId = await resolveBillingOwnerId(id_agency);
 
-    const [config, adjustments, charges] = await Promise.all([
+    const [config, adjustments, charges, storageConfig] = await Promise.all([
       prisma.agencyBillingConfig.findUnique({
         where: { id_agency: billingOwnerId },
       }),
@@ -199,22 +200,44 @@ export default async function handler(
       prisma.agencyBillingCharge.findMany({
         where: { id_agency: billingOwnerId },
       }),
+      prisma.agencyStorageConfig.findUnique({
+        where: { id_agency: billingOwnerId },
+        select: { enabled: true },
+      }),
     ]);
 
     const planKey = isPlanKey(config?.plan_key) ? config?.plan_key : "basico";
     const billingUsers = config?.billing_users ?? 3;
+    const storageEnabled = Boolean(storageConfig?.enabled);
 
-    const monthlyBase = calcMonthlyBaseWithVat(planKey, billingUsers);
+    const monthlyBase = calcMonthlyBaseWithVat(planKey, billingUsers, {
+      storageEnabled,
+    });
     const monthlyTotals = calcTotals(monthlyBase, adjustments, new Date());
 
     const estimates = {
       monthly_usd: monthlyTotals.total,
-      quarterly_usd: estimateForMonths(planKey, billingUsers, adjustments, 3)
-        .total,
-      semiannual_usd: estimateForMonths(planKey, billingUsers, adjustments, 6)
-        .total,
-      annual_usd: estimateForMonths(planKey, billingUsers, adjustments, 12)
-        .total,
+      quarterly_usd: estimateForMonths(
+        planKey,
+        billingUsers,
+        storageEnabled,
+        adjustments,
+        3,
+      ).total,
+      semiannual_usd: estimateForMonths(
+        planKey,
+        billingUsers,
+        storageEnabled,
+        adjustments,
+        6,
+      ).total,
+      annual_usd: estimateForMonths(
+        planKey,
+        billingUsers,
+        storageEnabled,
+        adjustments,
+        12,
+      ).total,
     };
 
     const recurringCharges = charges.filter(

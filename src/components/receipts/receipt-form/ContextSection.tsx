@@ -22,6 +22,7 @@ export default function ContextSection(props: {
 
   forcedBookingMode: boolean;
   bookingId?: number;
+  selectedBookingDisplayId?: number | null;
 
   bookingQuery: string;
   setBookingQuery: (v: string) => void;
@@ -58,6 +59,7 @@ export default function ContextSection(props: {
 
     forcedBookingMode,
     bookingId,
+    selectedBookingDisplayId,
 
     bookingQuery,
     setBookingQuery,
@@ -155,8 +157,10 @@ export default function ContextSection(props: {
             <>
               {forcedBookingMode ? (
                 <div className="rounded-xl border border-white/10 bg-white/10 p-3 text-sm md:col-span-2">
-                  ID de reserva:{" "}
-                  <span className="font-semibold">N° {bookingId}</span>{" "}
+                  Reserva:{" "}
+                  <span className="font-semibold">
+                    N° {selectedBookingDisplayId ?? bookingId}
+                  </span>{" "}
                   <span className="ml-2 rounded-full bg-white/30 px-2 py-0.5 text-xs">
                     bloqueado
                   </span>
