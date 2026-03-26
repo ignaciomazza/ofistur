@@ -11,12 +11,12 @@ export const PLAN_DATA: Record<
     short: "Incluye 128 GB de storage y 256 GB de transferencia por mes",
   },
   medio: {
-    label: "Pro",
+    label: "Medio",
     base: 40,
     short: "Incluye 500 GB de storage y 1 TB de transferencia por mes",
   },
   pro: {
-    label: "Max",
+    label: "Pro",
     base: 70,
     short: "Incluye 1 TB de storage y 2 TB de transferencia por mes",
   },
