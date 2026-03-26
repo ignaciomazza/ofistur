@@ -755,6 +755,87 @@ function addReceiptToPaidByCurrency(
   target[amountCurrency] = round2((target[amountCurrency] || 0) + credited);
 }
 
+function buildServiceAllocationAvailabilityByCurrency(
+  receipt: ReceiptDebtView,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  const amountCurrency = normalizeCurrency(receipt.amount_currency || "ARS");
+  const parsedFee = toNum(receipt.payment_fee_amount ?? 0);
+  const parsedBase = toNum(receipt.base_amount ?? 0);
+  const feeValue = Number.isFinite(parsedFee) ? parsedFee : 0;
+  const baseValue = Number.isFinite(parsedBase) ? parsedBase : 0;
+  const baseCurrency = receipt.base_currency
+    ? normalizeCurrency(receipt.base_currency)
+    : null;
+  const paymentLines = Array.isArray(receipt.payments) ? receipt.payments : [];
+
+  if (paymentLines.length > 0) {
+    let lineFeeTotal = 0;
+    for (const line of paymentLines) {
+      const lineCurrency = normalizeCurrency(
+        line?.payment_currency || amountCurrency,
+      );
+      const lineAmount = toNum(line?.amount ?? 0);
+      const lineFee = toNum(line?.fee_amount ?? 0);
+      lineFeeTotal += lineFee;
+      const credited = lineAmount + lineFee;
+      if (Math.abs(credited) <= DEBT_TOLERANCE) continue;
+      out[lineCurrency] = round2((out[lineCurrency] || 0) + credited);
+    }
+
+    const feeRemainder = feeValue - lineFeeTotal;
+    if (Math.abs(feeRemainder) > DEBT_TOLERANCE) {
+      out[amountCurrency] = round2((out[amountCurrency] || 0) + feeRemainder);
+    }
+
+    // Si no hay pagos directos en moneda base, usar la conversión base como respaldo.
+    if (baseCurrency && Math.abs(baseValue) > DEBT_TOLERANCE) {
+      const hasDirectBaseCurrency =
+        Math.abs(out[baseCurrency] || 0) > DEBT_TOLERANCE;
+      if (!hasDirectBaseCurrency) {
+        const feeInBaseFromLines = paymentLines.reduce((sum, line) => {
+          const lineCurrency = normalizeCurrency(
+            line?.payment_currency || amountCurrency,
+          );
+          if (lineCurrency !== baseCurrency) return sum;
+          return sum + toNum(line?.fee_amount ?? 0);
+        }, 0);
+        const feeInBaseWithRemainder =
+          feeInBaseFromLines +
+          (Math.abs(feeRemainder) > DEBT_TOLERANCE &&
+          amountCurrency === baseCurrency
+            ? feeRemainder
+            : 0);
+        const converted = baseValue + feeInBaseWithRemainder;
+        if (Math.abs(converted) > DEBT_TOLERANCE) {
+          out[baseCurrency] = round2(
+            Math.max(out[baseCurrency] || 0, converted),
+          );
+        }
+      }
+    }
+
+    return out;
+  }
+
+  if (baseCurrency && Math.abs(baseValue) > DEBT_TOLERANCE) {
+    const feeInBase = amountCurrency === baseCurrency ? feeValue : 0;
+    const credited = baseValue + feeInBase;
+    if (Math.abs(credited) > DEBT_TOLERANCE) {
+      out[baseCurrency] = round2((out[baseCurrency] || 0) + credited);
+    }
+    return out;
+  }
+
+  const parsedAmount = toNum(receipt.amount ?? 0);
+  const amountValue = Number.isFinite(parsedAmount) ? parsedAmount : 0;
+  const credited = amountValue + feeValue;
+  if (Math.abs(credited) > DEBT_TOLERANCE) {
+    out[amountCurrency] = round2((out[amountCurrency] || 0) + credited);
+  }
+  return out;
+}
+
 // Seguridad: aceptar recibos con booking o con agencia
 async function ensureReceiptInAgency(receiptId: number, agencyId: number) {
   const r = await prisma.receipt.findUnique({
@@ -1729,8 +1810,7 @@ export default async function handler(
           ? Math.max(0, toNum(payment_fee_amount))
           : Math.max(0, toNum(existing.payment_fee_amount ?? 0));
       if (serviceAllocationsForValidation.length > 0) {
-        const availableByCurrency: Record<string, number> = {};
-        addReceiptToPaidByCurrency(availableByCurrency, {
+        const availableByCurrency = buildServiceAllocationAvailabilityByCurrency({
           amount: amountNum,
           amount_currency: amountCurrencyISO,
           payment_fee_amount: candidatePaymentFeeAmountForDebt,

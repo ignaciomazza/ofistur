@@ -315,6 +315,86 @@ const addReceiptToPaidByCurrency = (
   target[amountCurrency] = round2((target[amountCurrency] || 0) + credited);
 };
 
+const buildServiceAllocationAvailabilityByCurrency = (
+  receipt: ReceiptForDebt,
+) => {
+  const out: Record<string, number> = {};
+
+  const amountCurrency = normalizeCurrencyCodeLoose(
+    receipt.amount_currency || "ARS",
+  );
+  const feeValue = toNumberLoose(receipt.payment_fee_amount ?? 0);
+  const baseValue = toNumberLoose(receipt.base_amount ?? 0);
+  const baseCurrency = receipt.base_currency
+    ? normalizeCurrencyCodeLoose(receipt.base_currency)
+    : null;
+  const paymentLines = Array.isArray(receipt.payments) ? receipt.payments : [];
+
+  if (paymentLines.length > 0) {
+    let lineFeeTotal = 0;
+    for (const line of paymentLines) {
+      const lineCurrency = normalizeCurrencyCodeLoose(
+        line?.payment_currency || amountCurrency,
+      );
+      const lineAmount = toNumberLoose(line?.amount ?? 0);
+      const lineFee = toNumberLoose(line?.fee_amount ?? 0);
+      lineFeeTotal += lineFee;
+      const credited = lineAmount + lineFee;
+      if (Math.abs(credited) <= DEBT_TOLERANCE) continue;
+      out[lineCurrency] = round2((out[lineCurrency] || 0) + credited);
+    }
+
+    const feeRemainder = feeValue - lineFeeTotal;
+    if (Math.abs(feeRemainder) > DEBT_TOLERANCE) {
+      out[amountCurrency] = round2((out[amountCurrency] || 0) + feeRemainder);
+    }
+
+    // Si no hay pagos directos en moneda base, permitimos usar la conversión base.
+    if (baseCurrency && Math.abs(baseValue) > DEBT_TOLERANCE) {
+      const hasDirectBase = Math.abs(out[baseCurrency] || 0) > DEBT_TOLERANCE;
+      if (!hasDirectBase) {
+        const feeInBaseFromLines = paymentLines.reduce((sum, line) => {
+          const lineCurrency = normalizeCurrencyCodeLoose(
+            line?.payment_currency || amountCurrency,
+          );
+          if (lineCurrency !== baseCurrency) return sum;
+          return sum + toNumberLoose(line?.fee_amount ?? 0);
+        }, 0);
+        const feeInBaseWithRemainder =
+          feeInBaseFromLines +
+          (Math.abs(feeRemainder) > DEBT_TOLERANCE &&
+          amountCurrency === baseCurrency
+            ? feeRemainder
+            : 0);
+        const converted = baseValue + feeInBaseWithRemainder;
+        if (Math.abs(converted) > DEBT_TOLERANCE) {
+          out[baseCurrency] = round2(
+            Math.max(out[baseCurrency] || 0, converted),
+          );
+        }
+      }
+    }
+
+    return out;
+  }
+
+  if (baseCurrency && Math.abs(baseValue) > DEBT_TOLERANCE) {
+    const feeInBase = amountCurrency === baseCurrency ? feeValue : 0;
+    const credited = baseValue + feeInBase;
+    if (Math.abs(credited) > DEBT_TOLERANCE) {
+      out[baseCurrency] = round2((out[baseCurrency] || 0) + credited);
+    }
+    return out;
+  }
+
+  const amountValue = toNumberLoose(receipt.amount ?? 0);
+  const credited = amountValue + feeValue;
+  if (Math.abs(credited) > DEBT_TOLERANCE) {
+    out[amountCurrency] = round2((out[amountCurrency] || 0) + credited);
+  }
+  return out;
+};
+
 const normalizeIdListLoose = (input: unknown): number[] => {
   if (!Array.isArray(input)) return [];
   const seen = new Set<number>();
@@ -2294,8 +2374,7 @@ export default function ReceiptForm({
         : inheritedUseBookingSaleTotal
       : false;
   const paymentAvailableForAllocationByCurrency = useMemo(() => {
-    const out: Record<string, number> = {};
-    addReceiptToPaidByCurrency(out, {
+    return buildServiceAllocationAvailabilityByCurrency({
       amount: paymentsTotalNum || (suggestions?.base ?? 0),
       amount_currency: effectiveCurrency,
       payment_fee_amount: paymentsFeeTotalNum,
@@ -2307,7 +2386,6 @@ export default function ReceiptForm({
         fee_amount: paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line),
       })),
     });
-    return out;
   }, [
     paymentsTotalNum,
     suggestions,
@@ -2813,20 +2891,20 @@ export default function ReceiptForm({
             e.service_allocations = `Completá el contravalor del servicio N° ${serviceLabel} para validar la conversión por servicio.`;
           }
 
-          const availableByCurrency: Record<string, number> = {};
-          addReceiptToPaidByCurrency(availableByCurrency, {
-            amount: paymentsTotalNum || (suggestions?.base ?? 0),
-            amount_currency: effectiveCurrency,
-            payment_fee_amount: paymentsFeeTotalNum,
-            base_amount: parseAmountInput(baseAmount),
-            base_currency: baseCurrency || null,
-            payments: paymentLines.map((line) => ({
-              amount: parseAmountInput(line.amount) ?? 0,
-              payment_currency: line.payment_currency || effectiveCurrency,
-              fee_amount:
-                paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line),
-            })),
-          });
+          const availableByCurrency =
+            buildServiceAllocationAvailabilityByCurrency({
+              amount: paymentsTotalNum || (suggestions?.base ?? 0),
+              amount_currency: effectiveCurrency,
+              payment_fee_amount: paymentsFeeTotalNum,
+              base_amount: parseAmountInput(baseAmount),
+              base_currency: baseCurrency || null,
+              payments: paymentLines.map((line) => ({
+                amount: parseAmountInput(line.amount) ?? 0,
+                payment_currency: line.payment_currency || effectiveCurrency,
+                fee_amount:
+                  paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line),
+              })),
+            });
 
           if (!e.service_allocations) {
             const allocatedByCurrency =

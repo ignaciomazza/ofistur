@@ -35,13 +35,18 @@ const fmtMoney = (v?: number | string | null, curr?: string | null) => {
   const currency = normCurrency(curr);
   const safe = Number.isFinite(n) ? n : 0;
   try {
-    return new Intl.NumberFormat("es-AR", {
+    const formatted = new Intl.NumberFormat("es-AR", {
       style: "currency",
       currency,
     }).format(safe);
+    return currency === "USD" ? formatted.replace("US$", "U$D") : formatted;
   } catch {
-    // fallback raro (por si es una moneda exótica)
-    return `${currency} ${safe.toFixed(2)}`;
+    const symbol =
+      currency === "USD" ? "U$D" : currency === "ARS" ? "$" : `${currency} `;
+    return `${symbol}${safe.toLocaleString("es-AR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   }
 };
 
