@@ -81,6 +81,183 @@ function parseId(param: unknown): number {
   return id;
 }
 
+function getDeleteConfirmationText(req: NextApiRequest): string {
+  const body =
+    req.body && typeof req.body === "object"
+      ? (req.body as Record<string, unknown>)
+      : {};
+
+  const raw =
+    body.confirmationText ?? body.confirmation ?? body.confirm ?? body.value;
+  return typeof raw === "string" ? raw.trim().toUpperCase() : "";
+}
+
+async function purgeAgencyData(id: number): Promise<void> {
+  await prisma.$transaction(
+    async (tx) => {
+      const [userRows, travelGroupInvoiceRows, billingChargeRows] =
+        await Promise.all([
+          tx.user.findMany({
+            where: { id_agency: id },
+            select: { id_user: true },
+          }),
+          tx.travelGroupInvoice.findMany({
+            where: { id_agency: id },
+            select: { id_travel_group_invoice: true },
+          }),
+          tx.agencyBillingCharge.findMany({
+            where: { id_agency: id },
+            select: { id_charge: true },
+          }),
+        ]);
+
+      const userIds = userRows.map((u) => u.id_user);
+      const travelGroupInvoiceIds = travelGroupInvoiceRows.map(
+        (i) => i.id_travel_group_invoice,
+      );
+      const billingChargeIds = billingChargeRows.map((c) => c.id_charge);
+
+      const billingAttemptIds =
+        billingChargeIds.length > 0
+          ? (
+              await tx.agencyBillingAttempt.findMany({
+                where: { charge_id: { in: billingChargeIds } },
+                select: { id_attempt: true },
+              })
+            ).map((a) => a.id_attempt)
+          : [];
+
+      await tx.agency.updateMany({
+        where: { billing_owner_agency_id: id },
+        data: { billing_owner_agency_id: null },
+      });
+
+      if (userIds.length > 0) {
+        await tx.destination.updateMany({
+          where: { created_by: { in: userIds } },
+          data: { created_by: null },
+        });
+        await tx.serviceDestination.updateMany({
+          where: { added_by: { in: userIds } },
+          data: { added_by: null },
+        });
+        await tx.userTeam.deleteMany({
+          where: { id_user: { in: userIds } },
+        });
+      }
+
+      if (travelGroupInvoiceIds.length > 0) {
+        await tx.travelGroupInvoiceItem.deleteMany({
+          where: { travel_group_invoice_id: { in: travelGroupInvoiceIds } },
+        });
+      }
+      await tx.travelGroupInvoice.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupOperatorPayment.deleteMany({
+        where: { id_agency: id },
+      });
+      await tx.travelGroupOperatorDue.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupReceipt.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupClientPayment.deleteMany({
+        where: { id_agency: id },
+      });
+
+      if (billingChargeIds.length > 0) {
+        await tx.agencyBillingFileBatchItem.deleteMany({
+          where: { charge_id: { in: billingChargeIds } },
+        });
+      }
+      if (billingAttemptIds.length > 0) {
+        await tx.agencyBillingFileBatchItem.deleteMany({
+          where: { attempt_id: { in: billingAttemptIds } },
+        });
+      }
+
+      await tx.userDataMigrationJob.deleteMany({ where: { id_agency: id } });
+      await tx.lead.deleteMany({ where: { id_agency: id } });
+
+      await tx.clientPaymentAudit.deleteMany({ where: { id_agency: id } });
+      await tx.clientPayment.deleteMany({ where: { id_agency: id } });
+      await tx.operatorDue.deleteMany({ where: { id_agency: id } });
+      await tx.creditEntry.deleteMany({ where: { id_agency: id } });
+      await tx.investment.deleteMany({ where: { id_agency: id } });
+      await tx.recurringInvestment.deleteMany({ where: { id_agency: id } });
+      await tx.creditAccount.deleteMany({ where: { id_agency: id } });
+      await tx.otherIncome.deleteMany({ where: { id_agency: id } });
+      await tx.receipt.deleteMany({ where: { id_agency: id } });
+      await tx.creditNote.deleteMany({ where: { id_agency: id } });
+      await tx.invoice.deleteMany({ where: { id_agency: id } });
+
+      await tx.fileAsset.deleteMany({ where: { id_agency: id } });
+      await tx.service.deleteMany({ where: { id_agency: id } });
+      await tx.booking.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupPassenger.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupInventory.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupDeparture.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroup.deleteMany({ where: { id_agency: id } });
+
+      await tx.clientRelation.deleteMany({ where: { id_agency: id } });
+      await tx.serviceTypePreset.deleteMany({ where: { id_agency: id } });
+      await tx.serviceType.deleteMany({ where: { id_agency: id } });
+      await tx.passengerCategory.deleteMany({ where: { id_agency: id } });
+      await tx.client.deleteMany({ where: { id_agency: id } });
+      await tx.operator.deleteMany({ where: { id_agency: id } });
+
+      await tx.commissionRuleSet.deleteMany({ where: { id_agency: id } });
+      await tx.textPreset.deleteMany({ where: { id_agency: id } });
+      await tx.quote.deleteMany({ where: { id_agency: id } });
+      await tx.templateConfig.deleteMany({ where: { id_agency: id } });
+      await tx.resources.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupPaymentTemplate.deleteMany({
+        where: { id_agency: id },
+      });
+      await tx.salesTeam.deleteMany({ where: { id_agency: id } });
+      await tx.user.deleteMany({ where: { id_agency: id } });
+
+      await tx.financeAccountAudit.deleteMany({ where: { id_agency: id } });
+      await tx.financeAccountAdjustment.deleteMany({ where: { id_agency: id } });
+      await tx.financeTransfer.deleteMany({ where: { id_agency: id } });
+      await tx.financeAccountOpeningBalance.deleteMany({
+        where: { id_agency: id },
+      });
+      await tx.financeAccount.deleteMany({ where: { id_agency: id } });
+      await tx.financeCurrency.deleteMany({ where: { id_agency: id } });
+      await tx.financePaymentMethod.deleteMany({ where: { id_agency: id } });
+      await tx.financeMonthLockEvent.deleteMany({ where: { id_agency: id } });
+      await tx.financeMonthLock.deleteMany({ where: { id_agency: id } });
+      await tx.financeConfig.deleteMany({ where: { id_agency: id } });
+      await tx.clientConfig.deleteMany({ where: { id_agency: id } });
+      await tx.quoteConfig.deleteMany({ where: { id_agency: id } });
+      await tx.resourceConfig.deleteMany({ where: { id_agency: id } });
+      await tx.serviceCalcConfig.deleteMany({ where: { id_agency: id } });
+      await tx.travelGroupConfig.deleteMany({ where: { id_agency: id } });
+      await tx.expenseCategory.deleteMany({ where: { id_agency: id } });
+
+      await tx.agencyCounter.deleteMany({ where: { id_agency: id } });
+      await tx.agencyStorageUsage.deleteMany({ where: { id_agency: id } });
+      await tx.agencyStorageConfig.deleteMany({ where: { id_agency: id } });
+      await tx.agencyArcaConfig.deleteMany({ where: { agencyId: id } });
+      await tx.arcaConnectionJob.deleteMany({ where: { agencyId: id } });
+
+      await tx.billingFileImportRun.deleteMany({ where: { agency_id: id } });
+      await tx.agencyBillingPaymentReviewCase.deleteMany({
+        where: { agency_id: id },
+      });
+      await tx.agencyBillingFallbackIntent.deleteMany({
+        where: { agency_id: id },
+      });
+      await tx.agencyBillingEvent.deleteMany({ where: { id_agency: id } });
+      await tx.agencyBillingCharge.deleteMany({ where: { id_agency: id } });
+      await tx.agencyBillingCycle.deleteMany({ where: { id_agency: id } });
+      await tx.agencyBillingAdjustment.deleteMany({ where: { id_agency: id } });
+      await tx.agencyBillingConfig.deleteMany({ where: { id_agency: id } });
+      await tx.agencyBillingSubscription.deleteMany({ where: { id_agency: id } });
+
+      await tx.agency.delete({ where: { id_agency: id } });
+    },
+    { maxWait: 10_000, timeout: 120_000 },
+  );
+}
+
 function toLocalDate(v?: string | null): Date | undefined {
   if (!v) return undefined;
   const parsed = parseDateInputInBuenosAires(v);
@@ -264,43 +441,25 @@ async function handlePUT(req: NextApiRequest, res: NextApiResponse) {
   return res.status(200).json(sanitizeAgency(updated as AgencySelected));
 }
 
-/* ========== DELETE: borrar SOLO si no hay relaciones ========== */
+/* ========== DELETE: purge completo de agencia ========== */
 async function handleDELETE(req: NextApiRequest, res: NextApiResponse) {
   await requireDeveloper(req);
   const id = parseId(req.query.id);
-
-  // Verificamos relaciones relevantes antes de borrar
-  const [users, clients, bookings, services, operators, investments, receipts] =
-    await Promise.all([
-      prisma.user.count({ where: { id_agency: id } }),
-      prisma.client.count({ where: { id_agency: id } }),
-      prisma.booking.count({ where: { id_agency: id } }),
-      prisma.service.count({ where: { booking: { id_agency: id } } }),
-      prisma.operator.count({ where: { id_agency: id } }),
-      prisma.investment.count({ where: { id_agency: id } }),
-      prisma.receipt.count({ where: { booking: { id_agency: id } } }),
-    ]);
-
-  const total =
-    users + clients + bookings + services + operators + investments + receipts;
-
-  if (total > 0) {
-    return res.status(409).json({
+  const confirmation = getDeleteConfirmationText(req);
+  if (confirmation !== "ELIMINAR") {
+    return res.status(400).json({
       error:
-        "No se puede eliminar: la agencia tiene registros vinculados (usuarios, pasajeros, reservas u otros).",
-      counts: {
-        users,
-        clients,
-        bookings,
-        services,
-        operators,
-        investments,
-        receipts,
-      },
+        'Confirmación inválida. Para eliminar definitivamente, enviá confirmationText: "ELIMINAR".',
     });
   }
 
-  await prisma.agency.delete({ where: { id_agency: id } });
+  const exists = await prisma.agency.findUnique({
+    where: { id_agency: id },
+    select: { id_agency: true },
+  });
+  if (!exists) return res.status(404).json({ error: "Agencia no encontrada" });
+
+  await purgeAgencyData(id);
   return res.status(200).json({ ok: true });
 }
 

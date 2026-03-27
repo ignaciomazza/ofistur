@@ -451,12 +451,23 @@ export default function DevAgencyDetailPage() {
   const deletingAgencyRef = useRef(false);
   const onDeleteAgency = async () => {
     if (!agencyId || deletingAgencyRef.current) return;
-    if (!confirm("¿Eliminar definitivamente esta agencia?")) return;
+    const confirmation = window.prompt(
+      'Para eliminar definitivamente esta agencia, escribí "ELIMINAR".',
+    );
+    if (!confirmation || confirmation.trim().toUpperCase() !== "ELIMINAR") {
+      toast.info('Eliminación cancelada. Debés escribir "ELIMINAR".');
+      return;
+    }
     deletingAgencyRef.current = true;
     try {
       const res = await authFetch(
         `/api/dev/agencies/${agencyId}`,
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            confirmationText: confirmation.trim(),
+          }),
+        },
         token,
       );
       if (res.status === 403) {

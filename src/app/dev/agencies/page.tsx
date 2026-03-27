@@ -235,6 +235,10 @@ export default function DevAgenciesPage() {
   const [forbidden, setForbidden] = useState<boolean>(false);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [deletingAgencyId, setDeletingAgencyId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DevAgency | null>(null);
+  const [deleteConfirmationText, setDeleteConfirmationText] =
+    useState<string>("");
 
   // Form
   const [openForm, setOpenForm] = useState<boolean>(false);
@@ -255,6 +259,9 @@ export default function DevAgenciesPage() {
   const [formErrors, setFormErrors] = useState<
     Partial<Record<keyof DevAgencyInput, string>>
   >({});
+
+  const isDeleteConfirmationValid =
+    deleteConfirmationText.trim().toUpperCase() === "ELIMINAR";
 
   /** Cargar inicial */
   useEffect(() => {
@@ -451,13 +458,36 @@ export default function DevAgenciesPage() {
   };
 
   /** Eliminar */
-  const onDelete = async (id: number) => {
-    if (!token) return;
-    if (!confirm("¿Eliminar esta agencia?")) return;
+  const openDeleteDialog = (agency: DevAgency) => {
+    if (deletingAgencyId) return;
+    setDeleteTarget(agency);
+    setDeleteConfirmationText("");
+  };
+
+  const closeDeleteDialog = () => {
+    if (deletingAgencyId) return;
+    setDeleteTarget(null);
+    setDeleteConfirmationText("");
+  };
+
+  const confirmDelete = async () => {
+    if (!token || !deleteTarget || deletingAgencyId) return;
+    if (!isDeleteConfirmationValid) {
+      toast.error('Escribí "ELIMINAR" para confirmar');
+      return;
+    }
+
+    const id = deleteTarget.id_agency;
+    setDeletingAgencyId(id);
     try {
       const res = await authFetch(
         `/api/dev/agencies/${id}`,
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            confirmationText: deleteConfirmationText.trim(),
+          }),
+        },
         token,
       );
       if (!res.ok) {
@@ -468,9 +498,13 @@ export default function DevAgenciesPage() {
       }
       setItems((prev) => prev.filter((x) => x.id_agency !== id));
       toast.success("Agencia eliminada");
+      setDeleteTarget(null);
+      setDeleteConfirmationText("");
     } catch (err: unknown) {
       console.error(err);
       toast.error(err instanceof Error ? err.message : "Error eliminando");
+    } finally {
+      setDeletingAgencyId(null);
     }
   };
 
@@ -802,7 +836,7 @@ export default function DevAgenciesPage() {
                     </IconButton>
                     <IconButton
                       title="Eliminar"
-                      onClick={() => onDelete(a.id_agency)}
+                      onClick={() => openDeleteDialog(a)}
                       className="border-red-300/50 bg-red-500/20 text-red-100 dark:text-red-100"
                     >
                       <TrashIcon />
@@ -829,6 +863,55 @@ export default function DevAgenciesPage() {
               )}
             </div>
           </>
+        )}
+
+        {deleteTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4">
+            <div className="w-full max-w-md rounded-3xl border border-red-300/30 bg-slate-950/95 p-6 text-white shadow-xl shadow-black/40">
+              <h2 className="text-lg font-semibold">Eliminar agencia</h2>
+              <p className="mt-2 text-sm text-white/80">
+                Se van a eliminar todos los datos relacionados con{" "}
+                <span className="font-medium">{deleteTarget.name}</span>.
+              </p>
+              <p className="mt-3 text-sm text-white/80">
+                Para confirmar, escribí <span className="font-semibold">ELIMINAR</span> en el campo de abajo y tocá OK.
+              </p>
+
+              <input
+                type="text"
+                autoFocus
+                value={deleteConfirmationText}
+                onChange={(e) => setDeleteConfirmationText(e.target.value)}
+                placeholder="ELIMINAR"
+                className="mt-4 w-full rounded-2xl border border-white/20 bg-white/10 px-3 py-2 text-white outline-none placeholder:text-white/40"
+                disabled={deletingAgencyId === deleteTarget.id_agency}
+              />
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeDeleteDialog}
+                  disabled={deletingAgencyId === deleteTarget.id_agency}
+                  className="rounded-full border border-white/20 px-5 py-2 text-white/90 transition-transform hover:scale-95 active:scale-90 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDelete}
+                  disabled={
+                    !isDeleteConfirmationValid ||
+                    deletingAgencyId === deleteTarget.id_agency
+                  }
+                  className="rounded-full bg-red-600 px-5 py-2 text-white shadow-sm transition-transform hover:scale-95 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {deletingAgencyId === deleteTarget.id_agency
+                    ? "Eliminando..."
+                    : "OK, eliminar"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         <ToastContainer />
