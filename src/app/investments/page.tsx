@@ -29,6 +29,11 @@ import {
   toCsvHeaderRow,
   toCsvRow,
 } from "@/utils/csv";
+import {
+  decodeInvestmentPdfItemsPayload,
+  encodeInvestmentPdfItemsPayload,
+  normalizeInvestmentPdfManualItems,
+} from "@/utils/investments/pdfItemsPayload";
 import type { PlanKey } from "@/lib/billing/pricing";
 import type {
   Investment,
@@ -445,6 +450,8 @@ export default function Page() {
 
     use_credit: false,
     payments: [createPaymentLine()],
+    manual_pdf_items_enabled: false,
+    manual_pdf_items: [],
   });
 
   const [associateServices, setAssociateServices] = useState(false);
@@ -640,6 +647,8 @@ export default function Page() {
 
       use_credit: false,
       payments: [createPaymentLine()],
+      manual_pdf_items_enabled: false,
+      manual_pdf_items: [],
     });
     setAssociateServices(false);
     clearServiceSelection();
@@ -743,11 +752,24 @@ export default function Page() {
               fee_value: "",
             },
           ];
+    const decodedPdfItems = decodeInvestmentPdfItemsPayload(
+      inv.counterparty_name ?? "",
+    );
+    const manualPdfItemsSource = Array.isArray(inv.pdf_items)
+      ? inv.pdf_items
+      : decodedPdfItems.items;
+    const manualPdfItems = normalizeInvestmentPdfManualItems(
+      manualPdfItemsSource,
+    ).map((item) => ({
+      key: uid(),
+      description: item.description,
+      date_label: item.date_label || "",
+    }));
 
     setForm({
       category: inv.category ?? "",
       description: inv.description ?? "",
-      counterparty_name: inv.counterparty_name ?? "",
+      counterparty_name: decodedPdfItems.counterpartyName,
       amount: String(inv.amount ?? ""),
       currency: fallbackPaymentCurrency,
       paid_at: inv.paid_at ? inv.paid_at.slice(0, 10) : "",
@@ -788,6 +810,8 @@ export default function Page() {
 
       use_credit: false,
       payments: fallbackPayments,
+      manual_pdf_items_enabled: manualPdfItems.length > 0,
+      manual_pdf_items: manualPdfItems,
     });
     if (operatorOnly) {
       const currentServiceIds = Array.isArray(inv.serviceIds)
@@ -1954,6 +1978,9 @@ export default function Page() {
       | undefined;
 
     const counterpartyName = form.counterparty_name.trim();
+    const normalizedManualPdfItems = normalizeInvestmentPdfManualItems(
+      form.manual_pdf_items,
+    );
     const needsUser = isUserCategory(form.category);
 
     if (operatorOnly) {
@@ -2077,6 +2104,14 @@ export default function Page() {
       toast.error("A quién se le paga no puede superar 160 caracteres");
       return;
     }
+    if (form.manual_pdf_items_enabled) {
+      if (normalizedManualPdfItems.length === 0) {
+        toast.error(
+          "Cargá al menos un ítem manual o desactivá la carga manual del PDF.",
+        );
+        return;
+      }
+    }
     if (needsUser && !form.user_id) {
       toast.error(
         isSueldo || isComision
@@ -2126,10 +2161,16 @@ export default function Page() {
       if (!ok) return;
     }
 
+    const encodedCounterpartyName = encodeInvestmentPdfItemsPayload({
+      counterpartyName,
+      items: normalizedManualPdfItems,
+      enabled: !!form.manual_pdf_items_enabled,
+    });
+
     const payload: Record<string, unknown> = {
       category: form.category,
       description: form.description,
-      counterparty_name: counterpartyName || undefined,
+      counterparty_name: encodedCounterpartyName || null,
       amount: amountNum,
       currency: currencyCode,
       paid_at,
@@ -2904,17 +2945,6 @@ export default function Page() {
   return (
     <ProtectedRoute>
       <section className="text-sky-950 dark:text-white">
-        {!operatorOnly && (
-          <div className="mb-4 rounded-2xl border border-white/10 bg-white/10 p-3 text-sm text-sky-950 shadow-md shadow-sky-950/10 dark:text-white">
-            <div className="flex items-start gap-3">
-              <span className="mt-1 size-2 rounded-full bg-amber-400" />
-              <p>
-                <b>Nota:</b> los pagos a Operadores ahora se cargan en{" "}
-                <b>Operadores &gt; Pagos</b>.
-              </p>
-            </div>
-          </div>
-        )}
         {operatorOnly && (
           <div className="mb-4 rounded-2xl border border-white/10 bg-white/10 p-3 text-sm text-sky-950 shadow-md shadow-sky-950/10 dark:text-white">
             <div className="flex items-start gap-3">

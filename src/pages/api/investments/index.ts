@@ -22,6 +22,10 @@ import {
   toDateKeyInBuenosAires,
   todayDateKeyInBuenosAires,
 } from "@/lib/buenosAiresDate";
+import {
+  decodeInvestmentPdfItemsPayload,
+  isEncodedInvestmentPdfItemsPayload,
+} from "@/utils/investments/pdfItemsPayload";
 
 type TokenPayload = JWTPayload & {
   id_user?: number;
@@ -373,6 +377,17 @@ const normalizeInvestmentFeeMode = (
 };
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+function withDecodedInvestmentPdfItems<T extends Record<string, unknown>>(item: T) {
+  const decoded = decodeInvestmentPdfItemsPayload(
+    typeof item.counterparty_name === "string" ? item.counterparty_name : "",
+  );
+  return {
+    ...item,
+    counterparty_name: decoded.counterpartyName,
+    pdf_items: decoded.items,
+  };
+}
 
 const normalizeInvestmentPaymentFee = (line: {
   amount: number;
@@ -1334,7 +1349,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
             })()
           : null;
 
-      return {
+      return withDecodedInvestmentPdfItems({
         ...itemData,
         ...(schemaFlags.hasPaymentFeeAmount
           ? {}
@@ -1357,7 +1372,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
                   : null,
             }
           : null,
-      };
+      });
     });
     const nextCursor = hasMore
       ? Number(sliced[sliced.length - 1].id_investment)
@@ -1471,7 +1486,10 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         error: "category, description, currency y amount son obligatorios",
       });
     }
-    if (counterparty_name.length > 160) {
+    if (
+      counterparty_name.length > 160 &&
+      !isEncodedInvestmentPdfItemsPayload(counterparty_name)
+    ) {
       return res.status(400).json({
         error: "counterparty_name supera 160 caracteres",
       });
@@ -2011,11 +2029,11 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       return investment;
     });
 
-    return res.status(201).json({
+    return res.status(201).json(withDecodedInvestmentPdfItems({
       ...created,
       ...(schemaFlags.hasPaymentFeeAmount ? {} : { payment_fee_amount: null }),
       ...(schemaFlags.hasPaymentLines ? {} : { payments: [] }),
-    });
+    }));
   } catch (e: unknown) {
     console.error("[investments][POST]", e);
     if (e instanceof Error) {

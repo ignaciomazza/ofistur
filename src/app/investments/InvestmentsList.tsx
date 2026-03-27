@@ -447,9 +447,6 @@ function InvestmentCard({
             {item.createdBy.last_name}
           </span>
         )}
-        <span>
-          <b>Asociación:</b> {hasLinkedBooking ? "Asociado" : "Sin reserva"}
-        </span>
         {item.booking_id && (
           <span className="flex w-fit items-center gap-2">
             <b>Reserva Nº. </b> {bookingNumber}

@@ -2,7 +2,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from "react";
 import Spinner from "@/components/Spinner";
 import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
@@ -190,6 +190,7 @@ export default function InvestmentsForm({
 }: InvestmentsFormProps) {
   const itemLabel = operatorOnly ? "pago" : "gasto";
   const allowRecurring = !operatorOnly;
+  const [showRecurringContent, setShowRecurringContent] = useState(false);
   const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
   const lineUid = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
   const defaultPaymentCurrency =
@@ -282,6 +283,188 @@ export default function InvestmentsForm({
       return { ...prev, payments: next };
     });
   };
+
+  const addManualPdfItem = () => {
+    setForm((prev) => ({
+      ...prev,
+      manual_pdf_items: [
+        ...(prev.manual_pdf_items || []),
+        {
+          key: lineUid(),
+          description: "",
+          date_label: "",
+        },
+      ],
+    }));
+  };
+
+  const removeManualPdfItem = (key: string) => {
+    setForm((prev) => ({
+      ...prev,
+      manual_pdf_items: (prev.manual_pdf_items || []).filter(
+        (item) => item.key !== key,
+      ),
+    }));
+  };
+
+  const setManualPdfItemDescription = (key: string, value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      manual_pdf_items: (prev.manual_pdf_items || []).map((item) =>
+        item.key === key ? { ...item, description: value } : item,
+      ),
+    }));
+  };
+
+  const setManualPdfItemDateLabel = (key: string, value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      manual_pdf_items: (prev.manual_pdf_items || []).map((item) =>
+        item.key === key ? { ...item, date_label: value } : item,
+      ),
+    }));
+  };
+
+  useEffect(() => {
+    if (recurringOpen) setShowRecurringContent(true);
+  }, [recurringOpen]);
+
+  const renderManualPdfItemsBlock = () => (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Cargar ítems del recibo manualmente</p>
+          <p className="text-xs text-sky-950/70 dark:text-white/70">
+            Si lo activás, podés agregar, quitar y editar filas del detalle de
+            servicios del PDF.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={form.manual_pdf_items_enabled}
+          onClick={() =>
+            setForm((prev) => {
+              const nextEnabled = !prev.manual_pdf_items_enabled;
+              return {
+                ...prev,
+                manual_pdf_items_enabled: nextEnabled,
+                manual_pdf_items:
+                  nextEnabled && (prev.manual_pdf_items || []).length === 0
+                    ? [
+                        {
+                          key: lineUid(),
+                          description: "",
+                          date_label: "",
+                        },
+                      ]
+                    : prev.manual_pdf_items || [],
+              };
+            })
+          }
+          className={[
+            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+            form.manual_pdf_items_enabled
+              ? "bg-sky-500/70"
+              : "bg-sky-950/20 dark:bg-white/20",
+          ].join(" ")}
+        >
+          <span
+            className={[
+              "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+              form.manual_pdf_items_enabled ? "translate-x-5" : "translate-x-1",
+            ].join(" ")}
+          />
+        </button>
+      </div>
+
+      {form.manual_pdf_items_enabled && (
+        <div className="mt-3 space-y-2">
+          {(form.manual_pdf_items || []).length === 0 && (
+            <p className="text-xs text-sky-950/70 dark:text-white/70">
+              Todavía no hay ítems manuales.
+            </p>
+          )}
+
+          {(form.manual_pdf_items || []).map((item, idx) => (
+            <div
+              key={item.key}
+              className="rounded-2xl border border-white/10 bg-white/5 p-3"
+            >
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sky-950/70 dark:text-white/70">
+                Ítem Nº {idx + 1}
+              </div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-12 md:items-end">
+                <div className="md:col-span-7">
+                  <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                    Descripción
+                  </label>
+                  <input
+                    value={item.description}
+                    onChange={(e) =>
+                      setManualPdfItemDescription(item.key, e.target.value)
+                    }
+                    placeholder="Ej.: Hotel + excursión ciudad"
+                    className={inputClass}
+                  />
+                </div>
+
+                <div className="md:col-span-4">
+                  <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                    Fecha (opcional)
+                  </label>
+                  <input
+                    value={item.date_label}
+                    onChange={(e) =>
+                      setManualPdfItemDateLabel(item.key, e.target.value)
+                    }
+                    placeholder="Ej.: 10/04/2026 - 14/04/2026"
+                    className={inputClass}
+                  />
+                </div>
+
+                <div className="md:col-span-1">
+                  <button
+                    type="button"
+                    onClick={() => removeManualPdfItem(item.key)}
+                    className="inline-flex size-10 items-center justify-center rounded-full border border-white/20 hover:bg-white/10"
+                    title="Quitar ítem"
+                    aria-label={`Quitar ítem ${idx + 1}`}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.8}
+                      className="size-4"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.59.68-1.14 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={addManualPdfItem}
+              className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs hover:bg-white/15"
+            >
+              + Agregar ítem
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <motion.div
@@ -413,6 +596,10 @@ export default function InvestmentsForm({
                         }
                       />
                     </Field>
+
+                    <div className="md:col-span-2">
+                      {renderManualPdfItemsBlock()}
+                    </div>
                   </>
                 ) : (
                   <>
@@ -477,18 +664,16 @@ export default function InvestmentsForm({
                         required
                       />
                     </Field>
+
+                    <div className="md:col-span-2">
+                      {renderManualPdfItemsBlock()}
+                    </div>
                   </>
                 )}
               </Section>
 
-              <Section
-                title="Referencias"
-                desc={
-                  operatorOnly
-                    ? "Categoría y operador del pago."
-                    : "Operador o usuario según la categoría."
-                }
-              >
+              <section className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {operatorOnly && (
                   <Field id="category" label="Categoría" required>
                     <select
@@ -614,13 +799,8 @@ export default function InvestmentsForm({
                     />
                   </Field>
                 )}
-
-                {!isOperador && !isUserCategory && (
-                  <div className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-70 md:col-span-2">
-                    No hay operador/usuario obligatorio para esta categoría.
-                  </div>
-                )}
-              </Section>
+                </div>
+              </section>
 
               <Section
                 title={operatorOnly ? "Pagos" : "Pago"}
@@ -976,83 +1156,85 @@ export default function InvestmentsForm({
                   </>
                 ) : (
                   <>
-                    <Field id="amount" label="Monto" required>
-                      <input
-                        id="amount"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        inputMode="decimal"
-                        className={inputClass}
-                        value={form.amount}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, amount: e.target.value }))
-                        }
-                        placeholder="0.00"
-                        required
-                      />
-                      {form.amount && (
-                        <div className="ml-1 mt-1 text-xs opacity-80">
-                          {previewAmount}
-                        </div>
-                      )}
-                    </Field>
+                    <div className="grid grid-cols-1 gap-4 md:col-span-2 md:grid-cols-3">
+                      <Field id="amount" label="Monto" required>
+                        <input
+                          id="amount"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          inputMode="decimal"
+                          className={inputClass}
+                          value={form.amount}
+                          onChange={(e) =>
+                            setForm((f) => ({ ...f, amount: e.target.value }))
+                          }
+                          placeholder="0.00"
+                          required
+                        />
+                        {form.amount && (
+                          <div className="ml-1 mt-1 text-xs opacity-80">
+                            {previewAmount}
+                          </div>
+                        )}
+                      </Field>
 
-                    <Field id="currency" label="Moneda" required>
-                      <select
-                        id="currency"
-                        className={`${inputClass} cursor-pointer appearance-none`}
-                        value={form.currency}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, currency: e.target.value }))
-                        }
-                        required
-                        disabled={currencyOptions.length === 0}
-                      >
-                        <option value="" disabled>
-                          {currencyOptions.length
-                            ? "Seleccionar moneda"
-                            : "Sin monedas habilitadas"}
-                        </option>
-                        {currencyOptions.map((code) => (
-                          <option key={code} value={code}>
-                            {currencyDict[code]
-                              ? `${code} — ${currencyDict[code]}`
-                              : code}
+                      <Field id="currency" label="Moneda" required>
+                        <select
+                          id="currency"
+                          className={`${inputClass} cursor-pointer appearance-none`}
+                          value={form.currency}
+                          onChange={(e) =>
+                            setForm((f) => ({ ...f, currency: e.target.value }))
+                          }
+                          required
+                          disabled={currencyOptions.length === 0}
+                        >
+                          <option value="" disabled>
+                            {currencyOptions.length
+                              ? "Seleccionar moneda"
+                              : "Sin monedas habilitadas"}
                           </option>
-                        ))}
-                      </select>
-                    </Field>
+                          {currencyOptions.map((code) => (
+                            <option key={code} value={code}>
+                              {currencyDict[code]
+                                ? `${code} — ${currencyDict[code]}`
+                                : code}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
 
-                    <Field id="payment_method" label="Método de pago" required>
-                      <select
-                        id="payment_method"
-                        className={`${inputClass} cursor-pointer appearance-none`}
-                        value={form.payment_method}
-                        onChange={(e) =>
-                          setForm((f) => ({
-                            ...f,
-                            payment_method: e.target.value,
-                          }))
-                        }
-                        required
-                        disabled={uiPaymentMethodOptions.length === 0}
-                      >
-                        <option value="" disabled>
-                          {uiPaymentMethodOptions.length
-                            ? "Seleccionar método"
-                            : "Sin métodos habilitados"}
-                        </option>
-                        {uiPaymentMethodOptions.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
+                      <Field id="payment_method" label="Método de pago" required>
+                        <select
+                          id="payment_method"
+                          className={`${inputClass} cursor-pointer appearance-none`}
+                          value={form.payment_method}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              payment_method: e.target.value,
+                            }))
+                          }
+                          required
+                          disabled={uiPaymentMethodOptions.length === 0}
+                        >
+                          <option value="" disabled>
+                            {uiPaymentMethodOptions.length
+                              ? "Seleccionar método"
+                              : "Sin métodos habilitados"}
                           </option>
-                        ))}
-                      </select>
-                    </Field>
+                          {uiPaymentMethodOptions.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
 
-                    {showAccount ? (
-                      <Field id="account" label="Cuenta" required>
+                    {showAccount && (
+                      <Field id="account" label="Cuenta" required className="md:col-span-2">
                         <select
                           id="account"
                           className={`${inputClass} cursor-pointer appearance-none`}
@@ -1075,8 +1257,6 @@ export default function InvestmentsForm({
                           ))}
                         </select>
                       </Field>
-                    ) : (
-                      <div />
                     )}
                   </>
                 )}
@@ -1093,20 +1273,35 @@ export default function InvestmentsForm({
                 >
                   {!operatorOnly && (
                     <div className="md:col-span-2">
-                      <label className="flex cursor-pointer items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          className="size-4 rounded border-white/30 bg-white/30 text-sky-600 shadow-sm shadow-sky-950/10 dark:border-white/20 dark:bg-white/10"
-                          checked={form.use_conversion}
-                          onChange={(e) =>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-label="Activar conversión"
+                          aria-checked={form.use_conversion}
+                          onClick={() =>
                             setForm((f) => ({
                               ...f,
-                              use_conversion: e.target.checked,
+                              use_conversion: !f.use_conversion,
                             }))
                           }
-                        />
-                        Registrar valor / contravalor
-                      </label>
+                          className={[
+                            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                            form.use_conversion
+                              ? "bg-sky-500/70"
+                              : "bg-sky-950/20 dark:bg-white/20",
+                          ].join(" ")}
+                        >
+                          <span
+                            className={[
+                              "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                              form.use_conversion
+                                ? "translate-x-5"
+                                : "translate-x-1",
+                            ].join(" ")}
+                          />
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -1353,14 +1548,38 @@ export default function InvestmentsForm({
             {allowRecurring && (
               <div className="px-4 pb-6 md:px-6">
                 <div className="rounded-2xl border border-white/10 bg-white/10 p-4 shadow-sm shadow-sky-950/10">
-                  <div className="mb-3">
-                    <h3 className="text-base font-semibold tracking-tight text-sky-950 dark:text-white">
-                      Gasto automático
-                    </h3>
-                    <p className="mt-1 text-xs font-light text-sky-950/70 dark:text-white/70">
-                      Programá gastos recurrentes (ej.: alquiler mensual).
-                    </p>
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold tracking-tight text-sky-950 dark:text-white">
+                        Gasto automático
+                      </h3>
+                      <p className="mt-1 text-xs font-light text-sky-950/70 dark:text-white/70">
+                        Programá gastos recurrentes (ej.: alquiler mensual).
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={showRecurringContent}
+                      onClick={() => setShowRecurringContent((prev) => !prev)}
+                      className={[
+                        "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                        showRecurringContent
+                          ? "bg-sky-500/70"
+                          : "bg-sky-950/20 dark:bg-white/20",
+                      ].join(" ")}
+                    >
+                      <span
+                        className={[
+                          "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                          showRecurringContent ? "translate-x-5" : "translate-x-1",
+                        ].join(" ")}
+                      />
+                    </button>
                   </div>
+
+                  {showRecurringContent && (
+                    <>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <button
@@ -1597,20 +1816,35 @@ export default function InvestmentsForm({
                     )}
 
                     <div className="md:col-span-2">
-                      <label className="flex cursor-pointer items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          className="size-4 rounded border-white/30 bg-white/30 text-sky-600 shadow-sm shadow-sky-950/10 dark:border-white/20 dark:bg-white/10"
-                          checked={recurringForm.use_conversion}
-                          onChange={(e) =>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-label="Activar conversión automática"
+                          aria-checked={recurringForm.use_conversion}
+                          onClick={() =>
                             setRecurringForm((f) => ({
                               ...f,
-                              use_conversion: e.target.checked,
+                              use_conversion: !f.use_conversion,
                             }))
                           }
-                        />
-                        Registrar valor / contravalor
-                      </label>
+                          className={[
+                            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                            recurringForm.use_conversion
+                              ? "bg-sky-500/70"
+                              : "bg-sky-950/20 dark:bg-white/20",
+                          ].join(" ")}
+                        >
+                          <span
+                            className={[
+                              "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                              recurringForm.use_conversion
+                                ? "translate-x-5"
+                                : "translate-x-1",
+                            ].join(" ")}
+                          />
+                        </button>
+                      </div>
                     </div>
 
                     {recurringForm.use_conversion && (
@@ -1954,6 +2188,8 @@ export default function InvestmentsForm({
                     </div>
                   )}
                 </div>
+                </>
+                  )}
               </div>
               </div>
             )}

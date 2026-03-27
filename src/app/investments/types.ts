@@ -5,6 +5,12 @@ export type Investment = {
   category: string;
   description: string;
   counterparty_name?: string | null;
+  pdf_items?:
+    | {
+        description: string;
+        date_label?: string | null;
+      }[]
+    | null;
   amount: number;
   currency: string;
   created_at: string;
@@ -95,6 +101,12 @@ export type InvestmentPaymentLineDraft = {
   fee_value: string;
 };
 
+export type InvestmentManualPdfItemDraft = {
+  key: string;
+  description: string;
+  date_label: string;
+};
+
 export type InvestmentFormState = {
   category: string;
   description: string;
@@ -114,6 +126,8 @@ export type InvestmentFormState = {
   counter_currency: string;
   use_credit: boolean;
   payments: InvestmentPaymentLineDraft[];
+  manual_pdf_items_enabled: boolean;
+  manual_pdf_items: InvestmentManualPdfItemDraft[];
 };
 
 export type RecurringFormState = {

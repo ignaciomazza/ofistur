@@ -45,6 +45,10 @@ export type OperatorPaymentPdfData = {
   bookingNumbers?: string[];
   services?: Array<{
     id: number;
+    isManual?: boolean;
+    manualIndex?: number;
+    description?: string | null;
+    dateLabel?: string | null;
     serviceNumber?: number | null;
     bookingNumber?: number | null;
     type?: string | null;
@@ -117,7 +121,7 @@ const styles = StyleSheet.create({
     lineHeight: 1.45,
   },
   header: {
-    marginBottom: 24,
+    marginBottom: 14,
     padding: 16,
     borderWidth: 1,
     borderColor: "#e2e8f0",
@@ -125,10 +129,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc",
   },
   headerRow: { width: "100%", overflow: "hidden" },
-  headerRightRow: { width: "100%", marginTop: 6 },
   headerLeft: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 10,
     width: "100%",
     minWidth: 0,
@@ -139,11 +142,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
     maxWidth: 320,
   },
-  agencyName: { fontSize: 12, fontWeight: "bold", color: "#0f172a" },
-  agencyMeta: { fontSize: 9, color: "#64748b" },
-  logo: { height: 28, width: 120, objectFit: "contain", marginBottom: 4 },
+  logo: { height: 28, width: 120, objectFit: "contain" },
   title: { fontSize: 14, fontWeight: "bold", textTransform: "uppercase" },
-  subtitle: { fontSize: 9, marginBottom: 6, color: "#64748b" },
+  subtitle: { fontSize: 9, color: "#64748b", marginTop: 2 },
   sectionTitle: {
     fontSize: 11,
     fontWeight: "bold",
@@ -171,14 +172,49 @@ const styles = StyleSheet.create({
   amountLabel: { fontSize: 9, fontWeight: "bold", color: "#475569" },
   amountValue: { fontSize: 16, fontWeight: "bold", color: "#0f172a" },
   amountMeta: { fontSize: 8.5, color: "#64748b", marginTop: 3 },
+  categoryValue: {
+    fontSize: 11,
+    fontWeight: "bold",
+    color: "#0f172a",
+    marginBottom: 6,
+  },
+  descriptionValue: { fontSize: 9.5, color: "#1f2937" },
   listItem: { fontSize: 9, marginBottom: 2, color: "#1f2937" },
+  table: {
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 6,
+    overflow: "hidden",
+    marginBottom: 18,
+    marginTop: 4,
+  },
+  headerCell: {
+    flexDirection: "row",
+    backgroundColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  row: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  rowAlt: { backgroundColor: "#f8fafc" },
+  cellDesc: { width: "72%", padding: 7, fontSize: 9, color: "#1f2937" },
+  cellDate: {
+    width: "28%",
+    padding: 7,
+    fontSize: 9,
+    textAlign: "right",
+    color: "#475569",
+  },
 });
 
 export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
   const {
     paymentNumber,
     issueDate,
-    paidDate,
     category,
     description,
     amount,
@@ -192,7 +228,6 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
     counter_amount,
     counter_currency,
     recipient,
-    bookingNumbers,
     services = [],
     agency,
   } = props;
@@ -213,12 +248,57 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
     Number.isFinite(counter_amount) &&
     !!counter_currency;
   const hasPaymentLines = payments.length > 0;
+  const hasLegacyPaymentDetails = Boolean(
+    (paymentMethod && paymentMethod.trim()) || (account && account.trim()),
+  );
+  const recipientName = String(recipient.name || "").trim();
+  const recipientLabel = String(recipient.label || "").trim();
+  const hasRecipient = recipientName.length > 0;
   const effectivePaymentFee =
     typeof paymentFeeAmount === "number" && Number.isFinite(paymentFeeAmount)
       ? paymentFeeAmount
       : hasPaymentLines
         ? payments.reduce((sum, line) => sum + Number(line.fee_amount || 0), 0)
         : null;
+  const serviceRows = services.map((svc) => {
+    const manualDescription = String(svc.description || "").trim();
+    const dateLabel = String(svc.dateLabel || "").trim();
+    if (svc.isManual) {
+      return {
+        key: svc.id,
+        description: softWrapLongWords(
+          manualDescription || "Sin descripción",
+          { breakChar: " " },
+        ),
+        date: dateLabel || "—",
+      };
+    }
+
+    const pieces: string[] = [];
+    const typeLabel = String(svc.type || "").trim();
+    const destinationLabel = String(svc.destination || "").trim();
+    if (typeLabel) pieces.push(typeLabel);
+    if (destinationLabel) pieces.push(destinationLabel);
+    if (pieces.length === 0) {
+      pieces.push(`Servicio ${svc.serviceNumber ?? svc.id}`);
+    }
+    if (svc.bookingNumber != null) {
+      pieces.push(`Res. ${svc.bookingNumber}`);
+    }
+    if (
+      typeof svc.cost === "number" &&
+      Number.isFinite(svc.cost) &&
+      svc.currency
+    ) {
+      pieces.push(safeFmtCurrency(svc.cost, svc.currency));
+    }
+
+    return {
+      key: svc.id,
+      description: softWrapLongWords(pieces.join(" · "), { breakChar: " " }),
+      date: dateLabel || "—",
+    };
+  });
 
   return (
     <Document>
@@ -234,50 +314,76 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
                 />
               )}
               <View style={styles.headerLeftText}>
-                <Text style={styles.agencyName}>{agencyNameSafe}</Text>
-                <Text style={styles.agencyMeta}>{agencyLegalSafe}</Text>
-                <Text style={styles.agencyMeta}>CUIT: {agency.taxId}</Text>
-                <Text style={styles.agencyMeta}>
-                  {softWrapLongWords(agency.address, { breakChar: " " })}
-                </Text>
+                <Text style={styles.title}>Comprobante de pago</Text>
+                <Text style={styles.subtitle}>N° {paymentNumber}</Text>
+                <Text style={styles.subtitle}>Fecha: {fmtDate(issueDate)}</Text>
               </View>
             </View>
-          </View>
-          <View style={styles.headerRightRow}>
-            <Text style={styles.title}>Comprobante de pago</Text>
-            <Text style={styles.subtitle}>Categoría: {category}</Text>
-            <Text style={styles.subtitle}>N° {paymentNumber}</Text>
-            <Text style={styles.subtitle}>Fecha: {fmtDate(issueDate)}</Text>
-            {paidDate ? (
-              <Text style={styles.subtitle}>Pagado: {fmtDate(paidDate)}</Text>
-            ) : null}
           </View>
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Agencia</Text>
+          <Text style={styles.listItem}>{agencyNameSafe}</Text>
+          <Text style={styles.listItem}>{agencyLegalSafe}</Text>
+          <Text style={styles.listItem}>CUIT: {agency.taxId}</Text>
+          <Text style={styles.listItem}>
+            {softWrapLongWords(agency.address, { breakChar: " " })}
+          </Text>
+        </View>
+
+        {hasRecipient && (
+          <View style={styles.section}>
           <Text style={styles.sectionTitle}>Destinatario</Text>
           <Text style={styles.listItem}>
-            {softWrapLongWords(recipient.name, { breakChar: " " })}
+            {softWrapLongWords(recipientName, { breakChar: " " })}
           </Text>
-          {recipient.label ? (
+          {recipientLabel ? (
             <Text style={styles.listItem}>
-              Tipo: {softWrapLongWords(recipient.label, { breakChar: " " })}
+              Tipo: {softWrapLongWords(recipientLabel, { breakChar: " " })}
             </Text>
           ) : null}
           {recipient.id ? (
             <Text style={styles.listItem}>ID: {recipient.id}</Text>
           ) : null}
+          </View>
+        )}
+
+        <View style={styles.section}>
+          <Text style={styles.categoryValue}>
+            {softWrapLongWords(category, { breakChar: " " })}
+          </Text>
+          <Text style={styles.descriptionValue}>
+            {softWrapLongWords(description, { breakChar: " " })}
+          </Text>
+        </View>
+
+        <View style={styles.table}>
+          <View style={styles.headerCell}>
+            <Text style={styles.cellDesc}>Descripción</Text>
+            <Text style={styles.cellDate}>Fecha</Text>
+          </View>
+          {serviceRows.length > 0 ? (
+            serviceRows.map((row, idx) => (
+              <View
+                key={`${row.key}-${idx}`}
+                style={idx % 2 ? [styles.row, styles.rowAlt] : styles.row}
+              >
+                <Text style={styles.cellDesc}>{row.description}</Text>
+                <Text style={styles.cellDate}>{row.date}</Text>
+              </View>
+            ))
+          ) : (
+            <View style={styles.row}>
+              <Text style={styles.cellDesc}>Sin ítems cargados.</Text>
+              <Text style={styles.cellDate}>—</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.amountBox}>
           <Text style={styles.amountLabel}>Monto total</Text>
           <Text style={styles.amountValue}>{displayAmount}</Text>
-          <Text style={styles.amountMeta}>
-            Categoría: {softWrapLongWords(category, { breakChar: " " })}
-          </Text>
-          <Text style={styles.amountMeta}>
-            {softWrapLongWords(description, { breakChar: " " })}
-          </Text>
         </View>
 
         <View style={styles.section}>
@@ -309,7 +415,6 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
             </>
           ) : (
             <>
-              <Text style={styles.listItem}>Moneda: {displayCurrency}</Text>
               {paymentMethod ? (
                 <Text style={styles.listItem}>
                   Método: {softWrapLongWords(paymentMethod, { breakChar: " " })}
@@ -319,6 +424,9 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
                 <Text style={styles.listItem}>
                   Cuenta: {softWrapLongWords(account, { breakChar: " " })}
                 </Text>
+              ) : null}
+              {!hasLegacyPaymentDetails ? (
+                <Text style={styles.listItem}>-</Text>
               ) : null}
             </>
           )}
@@ -338,33 +446,6 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
               Contravalor: {safeFmtCurrency(counter_amount!, counter_currency!)}
             </Text>
           ) : null}
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Servicios asociados</Text>
-          {bookingNumbers && bookingNumbers.length > 0 ? (
-            <Text style={styles.listItem}>
-              Reservas: {bookingNumbers.join(", ")}
-            </Text>
-          ) : null}
-          {services.length > 0 ? (
-            services.map((svc) => (
-              <Text key={svc.id} style={styles.listItem}>
-                {softWrapLongWords(
-                  `Res. ${svc.bookingNumber ?? "-"} · Svc ${svc.serviceNumber ?? svc.id}${
-                    svc.type ? ` · ${svc.type}` : ""
-                  }${svc.destination ? ` · ${svc.destination}` : ""}${
-                    typeof svc.cost === "number" && svc.currency
-                      ? ` · ${safeFmtCurrency(svc.cost, svc.currency)}`
-                      : ""
-                  }`,
-                  { breakChar: " " },
-                )}
-              </Text>
-            ))
-          ) : (
-            <Text style={styles.listItem}>Sin servicios asociados.</Text>
-          )}
         </View>
       </Page>
     </Document>

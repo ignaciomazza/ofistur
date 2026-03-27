@@ -18,6 +18,7 @@ import {
 } from "@/utils/permissions";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
+import { decodeInvestmentPdfItemsPayload } from "@/utils/investments/pdfItemsPayload";
 
 const prisma = new PrismaClient();
 
@@ -257,6 +258,7 @@ export default async function handler(
       agency_investment_id: true,
       category: true,
       description: true,
+      counterparty_name: true,
       amount: true,
       currency: true,
       created_at: true,
@@ -375,6 +377,28 @@ export default async function handler(
         },
       })
     : [];
+  const pdfItemsPayload = decodeInvestmentPdfItemsPayload(
+    investment.counterparty_name,
+  );
+  const manualPdfItems = pdfItemsPayload.items;
+  const servicesForPdf =
+    manualPdfItems.length > 0
+      ? manualPdfItems.map((item, idx) => ({
+          id: -(idx + 1),
+          isManual: true,
+          manualIndex: idx + 1,
+          description: item.description,
+          dateLabel: item.date_label || null,
+        }))
+      : services.map((s) => ({
+          id: s.id_service,
+          serviceNumber: s.agency_service_id ?? s.id_service,
+          bookingNumber: s.booking?.agency_booking_id ?? s.booking_id,
+          type: s.type,
+          destination: s.destination,
+          cost: s.cost_price != null ? toNum(s.cost_price, 0) : null,
+          currency: s.currency,
+        }));
 
   const bookingNumbers = Array.from(
     new Set(
@@ -458,23 +482,15 @@ export default async function handler(
         ? "Operador"
         : investment.user
           ? "Usuario"
-          : "Sin destinatario",
+          : null,
       name: investment.operator?.name
         ? investment.operator.name
         : investment.user
           ? `${investment.user.first_name} ${investment.user.last_name}`.trim()
-          : "Sin destinatario asociado",
+          : "",
     },
     bookingNumbers,
-    services: services.map((s) => ({
-      id: s.id_service,
-      serviceNumber: s.agency_service_id ?? s.id_service,
-      bookingNumber: s.booking?.agency_booking_id ?? s.booking_id,
-      type: s.type,
-      destination: s.destination,
-      cost: s.cost_price != null ? toNum(s.cost_price, 0) : null,
-      currency: s.currency,
-    })),
+    services: servicesForPdf,
     agency: {
       name: agency?.name ?? "Agencia",
       legalName: agency?.legal_name ?? agency?.name ?? "-",

@@ -15,6 +15,10 @@ import {
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
 import { parseDateInputInBuenosAires } from "@/lib/buenosAiresDate";
+import {
+  decodeInvestmentPdfItemsPayload,
+  isEncodedInvestmentPdfItemsPayload,
+} from "@/utils/investments/pdfItemsPayload";
 
 /** ===== Auth helpers (unificado con otros endpoints) ===== */
 type TokenPayload = JWTPayload & {
@@ -786,8 +790,13 @@ function withCompatDefaults(
   item: InvestmentFullRecord,
   flags: InvestmentSchemaFlags,
 ): InvestmentFullRecord {
+  const decoded = decodeInvestmentPdfItemsPayload(
+    typeof item.counterparty_name === "string" ? item.counterparty_name : "",
+  );
   return {
     ...item,
+    counterparty_name: decoded.counterpartyName,
+    pdf_items: decoded.items,
     ...(flags.hasPaymentFeeAmount ? {} : { payment_fee_amount: null }),
     ...(flags.hasPaymentLines ? {} : { payments: [] }),
   };
@@ -940,7 +949,8 @@ export default async function handler(
         typeof b.currency === "string" ? b.currency.trim() : undefined;
       if (
         typeof counterparty_name === "string" &&
-        counterparty_name.length > 160
+        counterparty_name.length > 160 &&
+        !isEncodedInvestmentPdfItemsPayload(counterparty_name)
       ) {
         return res.status(400).json({
           error: "counterparty_name supera 160 caracteres",
