@@ -156,6 +156,17 @@ const toCustomColumnKey = (key: string): CustomColumnKey =>
 const fromCustomColumnKey = (key: CustomColumnKey) =>
   key.slice(CUSTOM_COLUMN_PREFIX.length);
 
+function parseMultiSelectValue(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function serializeMultiSelectValue(values: string[]): string {
+  return values.join(", ");
+}
+
 function toDateInputValue(value?: string | null): string {
   if (!value) return "";
   const trimmed = value.trim();
@@ -403,7 +414,10 @@ export default function ClientTable({
     (client: Client, field: EditableKey) => {
       if (isCustomColumn(field)) {
         const key = fromCustomColumnKey(field);
-        return client.custom_fields?.[key] ?? "";
+        const raw = client.custom_fields?.[key];
+        if (typeof raw === "string") return raw;
+        if (raw == null) return "";
+        return String(raw);
       }
       return getClientFieldValue(client, field as BaseEditableKey);
     },
@@ -417,6 +431,11 @@ export default function ClientTable({
         const def = customFieldMap.get(key);
         if (def?.type === "date") {
           return toDateInputValue(value);
+        }
+        if (def?.type === "multiselect") {
+          return serializeMultiSelectValue(
+            parseMultiSelectValue(value).sort((a, b) => a.localeCompare(b)),
+          );
         }
         return value.trim();
       }
@@ -443,6 +462,10 @@ export default function ClientTable({
         const key = fromCustomColumnKey(field);
         const def = customFieldMap.get(key);
         if (def?.type === "date") return formatDateDisplay(value);
+        if (def?.type === "boolean") {
+          if (value === "true") return "Sí";
+          if (value === "false") return "No";
+        }
         return value;
       }
       return formatFieldValue(field, value);
@@ -762,14 +785,103 @@ export default function ClientTable({
     if (isCustomColumn(editableField)) {
       const key = fromCustomColumnKey(editableField);
       const def = customFieldMap.get(key);
-      const inputType =
-        def?.type === "number"
-          ? "number"
-          : def?.type === "date"
-            ? "date"
-            : "text";
-      const displayValue =
-        def?.type === "date" ? toDateInputValue(value) : value;
+      const options = Array.isArray(def?.options) ? def.options : [];
+
+      if (def?.type === "select") {
+        return (
+          <select
+            value={value}
+            onChange={(e) =>
+              setDraftValue(client.id_client, editableField, e.target.value)
+            }
+            title={hasError || undefined}
+            className={`${baseInput} ${tone} ${error} cursor-pointer appearance-none`}
+          >
+            <option value="">Seleccionar</option>
+            {options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        );
+      }
+
+      if (def?.type === "multiselect") {
+        if (options.length === 0) {
+          return (
+            <input
+              type="text"
+              value={value}
+              onChange={(e) =>
+                setDraftValue(client.id_client, editableField, e.target.value)
+              }
+              title={hasError || undefined}
+              placeholder="Sin opciones"
+              className={`${baseInput} ${tone} ${error}`}
+            />
+          );
+        }
+        const selectedValues = parseMultiSelectValue(value);
+        return (
+          <select
+            multiple
+            value={selectedValues}
+            onChange={(e) => {
+              const selected = Array.from(e.target.selectedOptions).map(
+                (option) => option.value,
+              );
+              setDraftValue(
+                client.id_client,
+                editableField,
+                serializeMultiSelectValue(selected),
+              );
+            }}
+            title={hasError || undefined}
+            className={`${baseInput} ${tone} ${error} min-h-[96px]`}
+          >
+            {options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        );
+      }
+
+      if (def?.type === "boolean") {
+        return (
+          <select
+            value={value}
+            onChange={(e) =>
+              setDraftValue(client.id_client, editableField, e.target.value)
+            }
+            title={hasError || undefined}
+            className={`${baseInput} ${tone} ${error} cursor-pointer appearance-none`}
+          >
+            <option value="">Seleccionar</option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        );
+      }
+
+      if (def?.type === "textarea") {
+        return (
+          <textarea
+            value={value}
+            onChange={(e) =>
+              setDraftValue(client.id_client, editableField, e.target.value)
+            }
+            title={hasError || undefined}
+            rows={2}
+            className={`${baseInput} ${tone} ${error}`}
+          />
+        );
+      }
+
+      const inputType = def?.type === "number" ? "number" : def?.type === "date" ? "date" : "text";
+      const displayValue = def?.type === "date" ? toDateInputValue(value) : value;
       return (
         <input
           type={inputType}

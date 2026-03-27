@@ -31,7 +31,8 @@ type VisibilityMode = "all" | "team" | "own";
 type RoleInBooking = "ALL" | "TITULAR" | "COMPANION";
 type DateMode = "creation" | "travel";
 type MoneyMap = Record<string, number>;
-type CustomFieldFilter = { key: string; value: string };
+type FieldFilterScope = "base" | "custom";
+type FieldFilter = { scope: FieldFilterScope; key: string; value: string };
 
 type PanelRecentBooking = {
   id_booking: number;
@@ -97,6 +98,19 @@ type PanelResponse = {
 type ClientLite = {
   id_client: number;
   agency_client_id: number | null;
+  phone: string | null;
+  address: string | null;
+  postal_code: string | null;
+  locality: string | null;
+  company_name: string | null;
+  tax_id: string | null;
+  commercial_address: string | null;
+  dni_number: string | null;
+  passport_number: string | null;
+  birth_date: Date | null;
+  nationality: string | null;
+  gender: string | null;
+  email: string | null;
   first_name: string;
   last_name: string;
   profile_key: string;
@@ -108,6 +122,24 @@ type ClientLite = {
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
 const CUSTOM_FIELD_KEY_REGEX = /^[a-z0-9_]{1,40}$/;
+const BASE_FILTER_KEY_SET = new Set([
+  "first_name",
+  "last_name",
+  "agency_client_id",
+  "phone",
+  "email",
+  "birth_date",
+  "nationality",
+  "gender",
+  "dni_number",
+  "passport_number",
+  "tax_id",
+  "address",
+  "postal_code",
+  "locality",
+  "company_name",
+  "commercial_address",
+]);
 
 function getTokenFromRequest(req: NextApiRequest): string | null {
   if (req.cookies?.token) return req.cookies.token;
@@ -191,7 +223,7 @@ function normalizeFilterText(value: unknown): string {
     .trim();
 }
 
-function normalizeCustomFieldFilters(value: unknown): CustomFieldFilter[] {
+function normalizeFieldFilters(value: unknown): FieldFilter[] {
   if (value == null) return [];
 
   let parsed: unknown = value;
@@ -206,19 +238,29 @@ function normalizeCustomFieldFilters(value: unknown): CustomFieldFilter[] {
   if (!Array.isArray(parsed)) return [];
 
   const seen = new Set<string>();
-  const out: CustomFieldFilter[] = [];
+  const out: FieldFilter[] = [];
 
   parsed.forEach((rawItem) => {
     if (!rawItem || typeof rawItem !== "object") return;
     const item = rawItem as Record<string, unknown>;
+    const scopeRaw = String(item.scope ?? "")
+      .trim()
+      .toLowerCase();
+    const scope: FieldFilterScope = scopeRaw === "base" ? "base" : "custom";
     const key = String(item.key ?? "")
       .trim()
       .toLowerCase();
     const filterValue = String(item.value ?? "").trim();
-    if (!key || !filterValue || !CUSTOM_FIELD_KEY_REGEX.test(key)) return;
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ key, value: filterValue });
+    if (!key || !filterValue) return;
+    if (scope === "base") {
+      if (!BASE_FILTER_KEY_SET.has(key)) return;
+    } else if (!CUSTOM_FIELD_KEY_REGEX.test(key)) {
+      return;
+    }
+    const dedupeKey = `${scope}:${key}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    out.push({ scope, key, value: filterValue });
   });
 
   return out.slice(0, 8);
@@ -235,14 +277,58 @@ function readCustomFieldValue(
   return String(record[key] ?? "").trim();
 }
 
-function matchesCustomFieldFilters(
-  customFields: Prisma.JsonValue | null,
-  filters: CustomFieldFilter[],
+function readBaseFieldValue(client: ClientLite, key: string): string {
+  switch (key) {
+    case "first_name":
+      return String(client.first_name ?? "").trim();
+    case "last_name":
+      return String(client.last_name ?? "").trim();
+    case "agency_client_id":
+      return client.agency_client_id == null
+        ? ""
+        : String(client.agency_client_id).trim();
+    case "phone":
+      return String(client.phone ?? "").trim();
+    case "email":
+      return String(client.email ?? "").trim();
+    case "birth_date":
+      return toDateKeyInBuenosAiresLegacySafe(client.birth_date) ?? "";
+    case "nationality":
+      return String(client.nationality ?? "").trim();
+    case "gender":
+      return String(client.gender ?? "").trim();
+    case "dni_number":
+      return String(client.dni_number ?? "").trim();
+    case "passport_number":
+      return String(client.passport_number ?? "").trim();
+    case "tax_id":
+      return String(client.tax_id ?? "").trim();
+    case "address":
+      return String(client.address ?? "").trim();
+    case "postal_code":
+      return String(client.postal_code ?? "").trim();
+    case "locality":
+      return String(client.locality ?? "").trim();
+    case "company_name":
+      return String(client.company_name ?? "").trim();
+    case "commercial_address":
+      return String(client.commercial_address ?? "").trim();
+    default:
+      return "";
+  }
+}
+
+function matchesFieldFilters(
+  client: ClientLite,
+  filters: FieldFilter[],
 ): boolean {
   if (filters.length === 0) return true;
 
   return filters.every((filter) => {
-    const currentValue = readCustomFieldValue(customFields, filter.key);
+    const currentValue =
+      filter.scope === "custom"
+        ? readCustomFieldValue(client.custom_fields, filter.key)
+        : readBaseFieldValue(client, filter.key);
     if (!currentValue) return false;
     const currentNorm = normalizeFilterText(currentValue);
     const expectedNorm = normalizeFilterText(filter.value);
@@ -738,11 +824,14 @@ export default async function handler(
         ? req.query.date_mode[0]
         : req.query.date_mode,
     );
-    const customFilters = normalizeCustomFieldFilters(
-      Array.isArray(req.query.custom_filters)
-        ? req.query.custom_filters[0]
-        : req.query.custom_filters,
-    );
+    const rawFieldFiltersQuery =
+      Array.isArray(req.query.field_filters) && req.query.field_filters.length > 0
+        ? req.query.field_filters[0]
+        : req.query.field_filters ??
+          (Array.isArray(req.query.custom_filters)
+            ? req.query.custom_filters[0]
+            : req.query.custom_filters);
+    const customFilters = normalizeFieldFilters(rawFieldFiltersQuery);
 
     const from = String(
       Array.isArray(req.query.from) ? req.query.from[0] : req.query.from || "",
@@ -827,6 +916,19 @@ export default async function handler(
         select: {
           id_client: true,
           agency_client_id: true,
+          phone: true,
+          address: true,
+          postal_code: true,
+          locality: true,
+          company_name: true,
+          tax_id: true,
+          commercial_address: true,
+          dni_number: true,
+          passport_number: true,
+          birth_date: true,
+          nationality: true,
+          gender: true,
+          email: true,
           first_name: true,
           last_name: true,
           profile_key: true,
@@ -853,9 +955,7 @@ export default async function handler(
       const hasMoreBatch = rawClients.length > batchSize;
       const batchClients = (hasMoreBatch ? rawClients.slice(0, batchSize) : rawClients) as ClientLite[];
       const filteredBatchClients = customFilters.length
-        ? batchClients.filter((client) =>
-            matchesCustomFieldFilters(client.custom_fields, customFilters),
-          )
+        ? batchClients.filter((client) => matchesFieldFilters(client, customFilters))
         : batchClients;
 
       cursor = batchClients[batchClients.length - 1]?.id_client;

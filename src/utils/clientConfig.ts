@@ -70,9 +70,26 @@ export const CUSTOM_FIELD_TYPES: Array<{
   { value: "text", label: "Texto" },
   { value: "date", label: "Fecha" },
   { value: "number", label: "Número" },
+  { value: "select", label: "Lista desplegable" },
+  { value: "multiselect", label: "Selección múltiple" },
+  { value: "boolean", label: "Sí / No" },
+  { value: "textarea", label: "Texto largo" },
 ];
 
 const KEY_REGEX = /^[a-z0-9_]+$/;
+const CUSTOM_FIELD_TYPE_SET = new Set<ClientCustomFieldType>([
+  "text",
+  "date",
+  "number",
+  "select",
+  "multiselect",
+  "boolean",
+  "textarea",
+]);
+
+export function requiresChoiceOptions(type: ClientCustomFieldType): boolean {
+  return type === "select" || type === "multiselect";
+}
 
 export function normalizeRequiredFields(input: unknown): string[] {
   if (input == null) return [...DEFAULT_REQUIRED_FIELDS];
@@ -102,13 +119,13 @@ export function normalizeCustomFields(input: unknown): ClientCustomField[] {
   const out: ClientCustomField[] = [];
   for (const item of input) {
     if (!item || typeof item !== "object") continue;
-    const raw = item as Partial<ClientCustomField>;
+    const raw = item as Record<string, unknown>;
     const key = typeof raw.key === "string" ? raw.key.trim() : "";
     const label = typeof raw.label === "string" ? raw.label.trim() : "";
-    const type =
-      raw.type === "text" || raw.type === "date" || raw.type === "number"
-        ? raw.type
-        : null;
+    const rawType = typeof raw.type === "string" ? raw.type.trim() : "";
+    const type = CUSTOM_FIELD_TYPE_SET.has(rawType as ClientCustomFieldType)
+      ? (rawType as ClientCustomFieldType)
+      : null;
     if (!key || !label || !type || !KEY_REGEX.test(key)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -119,10 +136,19 @@ export function normalizeCustomFields(input: unknown): ClientCustomField[] {
     };
     if (typeof raw.required === "boolean") field.required = raw.required;
     if (typeof raw.placeholder === "string" && raw.placeholder.trim()) {
-      field.placeholder = raw.placeholder.trim();
+      field.placeholder = raw.placeholder.trim().slice(0, 120);
     }
     if (typeof raw.help === "string" && raw.help.trim()) {
-      field.help = raw.help.trim();
+      field.help = raw.help.trim().slice(0, 200);
+    }
+    if (requiresChoiceOptions(type) && Array.isArray(raw.options)) {
+      const options = raw.options
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0)
+        .slice(0, 50);
+      if (options.length > 0) {
+        field.options = Array.from(new Set(options));
+      }
     }
     if (typeof raw.builtin === "boolean") field.builtin = raw.builtin;
     out.push(field);

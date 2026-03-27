@@ -303,10 +303,18 @@ export default function ClientForm({
   };
 
   const customValue = (key: string) => formData.custom_fields?.[key] || "";
+  const parseMultiSelectValue = (raw: string): string[] =>
+    raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  const serializeMultiSelectValue = (values: string[]): string =>
+    values.join(", ");
 
   const renderCustomField = (field: ClientCustomField) => {
     const value = customValue(field.key);
     const hint = field.help || (field.type === "date" ? "dd/mm/aaaa" : "");
+    const options = Array.isArray(field.options) ? field.options : [];
 
     if (field.type === "date") {
       return (
@@ -328,6 +336,140 @@ export default function ClientForm({
             inputMode="numeric"
             placeholder={field.placeholder || "dd/mm/aaaa"}
             required={field.required}
+            className={customInputClass(field)}
+          />
+        </Field>
+      );
+    }
+
+    if (field.type === "select") {
+      return (
+        <Field
+          key={field.key}
+          id={`custom_${field.key}`}
+          label={field.label}
+          hint={field.help}
+          required={field.required}
+        >
+          <select
+            id={`custom_${field.key}`}
+            name={`custom_${field.key}`}
+            value={value}
+            onChange={(e) => updateCustomField(field.key, e.target.value)}
+            required={field.required}
+            className={customInputClass(field)}
+          >
+            <option value="">
+              {field.placeholder || "Seleccionar opción"}
+            </option>
+            {options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Field>
+      );
+    }
+
+    if (field.type === "multiselect") {
+      const selectedValues = parseMultiSelectValue(value);
+      return (
+        <Field
+          key={field.key}
+          id={`custom_${field.key}`}
+          label={field.label}
+          hint={field.help || "Podés elegir una o más opciones."}
+          required={field.required}
+        >
+          {options.length === 0 ? (
+            <input
+              id={`custom_${field.key}`}
+              type="text"
+              name={`custom_${field.key}`}
+              value={value}
+              onChange={(e) => updateCustomField(field.key, e.target.value)}
+              placeholder="Sin opciones configuradas"
+              required={field.required}
+              className={customInputClass(field)}
+            />
+          ) : (
+            <div className="space-y-2 rounded-2xl border border-white/10 bg-white/5 p-2">
+              {options.map((option) => {
+                const checked = selectedValues.includes(option);
+                return (
+                  <label
+                    key={`${field.key}-${option}`}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...selectedValues, option]
+                          : selectedValues.filter((item) => item !== option);
+                        updateCustomField(
+                          field.key,
+                          serializeMultiSelectValue(next),
+                        );
+                      }}
+                      className="size-4 rounded border border-sky-200/80 bg-white/70"
+                    />
+                    <span>{option}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </Field>
+      );
+    }
+
+    if (field.type === "boolean") {
+      return (
+        <Field
+          key={field.key}
+          id={`custom_${field.key}`}
+          label={field.label}
+          hint={field.help}
+          required={field.required}
+        >
+          <select
+            id={`custom_${field.key}`}
+            name={`custom_${field.key}`}
+            value={value}
+            onChange={(e) => updateCustomField(field.key, e.target.value)}
+            required={field.required}
+            className={customInputClass(field)}
+          >
+            <option value="">
+              {field.placeholder || "Seleccionar"}
+            </option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </Field>
+      );
+    }
+
+    if (field.type === "textarea") {
+      return (
+        <Field
+          key={field.key}
+          id={`custom_${field.key}`}
+          label={field.label}
+          hint={field.help}
+          required={field.required}
+        >
+          <textarea
+            id={`custom_${field.key}`}
+            name={`custom_${field.key}`}
+            value={value}
+            onChange={(e) => updateCustomField(field.key, e.target.value)}
+            placeholder={field.placeholder}
+            required={field.required}
+            rows={3}
             className={customInputClass(field)}
           />
         </Field>

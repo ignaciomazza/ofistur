@@ -3027,33 +3027,132 @@ export default function QuickLoadPage() {
                                       >
                                         {field.label}
                                       </FieldLabel>
-                                      <input
-                                        id={`custom-${client.id}-${field.key}`}
-                                        type={
-                                          field.type === "number"
-                                            ? "number"
-                                            : field.type === "date"
-                                              ? "date"
-                                              : "text"
-                                        }
-                                        value={
-                                          client.custom_fields?.[field.key] ||
-                                          ""
-                                        }
-                                        onChange={(e) =>
-                                          updateClientCustomField(
-                                            client.id,
-                                            field.key,
-                                            e.target.value,
+                                      {field.type === "select" &&
+                                      Array.isArray(field.options) &&
+                                      field.options.length > 0 ? (
+                                        <select
+                                          id={`custom-${client.id}-${field.key}`}
+                                          value={
+                                            client.custom_fields?.[field.key] ||
+                                            ""
+                                          }
+                                          onChange={(e) =>
+                                            updateClientCustomField(
+                                              client.id,
+                                              field.key,
+                                              e.target.value,
+                                            )
+                                          }
+                                          className={INPUT}
+                                        >
+                                          <option value="">
+                                            {field.placeholder || "Seleccionar"}
+                                          </option>
+                                          {field.options.map((option) => (
+                                            <option key={option} value={option}>
+                                              {option}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      ) : field.type === "multiselect" &&
+                                        Array.isArray(field.options) &&
+                                        field.options.length > 0 ? (
+                                        <select
+                                          id={`custom-${client.id}-${field.key}`}
+                                          multiple
+                                          value={String(
+                                            client.custom_fields?.[field.key] || "",
                                           )
-                                        }
-                                        className={INPUT}
-                                        placeholder={
-                                          field.type === "date"
-                                            ? "aaaa-mm-dd"
-                                            : field.placeholder || ""
-                                        }
-                                      />
+                                            .split(",")
+                                            .map((item) => item.trim())
+                                            .filter((item) => item.length > 0)}
+                                          onChange={(e) => {
+                                            const selected = Array.from(
+                                              e.target.selectedOptions,
+                                            ).map((option) => option.value);
+                                            updateClientCustomField(
+                                              client.id,
+                                              field.key,
+                                              selected.join(", "),
+                                            );
+                                          }}
+                                          className={`${INPUT} min-h-[96px]`}
+                                        >
+                                          {field.options.map((option) => (
+                                            <option key={option} value={option}>
+                                              {option}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      ) : field.type === "boolean" ? (
+                                        <select
+                                          id={`custom-${client.id}-${field.key}`}
+                                          value={
+                                            client.custom_fields?.[field.key] ||
+                                            ""
+                                          }
+                                          onChange={(e) =>
+                                            updateClientCustomField(
+                                              client.id,
+                                              field.key,
+                                              e.target.value,
+                                            )
+                                          }
+                                          className={INPUT}
+                                        >
+                                          <option value="">
+                                            {field.placeholder || "Seleccionar"}
+                                          </option>
+                                          <option value="true">Sí</option>
+                                          <option value="false">No</option>
+                                        </select>
+                                      ) : field.type === "textarea" ? (
+                                        <textarea
+                                          id={`custom-${client.id}-${field.key}`}
+                                          value={
+                                            client.custom_fields?.[field.key] ||
+                                            ""
+                                          }
+                                          onChange={(e) =>
+                                            updateClientCustomField(
+                                              client.id,
+                                              field.key,
+                                              e.target.value,
+                                            )
+                                          }
+                                          className={INPUT}
+                                          placeholder={field.placeholder || ""}
+                                          rows={3}
+                                        />
+                                      ) : (
+                                        <input
+                                          id={`custom-${client.id}-${field.key}`}
+                                          type={
+                                            field.type === "number"
+                                              ? "number"
+                                              : field.type === "date"
+                                                ? "date"
+                                                : "text"
+                                          }
+                                          value={
+                                            client.custom_fields?.[field.key] ||
+                                            ""
+                                          }
+                                          onChange={(e) =>
+                                            updateClientCustomField(
+                                              client.id,
+                                              field.key,
+                                              e.target.value,
+                                            )
+                                          }
+                                          className={INPUT}
+                                          placeholder={
+                                            field.type === "date"
+                                              ? "aaaa-mm-dd"
+                                              : field.placeholder || ""
+                                          }
+                                        />
+                                      )}
                                     </div>
                                   ))}
                                 </div>

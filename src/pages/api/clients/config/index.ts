@@ -42,10 +42,19 @@ const customFieldSchema = z.object({
     .max(40)
     .regex(/^[a-z0-9_]+$/),
   label: z.string().trim().min(1).max(80),
-  type: z.enum(["text", "date", "number"]),
+  type: z.enum([
+    "text",
+    "date",
+    "number",
+    "select",
+    "multiselect",
+    "boolean",
+    "textarea",
+  ]),
   required: z.boolean().optional(),
   placeholder: z.string().trim().max(120).optional(),
   help: z.string().trim().max(200).optional(),
+  options: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
   builtin: z.boolean().optional(),
 });
 

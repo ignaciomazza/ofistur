@@ -149,6 +149,49 @@ function getMissingFieldMessage(fieldKey: string): string {
   return `Falta completar ${getFieldLabel(fieldKey)}.`;
 }
 
+type ClientCustomFieldDef = {
+  key: string;
+  type: string;
+  options?: string[];
+};
+
+function normalizeCustomFieldValue(
+  field: ClientCustomFieldDef,
+  value: unknown,
+): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  if (field.type === "boolean") {
+    const normalized = raw.toLowerCase();
+    if (["true", "1", "si", "sí", "yes"].includes(normalized)) return "true";
+    if (["false", "0", "no"].includes(normalized)) return "false";
+    return "";
+  }
+
+  if (field.type === "select") {
+    const options = Array.isArray(field.options) ? field.options : [];
+    if (options.length === 0) return raw;
+    return options.includes(raw) ? raw : "";
+  }
+
+  if (field.type === "multiselect") {
+    const options = new Set(Array.isArray(field.options) ? field.options : []);
+    const selected = raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    if (selected.length === 0) return "";
+    const sanitized = options.size
+      ? selected.filter((item) => options.has(item))
+      : selected;
+    if (sanitized.length === 0) return "";
+    return Array.from(new Set(sanitized)).join(", ");
+  }
+
+  return raw;
+}
+
 const userSelectSafe = {
   id_user: true,
   first_name: true,
@@ -625,10 +668,22 @@ export default async function handler(
         ? (c.custom_fields as Record<string, unknown>)
         : {};
       const allowedCustomKeys = new Set(customFields.map((f) => f.key));
+      const customFieldMap = new Map(
+        customFields.map((field) => [field.key, field]),
+      );
       const sanitizedCustom = Object.fromEntries(
         Object.entries(customPayload)
           .filter(([key]) => allowedCustomKeys.has(key))
-          .map(([key, value]) => [key, String(value ?? "").trim()])
+          .map(([key, value]) => {
+            const definition = customFieldMap.get(key);
+            const normalized = definition
+              ? normalizeCustomFieldValue(
+                  definition as ClientCustomFieldDef,
+                  value,
+                )
+              : String(value ?? "").trim();
+            return [key, normalized];
+          })
           .filter(([, value]) => value.length > 0),
       );
 

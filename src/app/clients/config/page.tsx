@@ -28,6 +28,7 @@ import {
   normalizeCustomFields,
   normalizeHiddenFields,
   normalizeRequiredFields,
+  requiresChoiceOptions,
   resolveClientProfile,
 } from "@/utils/clientConfig";
 
@@ -265,6 +266,11 @@ export default function ClientsConfigPage() {
   const [newFieldType, setNewFieldType] =
     useState<ClientCustomField["type"]>("text");
   const [newFieldRequired, setNewFieldRequired] = useState(false);
+  const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
+  const [newFieldOptionDraft, setNewFieldOptionDraft] = useState("");
+  const [customOptionDrafts, setCustomOptionDrafts] = useState<
+    Record<string, string>
+  >({});
   const [newProfileLabel, setNewProfileLabel] = useState("");
   const [activeStack, setActiveStack] = useState<ConfigStack>("visibility");
   const [schemaWarning, setSchemaWarning] = useState<string | null>(null);
@@ -700,6 +706,55 @@ export default function ClientsConfigPage() {
       ...profile,
       custom_fields: profile.custom_fields.filter((field) => field.key !== key),
     }));
+    setCustomOptionDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const addNewFieldOption = () => {
+    const value = newFieldOptionDraft.trim();
+    if (!value) return;
+    const alreadyExists = newFieldOptions.some(
+      (option) => option.toLowerCase() === value.toLowerCase(),
+    );
+    if (alreadyExists) {
+      toast.info("Esa opción ya está cargada.");
+      return;
+    }
+    setNewFieldOptions((prev) => [...prev, value]);
+    setNewFieldOptionDraft("");
+  };
+
+  const removeNewFieldOption = (option: string) => {
+    setNewFieldOptions((prev) => prev.filter((item) => item !== option));
+  };
+
+  const addCustomFieldOption = (key: string) => {
+    const value = String(customOptionDrafts[key] || "").trim();
+    if (!value) return;
+    const targetField = customFields.find((field) => field.key === key);
+    if (!targetField || !requiresChoiceOptions(targetField.type)) return;
+    const current = Array.isArray(targetField.options) ? targetField.options : [];
+    const alreadyExists = current.some(
+      (option) => option.toLowerCase() === value.toLowerCase(),
+    );
+    if (alreadyExists) {
+      toast.info("Esa opción ya está cargada.");
+      return;
+    }
+    updateCustomField(key, { options: [...current, value] });
+    setCustomOptionDrafts((prev) => ({ ...prev, [key]: "" }));
+  };
+
+  const removeCustomFieldOption = (key: string, option: string) => {
+    const targetField = customFields.find((field) => field.key === key);
+    if (!targetField || !requiresChoiceOptions(targetField.type)) return;
+    const current = Array.isArray(targetField.options) ? targetField.options : [];
+    updateCustomField(key, {
+      options: current.filter((item) => item !== option),
+    });
   };
 
   const addCustomField = () => {
@@ -709,6 +764,10 @@ export default function ClientsConfigPage() {
       toast.error("Ingresá un nombre para el campo.");
       return;
     }
+    if (requiresChoiceOptions(newFieldType) && newFieldOptions.length === 0) {
+      toast.error("Agregá al menos una opción para este campo de lista.");
+      return;
+    }
     const existingKeys = new Set(customFields.map((f) => f.key));
     const key = buildCustomFieldKey(label, existingKeys);
     const next: ClientCustomField = {
@@ -716,6 +775,7 @@ export default function ClientsConfigPage() {
       label,
       type: newFieldType,
       required: newFieldRequired,
+      options: requiresChoiceOptions(newFieldType) ? newFieldOptions : undefined,
     };
     if (newFieldType === "date") next.placeholder = "dd/mm/aaaa";
     updateActiveProfile((profile) => ({
@@ -725,6 +785,8 @@ export default function ClientsConfigPage() {
     setNewFieldLabel("");
     setNewFieldType("text");
     setNewFieldRequired(false);
+    setNewFieldOptions([]);
+    setNewFieldOptionDraft("");
   };
 
   const addProfile = () => {
@@ -742,7 +804,10 @@ export default function ClientsConfigPage() {
       label,
       required_fields: [...seed.required_fields],
       hidden_fields: [...seed.hidden_fields],
-      custom_fields: seed.custom_fields.map((field) => ({ ...field })),
+      custom_fields: seed.custom_fields.map((field) => ({
+        ...field,
+        options: Array.isArray(field.options) ? [...field.options] : undefined,
+      })),
     };
     setProfiles((prev) => [...prev, nextProfile]);
     setActiveProfileKey(key);
@@ -1436,11 +1501,15 @@ export default function ClientsConfigPage() {
                       />
                       <select
                         value={newFieldType}
-                        onChange={(e) =>
-                          setNewFieldType(
-                            e.target.value as ClientCustomField["type"],
-                          )
-                        }
+                        onChange={(e) => {
+                          const nextType = e.target
+                            .value as ClientCustomField["type"];
+                          setNewFieldType(nextType);
+                          if (!requiresChoiceOptions(nextType)) {
+                            setNewFieldOptions([]);
+                            setNewFieldOptionDraft("");
+                          }
+                        }}
                         className="w-full rounded-2xl border border-white/20 bg-white/10 px-3 py-2 text-sm outline-none"
                         disabled={!canEdit || saving}
                       >
@@ -1467,12 +1536,63 @@ export default function ClientsConfigPage() {
                         Agregar
                       </button>
                     </div>
+                    {requiresChoiceOptions(newFieldType) && (
+                      <div className="mt-3 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="text"
+                            value={newFieldOptionDraft}
+                            onChange={(e) =>
+                              setNewFieldOptionDraft(e.target.value)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key !== "Enter") return;
+                              e.preventDefault();
+                              addNewFieldOption();
+                            }}
+                            placeholder="Agregar opción (ej: Turista)"
+                            className="w-full rounded-2xl border border-white/20 bg-white/10 px-3 py-2 text-sm outline-none md:w-auto md:flex-1"
+                            disabled={!canEdit || saving}
+                          />
+                          <button
+                            type="button"
+                            onClick={addNewFieldOption}
+                            disabled={!canEdit || saving}
+                            className="rounded-full border border-white/20 px-3 py-1 text-xs hover:bg-white/10 disabled:opacity-50"
+                          >
+                            Agregar opción
+                          </button>
+                        </div>
+                        {newFieldOptions.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {newFieldOptions.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() => removeNewFieldOption(option)}
+                                disabled={!canEdit || saving}
+                                className="rounded-full border border-white/20 px-3 py-1 text-xs hover:bg-white/10 disabled:opacity-50"
+                                title="Quitar opción"
+                              >
+                                {option} ×
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-sky-950/65 dark:text-white/65">
+                            Este tipo de campo requiere al menos una opción.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {customFields.length > 0 ? (
                     <div className="mt-4 space-y-3">
                       {customFields.map((field) => {
                         const isBuiltin = Boolean(field.builtin);
+                        const usesOptions = requiresChoiceOptions(field.type);
+                        const optionDraft = customOptionDrafts[field.key] || "";
                         return (
                           <div
                             key={field.key}
@@ -1491,16 +1611,22 @@ export default function ClientsConfigPage() {
                             />
                             <select
                               value={field.type}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const nextType = e.target
+                                  .value as ClientCustomField["type"];
                                 updateCustomField(field.key, {
-                                  type: e.target
-                                    .value as ClientCustomField["type"],
+                                  type: nextType,
                                   placeholder:
-                                    e.target.value === "date"
+                                    nextType === "date"
                                       ? "dd/mm/aaaa"
-                                      : undefined,
-                                })
-                              }
+                                      : field.placeholder,
+                                  options: requiresChoiceOptions(nextType)
+                                    ? Array.isArray(field.options)
+                                      ? field.options
+                                      : []
+                                    : undefined,
+                                });
+                              }}
                               disabled={!canEdit || saving || isBuiltin}
                               className="rounded-xl border border-white/20 bg-white/10 px-2 py-1 text-sm outline-none"
                             >
@@ -1533,6 +1659,61 @@ export default function ClientsConfigPage() {
                             >
                               Quitar
                             </button>
+                            {usesOptions && (
+                              <div className="w-full space-y-2 rounded-2xl border border-white/15 bg-white/5 p-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={optionDraft}
+                                    onChange={(e) =>
+                                      setCustomOptionDrafts((prev) => ({
+                                        ...prev,
+                                        [field.key]: e.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key !== "Enter") return;
+                                      e.preventDefault();
+                                      addCustomFieldOption(field.key);
+                                    }}
+                                    disabled={!canEdit || saving || isBuiltin}
+                                    placeholder="Agregar opción"
+                                    className="w-full rounded-xl border border-white/20 bg-white/10 px-2 py-1 text-sm outline-none md:w-auto md:flex-1"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => addCustomFieldOption(field.key)}
+                                    disabled={!canEdit || saving || isBuiltin}
+                                    className="rounded-full border border-white/20 px-3 py-1 text-xs hover:bg-white/10 disabled:opacity-50"
+                                  >
+                                    Agregar opción
+                                  </button>
+                                </div>
+                                {Array.isArray(field.options) &&
+                                field.options.length > 0 ? (
+                                  <div className="flex flex-wrap gap-2">
+                                    {field.options.map((option) => (
+                                      <button
+                                        key={`${field.key}-${option}`}
+                                        type="button"
+                                        onClick={() =>
+                                          removeCustomFieldOption(field.key, option)
+                                        }
+                                        disabled={!canEdit || saving || isBuiltin}
+                                        className="rounded-full border border-white/20 px-3 py-1 text-xs hover:bg-white/10 disabled:opacity-50"
+                                        title="Quitar opción"
+                                      >
+                                        {option} ×
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-sky-950/60 dark:text-white/60">
+                                    Sin opciones cargadas.
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

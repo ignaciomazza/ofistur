@@ -18,8 +18,18 @@ import "react-toastify/dist/ReactToastify.css";
 type MoneyMap = Record<string, number>;
 type RoleInBooking = "ALL" | "TITULAR" | "COMPANION";
 type DateMode = "creation" | "travel";
-type CustomFieldFilter = { key: string; value: string };
-type CustomFieldFilterDraft = CustomFieldFilter & { id: string };
+type FieldFilterScope = "base" | "custom";
+type FieldFilterInputType = "text" | "number" | "date" | "select";
+type FieldFilter = { scope: FieldFilterScope; key: string; value: string };
+type FieldFilterDraft = FieldFilter & { id: string };
+type FieldFilterOption = {
+  scope: FieldFilterScope;
+  key: string;
+  label: string;
+  inputType: FieldFilterInputType;
+  placeholder?: string;
+  options?: string[];
+};
 type SortKey =
   | "last_booking_desc"
   | "next_trip_asc"
@@ -35,6 +45,116 @@ const SORT_LABELS: Record<SortKey, string> = {
   companion_desc: "Más acompañante",
   name_asc: "Nombre (A-Z)",
 };
+
+const BASE_FIELD_FILTER_OPTIONS: FieldFilterOption[] = [
+  {
+    scope: "base",
+    key: "first_name",
+    label: "Nombre",
+    inputType: "text",
+    placeholder: "Ej: Juan",
+  },
+  {
+    scope: "base",
+    key: "last_name",
+    label: "Apellido",
+    inputType: "text",
+    placeholder: "Ej: Pérez",
+  },
+  {
+    scope: "base",
+    key: "agency_client_id",
+    label: "Nº pax",
+    inputType: "number",
+    placeholder: "Ej: 125",
+  },
+  {
+    scope: "base",
+    key: "dni_number",
+    label: "DNI / CI",
+    inputType: "text",
+    placeholder: "Ej: 30111222",
+  },
+  {
+    scope: "base",
+    key: "passport_number",
+    label: "Pasaporte",
+    inputType: "text",
+    placeholder: "Ej: AA123456",
+  },
+  {
+    scope: "base",
+    key: "tax_id",
+    label: "CUIT / RUT",
+    inputType: "text",
+    placeholder: "Ej: 20-12345678-3",
+  },
+  {
+    scope: "base",
+    key: "phone",
+    label: "Teléfono",
+    inputType: "text",
+    placeholder: "Ej: +54 11...",
+  },
+  {
+    scope: "base",
+    key: "email",
+    label: "Email",
+    inputType: "text",
+    placeholder: "Ej: pax@mail.com",
+  },
+  {
+    scope: "base",
+    key: "birth_date",
+    label: "Fecha de nacimiento",
+    inputType: "date",
+  },
+  {
+    scope: "base",
+    key: "gender",
+    label: "Género",
+    inputType: "select",
+    options: ["Masculino", "Femenino", "No Binario"],
+  },
+  {
+    scope: "base",
+    key: "nationality",
+    label: "Nacionalidad",
+    inputType: "text",
+    placeholder: "Ej: Argentina",
+  },
+  {
+    scope: "base",
+    key: "locality",
+    label: "Localidad",
+    inputType: "text",
+    placeholder: "Ej: CABA",
+  },
+  {
+    scope: "base",
+    key: "address",
+    label: "Dirección",
+    inputType: "text",
+  },
+  {
+    scope: "base",
+    key: "postal_code",
+    label: "Código postal",
+    inputType: "text",
+  },
+  {
+    scope: "base",
+    key: "company_name",
+    label: "Razón social",
+    inputType: "text",
+  },
+  {
+    scope: "base",
+    key: "commercial_address",
+    label: "Domicilio comercial",
+    inputType: "text",
+  },
+];
 
 type UserLite = {
   id_user: number;
@@ -355,23 +475,42 @@ function roleLabel(role: "TITULAR" | "ACOMPANANTE"): string {
   return role === "TITULAR" ? "Titular" : "Acompañante";
 }
 
-function buildCustomFieldFilterId(): string {
+function buildFieldFilterId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function sanitizeCustomFieldFilters(
-  filters: CustomFieldFilter[],
-): CustomFieldFilter[] {
+function filterFieldId(scope: FieldFilterScope, key: string): string {
+  return `${scope}:${key}`;
+}
+
+function parseFilterFieldId(value: string): {
+  scope: FieldFilterScope;
+  key: string;
+} | null {
+  const [scopeRaw, ...rest] = String(value || "")
+    .trim()
+    .toLowerCase()
+    .split(":");
+  const key = rest.join(":").trim();
+  if (!key) return null;
+  if (scopeRaw === "base") return { scope: "base", key };
+  if (scopeRaw === "custom") return { scope: "custom", key };
+  return null;
+}
+
+function sanitizeFieldFilters(filters: FieldFilter[]): FieldFilter[] {
   const seen = new Set<string>();
-  const out: CustomFieldFilter[] = [];
+  const out: FieldFilter[] = [];
   filters.forEach((filter) => {
+    const scope = filter.scope === "base" ? "base" : "custom";
     const key = String(filter.key || "")
       .trim()
       .toLowerCase();
     const value = String(filter.value || "").trim();
-    if (!key || !value || seen.has(key)) return;
-    seen.add(key);
-    out.push({ key, value });
+    const id = filterFieldId(scope, key);
+    if (!key || !value || seen.has(id)) return;
+    seen.add(id);
+    out.push({ scope, key, value });
   });
   return out.slice(0, 8);
 }
@@ -382,7 +521,7 @@ type QueryOverrides = Partial<{
   dateMode: DateMode;
   profileKey: string;
   ownerId: number;
-  customFieldFilters: CustomFieldFilter[];
+  fieldFilters: FieldFilter[];
   from: string;
   to: string;
   includeEmpty: boolean;
@@ -414,7 +553,7 @@ export default function ClientsPanelPage() {
   const [profileKey, setProfileKey] = useState("all");
   const [ownerId, setOwnerId] = useState<number>(0);
   const [customFieldFilters, setCustomFieldFilters] = useState<
-    CustomFieldFilterDraft[]
+    FieldFilterDraft[]
   >([]);
   const [dateMode, setDateMode] = useState<DateMode>("travel");
   const [from, setFrom] = useState("");
@@ -439,15 +578,6 @@ export default function ClientsPanelPage() {
     profileOptions.forEach((profile) => map.set(profile.key, profile.label));
     return map;
   }, [profileOptions]);
-  const customFieldLabelMap = useMemo(() => {
-    const map = new Map<string, string>();
-    profileOptions.forEach((profile) => {
-      profile.custom_fields.forEach((field) => {
-        if (!map.has(field.key)) map.set(field.key, field.label);
-      });
-    });
-    return map;
-  }, [profileOptions]);
 
   const ownerLabelMap = useMemo(() => {
     const map = new Map<number, string>();
@@ -465,15 +595,70 @@ export default function ClientsPanelPage() {
     () => selectedProfile?.custom_fields ?? [],
     [selectedProfile],
   );
-  const selectedProfileCustomFieldMap = useMemo(
+  const customFilterFieldOptions = useMemo<FieldFilterOption[]>(
     () =>
-      new Map(selectedProfileCustomFields.map((field) => [field.key, field])),
+      selectedProfileCustomFields.map((field) => {
+        let inputType: FieldFilterInputType = "text";
+        if (field.type === "number") inputType = "number";
+        else if (field.type === "date") inputType = "date";
+        else if (
+          field.type === "select" ||
+          field.type === "multiselect" ||
+          field.type === "boolean"
+        ) {
+          inputType = "select";
+        }
+
+        const options =
+          field.type === "boolean"
+            ? ["true", "false"]
+            : Array.isArray(field.options)
+              ? field.options
+              : undefined;
+
+        return {
+          scope: "custom" as const,
+          key: field.key,
+          label: field.label,
+          inputType,
+          placeholder: field.placeholder,
+          options,
+        };
+      }),
     [selectedProfileCustomFields],
+  );
+  const availableFieldFilterOptions = useMemo<FieldFilterOption[]>(
+    () =>
+      profileKey === "all"
+        ? BASE_FIELD_FILTER_OPTIONS
+        : [...BASE_FIELD_FILTER_OPTIONS, ...customFilterFieldOptions],
+    [profileKey, customFilterFieldOptions],
+  );
+  const availableFieldFilterMap = useMemo(
+    () =>
+      new Map(
+        availableFieldFilterOptions.map((field) => [
+          filterFieldId(field.scope, field.key),
+          field,
+        ]),
+      ),
+    [availableFieldFilterOptions],
+  );
+  const fieldFilterLabelMap = useMemo(
+    () =>
+      new Map(
+        availableFieldFilterOptions.map((field) => [
+          filterFieldId(field.scope, field.key),
+          field.label,
+        ]),
+      ),
+    [availableFieldFilterOptions],
   );
   const normalizedCustomFieldFilters = useMemo(
     () =>
-      sanitizeCustomFieldFilters(
+      sanitizeFieldFilters(
         customFieldFilters.map((filter) => ({
+          scope: filter.scope,
           key: filter.key,
           value: filter.value,
         })),
@@ -483,12 +668,17 @@ export default function ClientsPanelPage() {
 
   useEffect(() => {
     setCustomFieldFilters((prev) => {
-      if (profileKey === "all") return prev.length ? [] : prev;
-      const validKeys = new Set(selectedProfileCustomFields.map((field) => field.key));
-      const next = prev.filter((filter) => validKeys.has(filter.key));
+      const validIds = new Set(
+        availableFieldFilterOptions.map((field) =>
+          filterFieldId(field.scope, field.key),
+        ),
+      );
+      const next = prev.filter((filter) =>
+        validIds.has(filterFieldId(filter.scope, filter.key)),
+      );
       return next.length === prev.length ? prev : next;
     });
-  }, [profileKey, selectedProfileCustomFields]);
+  }, [availableFieldFilterOptions]);
 
   useEffect(() => {
     if (!token) return;
@@ -558,8 +748,8 @@ export default function ClientsPanelPage() {
       const effectiveDateMode = overrides?.dateMode ?? dateMode;
       const effectiveProfileKey = overrides?.profileKey ?? profileKey;
       const effectiveOwnerId = overrides?.ownerId ?? ownerId;
-      const effectiveCustomFieldFilters =
-        overrides?.customFieldFilters ?? normalizedCustomFieldFilters;
+      const effectiveFieldFilters =
+        overrides?.fieldFilters ?? normalizedCustomFieldFilters;
       const effectiveFrom = overrides?.from ?? from;
       const effectiveTo = overrides?.to ?? to;
       const effectiveIncludeEmpty = overrides?.includeEmpty ?? includeEmpty;
@@ -576,10 +766,10 @@ export default function ClientsPanelPage() {
       if (canSelectOwner && effectiveOwnerId > 0) {
         params.set("ownerId", String(effectiveOwnerId));
       }
-      if (effectiveCustomFieldFilters.length > 0) {
+      if (effectiveFieldFilters.length > 0) {
         params.set(
-          "custom_filters",
-          JSON.stringify(effectiveCustomFieldFilters),
+          "field_filters",
+          JSON.stringify(effectiveFieldFilters),
         );
       }
       if (effectiveFrom) params.set("from", effectiveFrom);
@@ -709,23 +899,26 @@ export default function ClientsPanelPage() {
   };
 
   const addCustomFieldFilter = useCallback(() => {
-    if (profileKey === "all" || selectedProfileCustomFields.length === 0) return;
+    if (availableFieldFilterOptions.length === 0) return;
     setCustomFieldFilters((prev) => {
-      const usedKeys = new Set(prev.map((filter) => filter.key));
-      const available = selectedProfileCustomFields.find(
-        (field) => !usedKeys.has(field.key),
+      const usedIds = new Set(
+        prev.map((filter) => filterFieldId(filter.scope, filter.key)),
+      );
+      const available = availableFieldFilterOptions.find(
+        (field) => !usedIds.has(filterFieldId(field.scope, field.key)),
       );
       if (!available) return prev;
       return [
         ...prev,
         {
-          id: buildCustomFieldFilterId(),
+          id: buildFieldFilterId(),
+          scope: available.scope,
           key: available.key,
           value: "",
         },
       ];
     });
-  }, [profileKey, selectedProfileCustomFields]);
+  }, [availableFieldFilterOptions]);
 
   const removeCustomFieldFilter = useCallback((id: string) => {
     setCustomFieldFilters((prev) => prev.filter((filter) => filter.id !== id));
@@ -784,8 +977,16 @@ export default function ClientsPanelPage() {
       labels.push(`Vendedor: ${ownerLabelMap.get(ownerId) || `N° ${ownerId}`}`);
     }
     normalizedCustomFieldFilters.forEach((filter) => {
-      const fieldLabel = customFieldLabelMap.get(filter.key) || filter.key;
-      labels.push(`${fieldLabel}: ${filter.value}`);
+      const fieldLabel =
+        fieldFilterLabelMap.get(filterFieldId(filter.scope, filter.key)) ||
+        filter.key;
+      const displayValue =
+        filter.value === "true"
+          ? "Sí"
+          : filter.value === "false"
+            ? "No"
+            : filter.value;
+      labels.push(`${fieldLabel}: ${displayValue}`);
     });
     if (from) labels.push(`Desde: ${from}`);
     if (to) labels.push(`Hasta: ${to}`);
@@ -800,7 +1001,7 @@ export default function ClientsPanelPage() {
     canSelectOwner,
     ownerId,
     ownerLabelMap,
-    customFieldLabelMap,
+    fieldFilterLabelMap,
     normalizedCustomFieldFilters,
     from,
     to,
@@ -808,9 +1009,7 @@ export default function ClientsPanelPage() {
     includeEmpty,
   ]);
   const canAddCustomFieldFilter =
-    profileKey !== "all" &&
-    selectedProfileCustomFields.length > 0 &&
-    customFieldFilters.length < selectedProfileCustomFields.length;
+    customFieldFilters.length < availableFieldFilterOptions.length;
 
   return (
     <ProtectedRoute>
@@ -980,7 +1179,7 @@ export default function ClientsPanelPage() {
                     roleInBooking: "ALL",
                     profileKey: "all",
                     ownerId: 0,
-                    customFieldFilters: [],
+                    fieldFilters: [],
                     dateMode: "travel",
                     from: "",
                     to: "",
@@ -1057,116 +1256,142 @@ export default function ClientsPanelPage() {
 
               <div className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-3 lg:col-span-4">
                 <p className="text-[11px] uppercase tracking-[0.16em] opacity-65">
-                  Campos personalizados
+                  Filtros por campo
                 </p>
-
-                {profileKey === "all" ? (
-                  <p className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-80">
-                    Seleccioná un tipo de pax para habilitar filtros por campos
-                    personalizados.
-                  </p>
-                ) : selectedProfileCustomFields.length === 0 ? (
-                  <p className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-80">
-                    Este tipo de pax no tiene campos personalizados configurados.
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-xs opacity-75">
-                      La búsqueda es parcial y no distingue mayúsculas.
+                <p className="text-xs opacity-75">
+                  Filtrá por campos base del pasajero y, si elegís un tipo de pax,
+                  también por sus campos personalizados.
+                </p>
+                <div className="space-y-2">
+                  {customFieldFilters.length === 0 && (
+                    <p className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-70">
+                      Todavía no agregaste campos para filtrar.
                     </p>
-                    <div className="space-y-2">
-                      {customFieldFilters.length === 0 && (
-                        <p className="rounded-2xl border border-white/10 bg-white/10 p-3 text-xs opacity-70">
-                          Todavía no agregaste campos para filtrar.
-                        </p>
-                      )}
-                      {customFieldFilters.map((filter) => {
-                        const selectedField =
-                          selectedProfileCustomFieldMap.get(filter.key);
-                        const usedByOthers = new Set(
-                          customFieldFilters
-                            .filter((item) => item.id !== filter.id)
-                            .map((item) => item.key),
-                        );
-                        const rowOptions = selectedProfileCustomFields.filter(
-                          (field) =>
-                            field.key === filter.key || !usedByOthers.has(field.key),
-                        );
-
+                  )}
+                  {customFieldFilters.map((filter) => {
+                    const selectedField = availableFieldFilterMap.get(
+                      filterFieldId(filter.scope, filter.key),
+                    );
+                    const usedByOthers = new Set(
+                      customFieldFilters
+                        .filter((item) => item.id !== filter.id)
+                        .map((item) => filterFieldId(item.scope, item.key)),
+                    );
+                    const rowOptions = availableFieldFilterOptions.filter(
+                      (field) => {
+                        const id = filterFieldId(field.scope, field.key);
                         return (
-                          <div
-                            key={filter.id}
-                            className="grid grid-cols-1 gap-2 rounded-2xl border border-white/10 bg-white/10 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
-                          >
-                            <select
-                              value={filter.key}
-                              onChange={(e) => {
-                                const nextKey = e.target.value;
-                                setCustomFieldFilters((prev) =>
-                                  prev.map((item) =>
-                                    item.id === filter.id
-                                      ? { ...item, key: nextKey }
-                                      : item,
-                                  ),
-                                );
-                              }}
-                              className={SELECT}
-                            >
-                              {rowOptions.map((field) => (
-                                <option key={field.key} value={field.key}>
-                                  {field.label}
-                                </option>
-                              ))}
-                            </select>
-
-                            <input
-                              type={
-                                selectedField?.type === "number"
-                                  ? "number"
-                                  : selectedField?.type === "date"
-                                    ? "date"
-                                    : "text"
-                              }
-                              value={filter.value}
-                              onChange={(e) => {
-                                const nextValue = e.target.value;
-                                setCustomFieldFilters((prev) =>
-                                  prev.map((item) =>
-                                    item.id === filter.id
-                                      ? { ...item, value: nextValue }
-                                      : item,
-                                  ),
-                                );
-                              }}
-                              placeholder={
-                                selectedField?.placeholder ||
-                                "Escribí un valor para filtrar"
-                              }
-                              className={INPUT}
-                            />
-
-                            <button
-                              type="button"
-                              className={`${BTN} px-3`}
-                              onClick={() => removeCustomFieldFilter(filter.id)}
-                            >
-                              Quitar
-                            </button>
-                          </div>
+                          id === filterFieldId(filter.scope, filter.key) ||
+                          !usedByOthers.has(id)
                         );
-                      })}
-                    </div>
+                      },
+                    );
 
-                    <button
-                      type="button"
-                      className={`${BTN} w-full`}
-                      onClick={addCustomFieldFilter}
-                      disabled={!canAddCustomFieldFilter}
-                    >
-                      Agregar campo
-                    </button>
-                  </>
-                )}
+                    return (
+                      <div
+                        key={filter.id}
+                        className="grid grid-cols-1 gap-2 rounded-2xl border border-white/10 bg-white/10 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                      >
+                        <select
+                          value={filterFieldId(filter.scope, filter.key)}
+                          onChange={(e) => {
+                            const parsed = parseFilterFieldId(e.target.value);
+                            if (!parsed) return;
+                            setCustomFieldFilters((prev) =>
+                              prev.map((item) =>
+                                item.id === filter.id
+                                  ? {
+                                      ...item,
+                                      scope: parsed.scope,
+                                      key: parsed.key,
+                                      value: "",
+                                    }
+                                  : item,
+                              ),
+                            );
+                          }}
+                          className={SELECT}
+                        >
+                          {rowOptions.map((field) => (
+                            <option
+                              key={filterFieldId(field.scope, field.key)}
+                              value={filterFieldId(field.scope, field.key)}
+                            >
+                              {field.label}
+                            </option>
+                          ))}
+                        </select>
+
+                        {selectedField?.inputType === "select" &&
+                        Array.isArray(selectedField.options) &&
+                        selectedField.options.length > 0 ? (
+                          <select
+                            value={filter.value}
+                            onChange={(e) => {
+                              const nextValue = e.target.value;
+                              setCustomFieldFilters((prev) =>
+                                prev.map((item) =>
+                                  item.id === filter.id
+                                    ? { ...item, value: nextValue }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            className={SELECT}
+                          >
+                            <option value="">Seleccionar</option>
+                            {selectedField.options.map((option) => (
+                              <option key={option} value={option}>
+                                {option === "true"
+                                  ? "Sí"
+                                  : option === "false"
+                                    ? "No"
+                                    : option}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={selectedField?.inputType || "text"}
+                            value={filter.value}
+                            onChange={(e) => {
+                              const nextValue = e.target.value;
+                              setCustomFieldFilters((prev) =>
+                                prev.map((item) =>
+                                  item.id === filter.id
+                                    ? { ...item, value: nextValue }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder={
+                              selectedField?.placeholder ||
+                              "Escribí un valor para filtrar"
+                            }
+                            className={INPUT}
+                          />
+                        )}
+
+                        <button
+                          type="button"
+                          className={`${BTN} px-3`}
+                          onClick={() => removeCustomFieldFilter(filter.id)}
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  className={`${BTN} w-full`}
+                  onClick={addCustomFieldFilter}
+                  disabled={!canAddCustomFieldFilter}
+                >
+                  Agregar campo
+                </button>
               </div>
 
               <div className="space-y-3 rounded-2xl border border-white/10 bg-white/10 p-3 lg:col-span-4">

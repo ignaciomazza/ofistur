@@ -1041,6 +1041,7 @@ function PassengerClientFields({
           const value = draft.custom_fields[field.key] || "";
           const fieldRequired = Boolean(field.required);
           const inputType = field.type === "number" ? "number" : "text";
+          const options = Array.isArray(field.options) ? field.options : [];
           return (
             <div key={field.key} className="space-y-1 md:col-span-2">
               {requiredLabel(field.label, fieldRequired)}
@@ -1051,6 +1052,66 @@ function PassengerClientFields({
                   onChange={(e) => onCustomChange(field.key, e.target.value)}
                   disabled={disabled}
                   className={FIELD_INPUT_CLASS}
+                />
+              ) : field.type === "select" && options.length > 0 ? (
+                <select
+                  value={value}
+                  onChange={(e) => onCustomChange(field.key, e.target.value)}
+                  disabled={disabled}
+                  className={FIELD_INPUT_CLASS}
+                >
+                  <option value="">
+                    {field.placeholder || "Seleccionar"}
+                  </option>
+                  {options.map((option) => (
+                    <option key={`${field.key}-${option}`} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ) : field.type === "multiselect" && options.length > 0 ? (
+                <select
+                  multiple
+                  value={value
+                    .split(",")
+                    .map((item) => item.trim())
+                    .filter((item) => item.length > 0)}
+                  onChange={(e) => {
+                    const selected = Array.from(e.target.selectedOptions).map(
+                      (option) => option.value,
+                    );
+                    onCustomChange(field.key, selected.join(", "));
+                  }}
+                  disabled={disabled}
+                  className={`${FIELD_INPUT_CLASS} min-h-[96px]`}
+                >
+                  {options.map((option) => (
+                    <option key={`${field.key}-${option}`} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ) : field.type === "boolean" ? (
+                <select
+                  value={value}
+                  onChange={(e) => onCustomChange(field.key, e.target.value)}
+                  disabled={disabled}
+                  className={FIELD_INPUT_CLASS}
+                >
+                  <option value="">
+                    {field.placeholder || "Seleccionar"}
+                  </option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              ) : field.type === "textarea" ? (
+                <textarea
+                  value={value}
+                  onChange={(e) => onCustomChange(field.key, e.target.value)}
+                  disabled={disabled}
+                  placeholder={field.placeholder || ""}
+                  className={FIELD_INPUT_CLASS}
+                  rows={3}
                 />
               ) : (
                 <input

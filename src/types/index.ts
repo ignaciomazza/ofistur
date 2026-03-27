@@ -95,7 +95,14 @@ export interface Client {
   id_agency: number;
 }
 
-export type ClientCustomFieldType = "text" | "date" | "number";
+export type ClientCustomFieldType =
+  | "text"
+  | "date"
+  | "number"
+  | "select"
+  | "multiselect"
+  | "boolean"
+  | "textarea";
 
 export interface ClientCustomField {
   key: string;
@@ -104,6 +111,7 @@ export interface ClientCustomField {
   required?: boolean;
   placeholder?: string;
   help?: string;
+  options?: string[];
   builtin?: boolean;
 }
 
