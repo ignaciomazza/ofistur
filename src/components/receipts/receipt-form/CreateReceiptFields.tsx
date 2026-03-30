@@ -79,6 +79,8 @@ export default function CreateReceiptFields(props: {
   currencies: FinanceCurrency[];
   effectiveCurrency: CurrencyCode;
   currencyOverride: boolean;
+  conversionEnabled: boolean;
+  setConversionEnabled: (next: boolean) => void;
 
   suggestions: {
     base: number | null;
@@ -203,6 +205,8 @@ export default function CreateReceiptFields(props: {
     currencies,
     effectiveCurrency,
     currencyOverride,
+    conversionEnabled,
+    setConversionEnabled,
 
     suggestions,
     applySuggestedAmounts,
@@ -470,7 +474,7 @@ export default function CreateReceiptFields(props: {
               onClick={applySuggestedAmounts}
               className="mt-2 text-xs underline underline-offset-2"
             >
-              {currencyOverride
+              {conversionEnabled
                 ? "Usar valor base sugerido:"
                 : "Ajustar al sugerido:"}{" "}
               {formatNum(suggestions.base, lockedCurrency || effectiveCurrency)}
@@ -1089,162 +1093,193 @@ export default function CreateReceiptFields(props: {
         </div>
       </Section>
 
-      {currencyOverride && (
-        <Section
-          title="Conversión (opcional)"
-          desc="Usalo si cobrás en una moneda distinta al servicio."
-        >
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-xs text-sky-950/70 dark:text-white/70 md:col-span-2">
-            <p>
-              Servicio en {lockedCurrency}.{" "}
-              {hasMixedPaymentCurrencies
-                ? "Cobro en múltiples monedas."
-                : `Cobro en ${effectiveCurrency}.`}{" "}
-              El PDF mostrará el valor base.
-            </p>
-            <div className="mt-2 grid gap-1 text-[11px]">
-              <div>
-                <span className="font-medium">Recibo (PDF):</span>{" "}
-                {fmtMaybe(baseAmount, baseNum, baseCurrency || lockedCurrency)}
-              </div>
-              <div>
-                <span className="font-medium">
-                  Administración (entra al banco/caja):
-                </span>{" "}
-                {amountReceived || "—"}
-              </div>
-              <div>
-                <span className="font-medium">Contravalor:</span>{" "}
-                {counterAmount.trim()
-                  ? fmtMaybe(
-                      counterAmount,
-                      counterNum,
-                      counterCurrency || effectiveCurrency,
-                    )
-                  : hasMixedPaymentCurrencies
-                    ? "—"
-                    : amountReceived || "—"}
-              </div>
-            </div>
-            {hasMixedPaymentCurrencies ? (
-              <p className="mt-2 text-[10px] opacity-70">
-                Con cobro en múltiples monedas, cargá el contravalor
-                manualmente.
-              </p>
-            ) : (
-              <p className="mt-2 text-[10px] opacity-70">
-                Si dejás contravalor vacío, se toma el total cobrado.
-              </p>
-            )}
-          </div>
-          <Field
-            id="base"
-            label="Valor base (moneda del servicio)"
-            hint="Ej.: 1500 USD (si es pago parcial, ingresá el parcial)."
+      <Section
+        title="Conversión (opcional)"
+        desc="Disponible siempre. Activala cuando quieras reflejar contravalor."
+        headerRight={
+          <button
+            type="button"
+            role="switch"
+            aria-checked={conversionEnabled}
+            onClick={() => setConversionEnabled(!conversionEnabled)}
+            className={[
+              "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+              conversionEnabled
+                ? "bg-sky-500/70"
+                : "bg-sky-950/20 dark:bg-white/20",
+            ].join(" ")}
           >
-            <div className="flex gap-2">
-              <input
-                inputMode="decimal"
-                value={baseAmount}
-                onChange={(e) =>
-                  setBaseAmount(
-                    formatMoneyInput(
-                      e.target.value,
-                      baseCurrency || lockedCurrency || effectiveCurrency,
-                      { preferDotDecimal: shouldPreferDotDecimal(e) },
-                    ),
-                  )
-                }
-                placeholder={formatNum(
-                  0,
-                  baseCurrency || lockedCurrency || effectiveCurrency,
-                )}
-                className={inputBase}
-              />
-              <select
-                value={baseCurrency}
-                onChange={(e) => {
-                  const nextCurrency = e.target.value;
-                  setBaseCurrency(nextCurrency);
-                  if (baseAmount) {
+            <span
+              className={[
+                "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                conversionEnabled ? "translate-x-5" : "translate-x-1",
+              ].join(" ")}
+            />
+          </button>
+        }
+      >
+        {!conversionEnabled && currencyOverride && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-[11px] text-amber-700 dark:text-amber-300 md:col-span-2">
+            Advertencia: hay diferencia de moneda entre servicio y cobro. Podés
+            seguir igual sin bloquear el guardado.
+          </div>
+        )}
+
+        {conversionEnabled && (
+          <>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-xs text-sky-950/70 dark:text-white/70 md:col-span-2">
+              <p>
+                Servicio en {lockedCurrency || "moneda base"}.{" "}
+                {hasMixedPaymentCurrencies
+                  ? "Cobro en múltiples monedas."
+                  : `Cobro en ${effectiveCurrency}.`}{" "}
+                El PDF mostrará el valor base.
+              </p>
+              <div className="mt-2 grid gap-1 text-[11px]">
+                <div>
+                  <span className="font-medium">Recibo (PDF):</span>{" "}
+                  {fmtMaybe(baseAmount, baseNum, baseCurrency || lockedCurrency)}
+                </div>
+                <div>
+                  <span className="font-medium">
+                    Administración (entra al banco/caja):
+                  </span>{" "}
+                  {amountReceived || "—"}
+                </div>
+                <div>
+                  <span className="font-medium">Contravalor:</span>{" "}
+                  {counterAmount.trim()
+                    ? fmtMaybe(
+                        counterAmount,
+                        counterNum,
+                        counterCurrency || effectiveCurrency,
+                      )
+                    : hasMixedPaymentCurrencies
+                      ? "—"
+                      : amountReceived || "—"}
+                </div>
+              </div>
+              {hasMixedPaymentCurrencies ? (
+                <p className="mt-2 text-[10px] opacity-70">
+                  Con cobro en múltiples monedas, cargá el contravalor
+                  manualmente.
+                </p>
+              ) : (
+                <p className="mt-2 text-[10px] opacity-70">
+                  Si dejás contravalor vacío, se toma el total cobrado.
+                </p>
+              )}
+            </div>
+
+            <Field
+              id="base"
+              label="Valor base (moneda del servicio)"
+              hint="Ej.: 1500 USD (si es pago parcial, ingresá el parcial)."
+            >
+              <div className="flex gap-2">
+                <input
+                  inputMode="decimal"
+                  value={baseAmount}
+                  onChange={(e) =>
                     setBaseAmount(
                       formatMoneyInput(
-                        baseAmount,
-                        nextCurrency || lockedCurrency,
+                        e.target.value,
+                        baseCurrency || lockedCurrency || effectiveCurrency,
+                        { preferDotDecimal: shouldPreferDotDecimal(e) },
                       ),
-                    );
+                    )
                   }
-                }}
-                className={`${inputBase} cursor-pointer appearance-none`}
-              >
-                <option value="">Moneda</option>
-                {currencies
-                  .filter((c) => c.enabled)
-                  .map((c) => (
-                    <option key={`bc-${c.code}`} value={c.code}>
-                      {c.code}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            {errors.base && (
-              <p className="mt-1 text-xs text-red-600">{errors.base}</p>
-            )}
-          </Field>
+                  placeholder={formatNum(
+                    0,
+                    baseCurrency || lockedCurrency || effectiveCurrency,
+                  )}
+                  className={inputBase}
+                />
+                <select
+                  value={baseCurrency}
+                  onChange={(e) => {
+                    const nextCurrency = e.target.value;
+                    setBaseCurrency(nextCurrency);
+                    if (baseAmount) {
+                      setBaseAmount(
+                        formatMoneyInput(
+                          baseAmount,
+                          nextCurrency || lockedCurrency,
+                        ),
+                      );
+                    }
+                  }}
+                  className={`${inputBase} cursor-pointer appearance-none`}
+                >
+                  <option value="">Moneda</option>
+                  {currencies
+                    .filter((c) => c.enabled)
+                    .map((c) => (
+                      <option key={`bc-${c.code}`} value={c.code}>
+                        {c.code}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              {errors.base && (
+                <p className="mt-1 text-xs text-red-600">{errors.base}</p>
+              )}
+            </Field>
 
-          <Field
-            id="counter"
-            label="Contravalor (moneda del cobro)"
-            hint="Ej.: 2.000.000 ARS"
-          >
-            <div className="flex gap-2">
-              <input
-                inputMode="decimal"
-                value={counterAmount}
-                onChange={(e) =>
-                  setCounterAmount(
-                    formatMoneyInput(
-                      e.target.value,
-                      counterCurrency || effectiveCurrency,
-                      { preferDotDecimal: shouldPreferDotDecimal(e) },
-                    ),
-                  )
-                }
-                placeholder={formatNum(0, counterCurrency || effectiveCurrency)}
-                className={inputBase}
-              />
-              <select
-                value={counterCurrency}
-                onChange={(e) => {
-                  const nextCurrency = e.target.value;
-                  setCounterCurrency(nextCurrency);
-                  if (counterAmount) {
+            <Field
+              id="counter"
+              label="Contravalor (moneda del cobro)"
+              hint="Ej.: 2.000.000 ARS"
+            >
+              <div className="flex gap-2">
+                <input
+                  inputMode="decimal"
+                  value={counterAmount}
+                  onChange={(e) =>
                     setCounterAmount(
                       formatMoneyInput(
-                        counterAmount,
-                        nextCurrency || effectiveCurrency,
+                        e.target.value,
+                        counterCurrency || effectiveCurrency,
+                        { preferDotDecimal: shouldPreferDotDecimal(e) },
                       ),
-                    );
+                    )
                   }
-                }}
-                className={`${inputBase} cursor-pointer appearance-none`}
-              >
-                <option value="">Moneda</option>
-                {currencies
-                  .filter((c) => c.enabled)
-                  .map((c) => (
-                    <option key={`cc-${c.code}`} value={c.code}>
-                      {c.code}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            {errors.counter && (
-              <p className="mt-1 text-xs text-red-600">{errors.counter}</p>
-            )}
-          </Field>
-        </Section>
-      )}
+                  placeholder={formatNum(0, counterCurrency || effectiveCurrency)}
+                  className={inputBase}
+                />
+                <select
+                  value={counterCurrency}
+                  onChange={(e) => {
+                    const nextCurrency = e.target.value;
+                    setCounterCurrency(nextCurrency);
+                    if (counterAmount) {
+                      setCounterAmount(
+                        formatMoneyInput(
+                          counterAmount,
+                          nextCurrency || effectiveCurrency,
+                        ),
+                      );
+                    }
+                  }}
+                  className={`${inputBase} cursor-pointer appearance-none`}
+                >
+                  <option value="">Moneda</option>
+                  {currencies
+                    .filter((c) => c.enabled)
+                    .map((c) => (
+                      <option key={`cc-${c.code}`} value={c.code}>
+                        {c.code}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              {errors.counter && (
+                <p className="mt-1 text-xs text-red-600">{errors.counter}</p>
+              )}
+            </Field>
+          </>
+        )}
+      </Section>
 
       {showServiceAllocationSection && (
         <Section

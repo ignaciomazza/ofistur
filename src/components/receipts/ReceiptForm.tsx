@@ -1357,6 +1357,7 @@ export default function ReceiptForm({
   const currencyOverride =
     lockedCurrency != null &&
     (hasMixedPaymentCurrencies || effectiveCurrency !== lockedCurrency);
+  const [conversionEnabled, setConversionEnabled] = useState(false);
   const allocationPaymentCurrencyOptions = useMemo(() => {
     const set = new Set<string>();
     for (const line of paymentLines) {
@@ -1872,7 +1873,7 @@ export default function ReceiptForm({
   const applySuggestedAmounts = () => {
     if (!suggestions) return;
 
-    if (currencyOverride && lockedCurrency) {
+    if (conversionEnabled && lockedCurrency) {
       if (suggestions.base != null) setBaseAmount(String(suggestions.base));
       if (!baseCurrency) setBaseCurrency(lockedCurrency);
       return;
@@ -1931,7 +1932,7 @@ export default function ReceiptForm({
   const clientTotal = useMemo(() => {
     const byPayments = formatCurrencyBreakdown(clientTotalByCurrency);
     if (byPayments) return byPayments;
-    if (currencyOverride) return "";
+    if (conversionEnabled) return "";
 
     const base = suggestions?.base ?? null;
     const fee = suggestions?.fee ?? null;
@@ -1945,7 +1946,7 @@ export default function ReceiptForm({
   }, [
     clientTotalByCurrency,
     suggestions,
-    currencyOverride,
+    conversionEnabled,
     lockedCurrency,
     defaultCurrency,
   ]);
@@ -2824,9 +2825,9 @@ export default function ReceiptForm({
   }, [lockedCurrency]);
 
   useEffect(() => {
-    if (!currencyOverride) return;
+    if (!conversionEnabled) return;
     setCounterCurrency((prev) => prev || effectiveCurrency);
-  }, [currencyOverride, effectiveCurrency]);
+  }, [conversionEnabled, effectiveCurrency]);
 
   /* ===== Attach search ===== */
   const attachSearchEnabled = attachEnabled && action === "attach";
@@ -3021,7 +3022,7 @@ export default function ReceiptForm({
     }
 
     const total =
-      paymentsTotalNum || (currencyOverride ? 0 : suggestions?.base || 0);
+      paymentsTotalNum || (conversionEnabled ? 0 : suggestions?.base || 0);
     if (!total || total <= 0)
       e.amount = "El total es inválido. Cargá importes o usá el sugerido.";
     if (!effectiveCurrency)
@@ -3029,7 +3030,7 @@ export default function ReceiptForm({
     const issueDateOk = /^\d{4}-\d{2}-\d{2}$/.test(issueDate);
     if (!issueDateOk) e.issue_date = "Elegí la fecha del recibo.";
     const baseNum = parseAmountInput(baseAmount);
-    if (baseAmount.trim() !== "") {
+    if (conversionEnabled && baseAmount.trim() !== "") {
       if (!baseNum || baseNum <= 0) {
         e.base = "Ingresá un valor base válido.";
       } else if (!baseCurrency) {
@@ -3039,17 +3040,8 @@ export default function ReceiptForm({
       }
     }
 
-    if (
-      mode === "booking" &&
-      hasMixedPaymentCurrencies &&
-      (!baseNum || baseNum <= 0 || !baseCurrency)
-    ) {
-      e.base =
-        "Con cobro en múltiples monedas tenés que completar conversión (valor base y moneda base).";
-    }
-
     const counterNum = parseAmountInput(counterAmount);
-    if (counterAmount.trim() !== "") {
+    if (conversionEnabled && counterAmount.trim() !== "") {
       if (!counterNum || counterNum <= 0) {
         e.counter = "Ingresá un contravalor válido.";
       } else if (!counterCurrency) {
@@ -3168,7 +3160,7 @@ export default function ReceiptForm({
 
     if (
       (!finalAmount || finalAmount <= 0) &&
-      !currencyOverride &&
+      !conversionEnabled &&
       suggestions?.base != null
     ) {
       finalAmount = suggestions.base;
@@ -3222,8 +3214,8 @@ export default function ReceiptForm({
     const hasMixedPayments = paymentCurrenciesForPayload.length > 1;
     const baseAmountValid = baseAmountNum != null && baseAmountNum > 0;
     const counterAmountValid = counterAmountNum != null && counterAmountNum > 0;
-    const baseReady = baseAmountValid && !!baseCurrency;
-    const useConversion = currencyOverride && baseReady;
+    const baseReady = conversionEnabled && baseAmountValid && !!baseCurrency;
+    const useConversion = conversionEnabled && baseReady;
     const payloadAmount =
       hasMixedPayments && baseReady ? (baseAmountNum as number) : finalAmount;
     const payloadAmountCurrency =
@@ -3640,6 +3632,8 @@ export default function ReceiptForm({
                   currencies={currenciesTyped}
                   effectiveCurrency={effectiveCurrency}
                   currencyOverride={currencyOverride}
+                  conversionEnabled={conversionEnabled}
+                  setConversionEnabled={setConversionEnabled}
                   suggestions={suggestions}
                   applySuggestedAmounts={applySuggestedAmounts}
                   formatNum={formatNum}
