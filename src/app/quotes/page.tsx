@@ -21,6 +21,7 @@ import ClientPicker from "@/components/clients/ClientPicker";
 import DestinationPicker, {
   type DestinationOption,
 } from "@/components/DestinationPicker";
+import QuoteDestinationPicker from "@/components/quotes/QuoteDestinationPicker";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
 import {
@@ -3507,17 +3508,14 @@ export default function QuotesPage() {
                               <label className="mb-1 block text-xs opacity-75">
                                 Destino
                               </label>
-                              <DestinationPicker
-                                type="destination"
-                                multiple={false}
-                                value={null}
-                                onChange={(value) =>
+                              <QuoteDestinationPicker
+                                value={s.destination || ""}
+                                onChange={(e) =>
                                   updateServiceDraft(idx, {
-                                    destination: destinationValueToLabel(value),
+                                    destination: e,
                                   })
                                 }
                                 placeholder="Destino"
-                                className="relative z-30 [&>label]:hidden"
                               />
                               {s.destination ? (
                                 <p className="text-xs text-sky-900/70 dark:text-sky-100/70">
@@ -6098,17 +6096,14 @@ export default function QuotesPage() {
                               <label className="mb-1 block text-xs opacity-75">
                                 Destino
                               </label>
-                              <DestinationPicker
-                                type="destination"
-                                multiple={false}
-                                value={null}
-                                onChange={(value) =>
+                              <QuoteDestinationPicker
+                                value={s.destination}
+                                onChange={(e) =>
                                   updateConvertService(idx, {
-                                    destination: destinationValueToLabel(value),
+                                    destination: e,
                                   })
                                 }
                                 placeholder="Destino"
-                                className="relative z-30 [&>label]:hidden"
                               />
                               {s.destination ? (
                                 <p className="text-xs text-sky-900/70 dark:text-sky-100/70">

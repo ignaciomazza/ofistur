@@ -8,6 +8,7 @@ import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import type {
   ClientConfig,
   ClientCustomField,
@@ -116,6 +117,18 @@ function normalizeProfilesForCompare(values: ClientProfileConfig[]) {
       custom_fields: normalizeCustomList(profile.custom_fields || []),
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function cloneProfiles(values: ClientProfileConfig[]): ClientProfileConfig[] {
+  return values.map((profile) => ({
+    ...profile,
+    required_fields: [...(profile.required_fields || [])],
+    hidden_fields: [...(profile.hidden_fields || [])],
+    custom_fields: (profile.custom_fields || []).map((field) => ({
+      ...field,
+      options: Array.isArray(field.options) ? [...field.options] : undefined,
+    })),
+  }));
 }
 
 function applyBuiltinMeta(fields: ClientCustomField[]) {
@@ -301,6 +314,12 @@ export default function ClientsConfigPage() {
     mode !== initialMode ||
     profilesDirty ||
     useSimpleCompanions !== initialUseSimpleCompanions;
+  const hasUnsavedChanges = canEdit && dirty && !saving;
+
+  useUnsavedChangesGuard(
+    hasUnsavedChanges,
+    "Tenés cambios sin guardar en Configuración de Pasajeros. ¿Querés salir sin guardar?",
+  );
 
   const updateActiveProfile = useCallback(
     (updater: (profile: ClientProfileConfig) => ClientProfileConfig) => {
@@ -827,6 +846,26 @@ export default function ClientsConfigPage() {
     });
   };
 
+  const discardConfigChanges = useCallback(() => {
+    const resetProfiles = cloneProfiles(initialProfiles);
+    setMode(initialMode);
+    setProfiles(resetProfiles);
+    setActiveProfileKey((prev) =>
+      resetProfiles.some((profile) => profile.key === prev)
+        ? prev
+        : (resetProfiles[0]?.key ?? DEFAULT_CLIENT_PROFILE_KEY),
+    );
+    setUseSimpleCompanions(initialUseSimpleCompanions);
+    setNewFieldLabel("");
+    setNewFieldType("text");
+    setNewFieldRequired(false);
+    setNewFieldOptions([]);
+    setNewFieldOptionDraft("");
+    setCustomOptionDrafts({});
+    setNewProfileLabel("");
+    toast.info("Cambios descartados.");
+  }, [initialMode, initialProfiles, initialUseSimpleCompanions]);
+
   if (!mounted) return null;
 
   return (
@@ -852,12 +891,36 @@ export default function ClientsConfigPage() {
               type="button"
               onClick={saveConfig}
               disabled={!dirty || !canEdit || saving}
-              className={PRIMARY_BTN}
+              className={`${PRIMARY_BTN} ${hasUnsavedChanges ? "ring-1 ring-amber-400/70" : ""}`}
             >
               Guardar cambios
             </button>
           </div>
         </div>
+
+        {hasUnsavedChanges && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+            <p>Tenés cambios sin guardar.</p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={discardConfigChanges}
+                disabled={saving}
+                className="rounded-full border border-amber-500/50 px-3 py-1 text-xs transition hover:bg-amber-500/10 disabled:opacity-60"
+              >
+                Descartar
+              </button>
+              <button
+                type="button"
+                onClick={saveConfig}
+                disabled={saving}
+                className="rounded-full border border-amber-500/60 bg-amber-500/20 px-3 py-1 text-xs font-semibold transition hover:bg-amber-500/30 disabled:opacity-60"
+              >
+                Guardar ahora
+              </button>
+            </div>
+          </div>
+        )}
 
         {schemaWarning ? (
           <div className="mb-4 rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">

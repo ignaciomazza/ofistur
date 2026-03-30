@@ -8,6 +8,7 @@ import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import {
   loadFinancePicks,
   type FinanceCurrency,
@@ -1127,6 +1128,16 @@ export default function BookingsConfigPage() {
   const numberingDirty =
     allowManualAgencyBookingId !== serverAllowManualAgencyBookingId ||
     nextAutoAgencyBookingId.trim() !== serverNextAutoAgencyBookingId.trim();
+  const hasUnsavedChanges =
+    canEdit &&
+    (configDirty || numberingDirty) &&
+    !savingCfg &&
+    !numberingSaving;
+
+  useUnsavedChangesGuard(
+    hasUnsavedChanges,
+    "Tenés cambios sin guardar en Configuración de Reservas. ¿Querés salir sin guardar?",
+  );
 
   const saveCalcConfig = useCallback(async () => {
     if (!token) return;
@@ -1336,6 +1347,40 @@ export default function BookingsConfigPage() {
             )}
           </div>
         </div>
+
+        {hasUnsavedChanges && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+            <p>Tenés cambios sin guardar.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {configDirty && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActive("calc");
+                    void saveCalcConfig();
+                  }}
+                  disabled={!canEdit || savingCfg}
+                  className="rounded-full border border-amber-500/60 bg-amber-500/20 px-3 py-1 text-xs font-semibold transition hover:bg-amber-500/30 disabled:opacity-60"
+                >
+                  Guardar cálculo
+                </button>
+              )}
+              {numberingDirty && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActive("numbering");
+                    void saveBookingNumbering();
+                  }}
+                  disabled={!canEdit || numberingSaving}
+                  className="rounded-full border border-amber-500/60 bg-amber-500/20 px-3 py-1 text-xs font-semibold transition hover:bg-amber-500/30 disabled:opacity-60"
+                >
+                  Guardar numeración
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Contenido por tab */}
         {loading ? (
