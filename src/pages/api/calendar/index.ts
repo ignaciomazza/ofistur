@@ -30,7 +30,7 @@ type TokenPayload = JWTPayload & {
 };
 
 type CalendarContext = "operations" | "finance";
-type OperationsKind = "trips" | "notes";
+type OperationsKind = "trips" | "notes" | "birthdays";
 type FinanceKind = "client_payments" | "operator_dues";
 type FinanceStatus = "PENDIENTE" | "VENCIDA" | "PAGADA" | "CANCELADA";
 type PersistedFinanceStatus = "PENDIENTE" | "PAGADA" | "CANCELADA";
@@ -170,6 +170,14 @@ function parseOperationsKinds(input: unknown): Set<OperationsKind> {
     if (value === "notes" || value === "notas") {
       selected.add("notes");
     }
+    if (
+      value === "birthdays" ||
+      value === "birthday" ||
+      value === "cumpleanos" ||
+      value === "cumpleaños"
+    ) {
+      selected.add("birthdays");
+    }
   }
   if (selected.size === 0) {
     selected.add("trips");
@@ -219,6 +227,10 @@ function deriveFinanceStatus(
   const dueKey = toDateKeyInBuenosAiresLegacySafe(dueDate);
   if (dueKey && todayKey && dueKey < todayKey) return "VENCIDA";
   return "PENDIENTE";
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }
 
 export default async function handler(
@@ -634,6 +646,33 @@ export default async function handler(
             bookingUserFilter.in.length > 0
           ? { id_user: { in: bookingUserFilter.in } }
           : {};
+    const currentDateKey = todayDateKeyInBuenosAires();
+    const currentYear =
+      Number.parseInt(currentDateKey.slice(0, 4), 10) ||
+      new Date().getUTCFullYear();
+    const rawBirthdayFromKey =
+      typeof from === "string" ? toDateKeyInBuenosAiresLegacySafe(from) : null;
+    const rawBirthdayToKey =
+      typeof to === "string" ? toDateKeyInBuenosAiresLegacySafe(to) : null;
+    const fallbackFromYear =
+      Number.parseInt(
+        (rawBirthdayToKey ?? `${currentYear}-01-01`).slice(0, 4),
+        10,
+      ) || currentYear;
+    const fallbackToYear =
+      Number.parseInt(
+        (rawBirthdayFromKey ?? `${currentYear}-12-31`).slice(0, 4),
+        10,
+      ) || currentYear;
+    let birthdayFromKey = rawBirthdayFromKey ?? `${fallbackFromYear}-01-01`;
+    let birthdayToKey = rawBirthdayToKey ?? `${fallbackToYear}-12-31`;
+    if (birthdayFromKey > birthdayToKey) {
+      const aux = birthdayFromKey;
+      birthdayFromKey = birthdayToKey;
+      birthdayToKey = aux;
+    }
+    const birthdayFromYear = Number.parseInt(birthdayFromKey.slice(0, 4), 10);
+    const birthdayToYear = Number.parseInt(birthdayToKey.slice(0, 4), 10);
 
     const notes =
       calendarContext === "operations" && selectedOperationsKinds.has("notes")
@@ -682,10 +721,75 @@ export default async function handler(
             },
           }))
         : [];
+    const birthdayEvents =
+      calendarContext === "operations" &&
+      selectedOperationsKinds.has("birthdays") &&
+      Number.isFinite(birthdayFromYear) &&
+      Number.isFinite(birthdayToYear)
+        ? (
+            await prisma.client.findMany({
+              where: {
+                id_agency,
+                ...noteCreatorUserFilter,
+                birth_date: { not: null },
+              },
+              select: {
+                id_client: true,
+                first_name: true,
+                last_name: true,
+                birth_date: true,
+              },
+              orderBy: [{ first_name: "asc" }, { last_name: "asc" }],
+            })
+          ).flatMap((client) => {
+            if (!client.birth_date) return [];
+            const birthDateKey = toDateKeyInBuenosAiresLegacySafe(
+              client.birth_date,
+            );
+            if (!birthDateKey) return [];
+            const [rawBirthYear, rawBirthMonth, rawBirthDay] = birthDateKey
+              .split("-")
+              .map((part) => Number.parseInt(part, 10));
+            if (
+              !Number.isFinite(rawBirthYear) ||
+              !Number.isFinite(rawBirthMonth) ||
+              !Number.isFinite(rawBirthDay)
+            ) {
+              return [];
+            }
+            const events: Array<Record<string, unknown>> = [];
+            for (let year = birthdayFromYear; year <= birthdayToYear; year += 1) {
+              const adjustedDay =
+                rawBirthMonth === 2 && rawBirthDay === 29 && !isLeapYear(year)
+                  ? 28
+                  : rawBirthDay;
+              const occurrenceDateKey = `${year}-${String(rawBirthMonth).padStart(2, "0")}-${String(adjustedDay).padStart(2, "0")}`;
+              if (
+                occurrenceDateKey < birthdayFromKey ||
+                occurrenceDateKey > birthdayToKey
+              ) {
+                continue;
+              }
+              const turningAge = year - rawBirthYear;
+              events.push({
+                id: `bd-${client.id_client}-${year}`,
+                title: `${client.first_name} ${client.last_name}`,
+                start: occurrenceDateKey,
+                extendedProps: {
+                  kind: "birthday",
+                  clientId: client.id_client,
+                  birthDate: birthDateKey,
+                  turningAge: turningAge >= 0 ? turningAge : undefined,
+                },
+              });
+            }
+            return events;
+          })
+        : [];
 
     return res
       .status(200)
-      .json([...bookingEvents, ...serviceEvents, ...noteEvents]);
+      .json([...bookingEvents, ...serviceEvents, ...noteEvents, ...birthdayEvents]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error interno";
     return res.status(500).json({ error: msg });

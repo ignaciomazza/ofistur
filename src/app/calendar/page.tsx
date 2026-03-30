@@ -27,6 +27,7 @@ type ViewOption = "dayGridMonth" | "dayGridWeek" | "dayGridDay";
 type NoteMode = "create" | "view" | "edit";
 type CalendarContext =
   | "trips"
+  | "birthdays"
   | "notes"
   | "payment_plans"
   | "operator_dues";
@@ -48,6 +49,7 @@ interface CalendarEvent extends EventInput {
       | "booking"
       | "service"
       | "note"
+      | "birthday"
       | "client_payment"
       | "operator_due";
     content?: string;
@@ -71,6 +73,9 @@ interface CalendarEvent extends EventInput {
     paymentPublicId?: number;
     operatorDueId?: number;
     operatorDuePublicId?: number;
+    clientId?: number;
+    birthDate?: string | Date;
+    turningAge?: number;
   };
 }
 
@@ -110,6 +115,13 @@ export default function CalendarPage() {
       to: "",
     },
   );
+  const [birthdayDateRange, setBirthdayDateRange] = useState<{
+    from: string;
+    to: string;
+  }>({
+    from: "",
+    to: "",
+  });
   const [dueDateRange, setDueDateRange] = useState<{ from: string; to: string }>(
     {
       from: "",
@@ -204,6 +216,7 @@ export default function CalendarPage() {
   const availableContexts = useMemo(() => {
     const options: Array<{ value: CalendarContext; label: string }> = [
       { value: "trips", label: "Viajes" },
+      { value: "birthdays", label: "Cumple pax" },
       { value: "notes", label: "Notas" },
     ];
     if (canAccessPaymentPlansContext) {
@@ -222,6 +235,7 @@ export default function CalendarPage() {
 
   const activeRangeLabel = useMemo(() => {
     if (calendarContext === "trips") return "Rango fechas de viaje";
+    if (calendarContext === "birthdays") return "Rango cumpleaños";
     if (calendarContext === "notes") return "Rango de notas";
     return "Rango vencimientos";
   }, [calendarContext]);
@@ -239,13 +253,24 @@ export default function CalendarPage() {
 
   const activeDateRange = useMemo(() => {
     if (calendarContext === "trips") return travelDateRange;
+    if (calendarContext === "birthdays") return birthdayDateRange;
     if (calendarContext === "notes") return notesDateRange;
     return dueDateRange;
-  }, [calendarContext, dueDateRange, notesDateRange, travelDateRange]);
+  }, [
+    birthdayDateRange,
+    calendarContext,
+    dueDateRange,
+    notesDateRange,
+    travelDateRange,
+  ]);
 
   const setActiveDateRange = (field: "from" | "to", value: string) => {
     if (calendarContext === "trips") {
       setTravelDateRange((prev) => ({ ...prev, [field]: value }));
+      return;
+    }
+    if (calendarContext === "birthdays") {
+      setBirthdayDateRange((prev) => ({ ...prev, [field]: value }));
       return;
     }
     if (calendarContext === "notes") {
@@ -438,6 +463,11 @@ export default function CalendarPage() {
       if (travelDateRange.from) qs.append("from", travelDateRange.from);
       if (travelDateRange.to) qs.append("to", travelDateRange.to);
       if (operationsMode === "services") qs.append("mode", "services");
+    } else if (calendarContext === "birthdays") {
+      qs.append("context", "operations");
+      qs.append("operationsKinds", "birthdays");
+      if (birthdayDateRange.from) qs.append("from", birthdayDateRange.from);
+      if (birthdayDateRange.to) qs.append("to", birthdayDateRange.to);
     } else {
       qs.append("context", "operations");
       qs.append("operationsKinds", "notes");
@@ -464,7 +494,9 @@ export default function CalendarPage() {
                     ? "client_payment"
                     : String(ev.id).startsWith("od-")
                       ? "operator_due"
-                  : "booking"),
+                      : String(ev.id).startsWith("bd-")
+                        ? "birthday"
+                        : "booking"),
           },
         }));
         setEvents(normalized);
@@ -481,6 +513,7 @@ export default function CalendarPage() {
     canAccessOperatorDuesContext,
     selectedClientStatus,
     travelDateRange,
+    birthdayDateRange,
     notesDateRange,
     dueDateRange,
     operationsMode,
@@ -499,6 +532,7 @@ export default function CalendarPage() {
     if (event.id.startsWith("s-")) return "service";
     if (event.id.startsWith("cp-")) return "client_payment";
     if (event.id.startsWith("od-")) return "operator_due";
+    if (event.id.startsWith("bd-")) return "birthday";
     return "booking";
   };
 
@@ -527,6 +561,18 @@ export default function CalendarPage() {
     const tooltip =
       kind === "note"
         ? `Nota: ${event.title}`
+        : kind === "birthday"
+          ? [
+              event.title,
+              props?.turningAge != null && `Cumple ${props.turningAge}`,
+              props?.birthDate &&
+                `Nac. ${formatDateInBuenosAires(props.birthDate, {
+                  day: "2-digit",
+                  month: "2-digit",
+                })}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")
         : kind === "service"
           ? [
               event.title,
@@ -593,6 +639,10 @@ export default function CalendarPage() {
 
     if (kind === "client_payment") {
       router.push("/finance/payment-plans");
+      return;
+    }
+    if (kind === "birthday") {
+      router.push("/clients/panel");
       return;
     }
 
@@ -899,6 +949,17 @@ export default function CalendarPage() {
         "dark:border-rose-300/20",
       ];
     }
+    if (kind === "birthday") {
+      return [
+        ...base,
+        "!bg-pink-100/70",
+        "!text-sky-950",
+        "border-pink-200/70",
+        "dark:!bg-pink-400/10",
+        "dark:!text-pink-100",
+        "dark:border-pink-300/20",
+      ];
+    }
 
     return [
       ...base,
@@ -932,6 +993,13 @@ export default function CalendarPage() {
     const secondaryLine =
       kind === "booking"
         ? props?.details
+        : kind === "birthday"
+          ? props?.birthDate
+            ? `Nacimiento ${formatDateInBuenosAires(props.birthDate, {
+                day: "2-digit",
+                month: "short",
+              })}`
+            : undefined
         : kind === "service"
           ? [props?.serviceType, props?.destination, props?.description]
               .filter(Boolean)
@@ -1000,6 +1068,15 @@ export default function CalendarPage() {
         badges.push({ label: props.status, tone: "amber" });
       }
     }
+    if (kind === "birthday") {
+      if (props?.turningAge != null) {
+        badges.push({ label: `Cumple ${props.turningAge}`, tone: "amber" });
+      }
+      const birthLabel = formatShortDate(props?.birthDate);
+      if (birthLabel) {
+        badges.push({ label: `Nac. ${birthLabel}`, tone: "sky" });
+      }
+    }
 
     const icon = isDay ? (
       kind === "note" ? (
@@ -1060,6 +1137,21 @@ export default function CalendarPage() {
             strokeLinecap="round"
             strokeLinejoin="round"
             d="m14.25 6.087 1.5-1.5a2.121 2.121 0 1 1 3 3l-1.5 1.5m-3-3 3 3m-3-3-6.364 6.364a2.121 2.121 0 0 0-.621 1.5V17.5h3.55a2.12 2.12 0 0 0 1.5-.621L18 10.5m-4.5 9.75H19.5"
+          />
+        </svg>
+      ) : kind === "birthday" ? (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.6}
+          className="size-3"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 3v3m-4.5 1.5h9A2.25 2.25 0 0 1 18.75 9.75v2.625A2.625 2.625 0 0 1 21 15v3.75A2.25 2.25 0 0 1 18.75 21H5.25A2.25 2.25 0 0 1 3 18.75V15a2.625 2.625 0 0 1 2.25-2.625V9.75A2.25 2.25 0 0 1 7.5 7.5Zm0 6.75h9"
           />
         </svg>
       ) : (
@@ -1159,8 +1251,8 @@ export default function CalendarPage() {
         </div>
 
         <div className="rounded-3xl border border-sky-200/60 bg-white/20 p-4 text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-white">
-          <div className="grid grid-cols-1 items-end gap-4 lg:grid-cols-6 xl:grid-cols-12">
-            <div className="flex flex-col gap-1 lg:col-span-4 xl:col-span-5">
+          <div className="grid grid-cols-1 items-end gap-4">
+            <div className="flex flex-col gap-1">
               <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
                 Contexto
               </span>
@@ -1182,61 +1274,12 @@ export default function CalendarPage() {
                 ))}
               </div>
             </div>
-
-            <div className="flex flex-col gap-1 lg:col-span-2 xl:col-span-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                Vista
-              </span>
-              <div className="grid grid-cols-3 items-center gap-1 rounded-full border border-sky-200/70 bg-sky-100/20 p-1 shadow-inner shadow-sky-950/5 dark:border-white/10 dark:bg-white/5 dark:shadow-none">
-                {(
-                  ["dayGridMonth", "dayGridWeek", "dayGridDay"] as ViewOption[]
-                ).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => handleViewChange(v)}
-                    className={`h-9 min-w-0 cursor-pointer justify-center whitespace-nowrap rounded-full px-2 text-xs transition ${
-                      currentView === v
-                        ? "bg-white/80 text-sky-950 shadow-sm shadow-sky-950/10 ring-1 ring-sky-200/80 dark:bg-white/10 dark:text-white dark:ring-white/10"
-                        : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
-                    }`}
-                  >
-                    {v === "dayGridMonth"
-                      ? "Mes"
-                      : v === "dayGridWeek"
-                        ? "Semana"
-                        : "Día"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="lg:col-span-6 xl:col-span-4">
-              <label className="block cursor-text text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                {activeRangeLabel}
-              </label>
-              <div className="mt-1 flex items-center gap-2">
-                <input
-                  type="date"
-                  value={activeDateRange.from}
-                  onChange={(e) => setActiveDateRange("from", e.target.value)}
-                  className="cursor-text rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
-                />
-                <span className="text-sky-950 dark:text-white">–</span>
-                <input
-                  type="date"
-                  value={activeDateRange.to}
-                  onChange={(e) => setActiveDateRange("to", e.target.value)}
-                  className="cursor-text rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
-                />
-              </div>
-            </div>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-sky-200/60 pt-3 dark:border-white/10">
             <div className="flex flex-wrap items-center gap-2 text-xs text-sky-950/70 dark:text-white/70">
               <span className="rounded-full border border-white/20 bg-white/30 px-3 py-1 dark:bg-white/10">
-                Contexto activo: {calendarContextLabel}
+                {calendarContextLabel}
               </span>
               {canShowNotesInfo && (
                 <span className="rounded-full border border-white/20 bg-white/30 px-3 py-1 dark:bg-white/10">
@@ -1259,6 +1302,55 @@ export default function CalendarPage() {
 
           {showAdvancedFilters && (
             <div className="mt-4 grid grid-cols-1 items-end gap-4 border-t border-sky-200/60 pt-4 dark:border-white/10 md:grid-cols-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
+                  Vista
+                </span>
+                <div className="grid grid-cols-3 items-center gap-1 rounded-full border border-sky-200/70 bg-sky-100/20 p-1 shadow-inner shadow-sky-950/5 dark:border-white/10 dark:bg-white/5 dark:shadow-none">
+                  {(
+                    ["dayGridMonth", "dayGridWeek", "dayGridDay"] as ViewOption[]
+                  ).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => handleViewChange(v)}
+                      className={`h-9 min-w-0 cursor-pointer justify-center whitespace-nowrap rounded-full px-2 text-xs transition ${
+                        currentView === v
+                          ? "bg-white/80 text-sky-950 shadow-sm shadow-sky-950/10 ring-1 ring-sky-200/80 dark:bg-white/10 dark:text-white dark:ring-white/10"
+                          : "text-sky-950/60 hover:bg-white/40 dark:text-white/60 dark:hover:bg-white/10"
+                      }`}
+                    >
+                      {v === "dayGridMonth"
+                        ? "Mes"
+                        : v === "dayGridWeek"
+                          ? "Semana"
+                          : "Día"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block cursor-text text-sm font-medium dark:text-white">
+                  {activeRangeLabel}
+                </label>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={activeDateRange.from}
+                    onChange={(e) => setActiveDateRange("from", e.target.value)}
+                    className="cursor-text rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
+                  />
+                  <span className="text-sky-950 dark:text-white">–</span>
+                  <input
+                    type="date"
+                    value={activeDateRange.to}
+                    onChange={(e) => setActiveDateRange("to", e.target.value)}
+                    className="cursor-text rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
+                  />
+                </div>
+              </div>
+
               {canShowTripsMode && (
                 <div className="flex flex-col gap-1">
                   <span className="text-xs font-semibold uppercase tracking-wide text-sky-950/60 dark:text-white/60">
