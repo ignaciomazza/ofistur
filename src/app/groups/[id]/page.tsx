@@ -5550,7 +5550,7 @@ export default function GroupDetailPage() {
                   <div className="w-fit rounded-2xl border border-emerald-300/80 bg-emerald-50/30 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-500/70 dark:bg-emerald-900/20 dark:text-emerald-300">
                     {selectedPaymentsScope.departureId != null
                       ? "Salida activa: "
-                      : "Contexto activo: "}
+                      : ""}
                     <span className="font-semibold text-emerald-900 dark:text-emerald-100">
                       {selectedPaymentsScope.label}
                     </span>

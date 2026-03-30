@@ -462,6 +462,7 @@ export default function BalancesPage() {
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [appliedListQuery, setAppliedListQuery] = useState("");
   const [pageInit, setPageInit] = useState(false);
 
   /* ---------- Densidad / layout ---------- */
@@ -1217,6 +1218,12 @@ export default function BalancesPage() {
       setLoading(true);
       try {
         const qs = buildQS(resetList ? undefined : cursor);
+        if (resetList) {
+          const appliedQS = new URLSearchParams(qs.toString());
+          appliedQS.delete("cursor");
+          appliedQS.delete("take");
+          setAppliedListQuery(appliedQS.toString());
+        }
         const res = await authFetch(
           `/api/bookings?${qs.toString()}`,
           { cache: "no-store" },
@@ -1455,9 +1462,17 @@ export default function BalancesPage() {
       // Full-scan con paginado
       let next: number | null = null;
       const rows: string[] = [];
+      const fallbackQuery = buildQS(undefined);
+      fallbackQuery.delete("cursor");
+      fallbackQuery.delete("take");
+      const baseFilters = new URLSearchParams(
+        appliedListQuery || fallbackQuery.toString(),
+      );
 
       for (let i = 0; i < 200; i++) {
-        const qs = buildQS(next);
+        const qs = new URLSearchParams(baseFilters.toString());
+        qs.set("take", String(TAKE));
+        if (next != null) qs.set("cursor", String(next));
         const res = await authFetch(
           `/api/bookings?${qs.toString()}`,
           { cache: "no-store" },

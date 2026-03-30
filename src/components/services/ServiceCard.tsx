@@ -111,6 +111,7 @@ export default function ServiceCard({
   const [agencyMode, setAgencyMode] = useState<"auto" | "manual">("auto");
   const [useBookingSaleTotalCfg, setUseBookingSaleTotalCfg] = useState(false);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const duplicateLockRef = useRef(false);
   const cfgRef = useRef<{ ac: AbortController; id: number } | null>(null);
   const mountedRef = useRef(true);
 
@@ -225,14 +226,16 @@ export default function ServiceCard({
     );
 
   const handleDuplicate = useCallback(async () => {
-    if (isDuplicating) return;
+    if (duplicateLockRef.current) return;
+    duplicateLockRef.current = true;
     setIsDuplicating(true);
     try {
       await duplicateService(service);
     } finally {
+      duplicateLockRef.current = false;
       if (mountedRef.current) setIsDuplicating(false);
     }
-  }, [duplicateService, isDuplicating, service]);
+  }, [duplicateService, service]);
 
   // ¿Hay datos de tarjeta para mostrar?
   const hasCard =

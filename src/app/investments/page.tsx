@@ -386,6 +386,7 @@ export default function Page() {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [appliedListQuery, setAppliedListQuery] = useState("");
   const [listError, setListError] = useState<string | null>(null);
   const [listCounts, setListCounts] = useState<{
     total: number | null;
@@ -1243,8 +1244,16 @@ export default function Page() {
     const myId = ++reqIdRef.current;
 
     try {
+      const listQuery = buildQuery(null, { includeCounts: true });
+      const appliedQS = new URLSearchParams(listQuery);
+      appliedQS.delete("cursor");
+      appliedQS.delete("take");
+      appliedQS.delete("includeCounts");
+      appliedQS.delete("includeAllocations");
+      setAppliedListQuery(appliedQS.toString());
+
       const res = await authFetch(
-        `/api/investments?${buildQuery(null, { includeCounts: true })}`,
+        `/api/investments?${listQuery}`,
         { cache: "no-store", signal: controller.signal },
         token,
       );
@@ -1357,12 +1366,21 @@ export default function Page() {
 
       let next: number | null = null;
       const rows: string[] = [];
+      const fallbackQuery = new URLSearchParams(
+        buildQuery(null, { includeAllocations: false }),
+      );
+      fallbackQuery.delete("cursor");
+      fallbackQuery.delete("take");
+      fallbackQuery.delete("includeCounts");
+      fallbackQuery.delete("includeAllocations");
+      const baseFilters = new URLSearchParams(
+        appliedListQuery || fallbackQuery.toString(),
+      );
 
       for (let i = 0; i < 300; i += 1) {
-        const qs = new URLSearchParams(
-          buildQuery(next, { includeAllocations: false }),
-        );
+        const qs = new URLSearchParams(baseFilters.toString());
         qs.set("take", "200");
+        if (next != null) qs.set("cursor", String(next));
 
         const res = await authFetch(
           `/api/investments?${qs.toString()}`,
@@ -1381,6 +1399,19 @@ export default function Page() {
         };
 
         for (const item of data.items || []) {
+          const isOperatorItem = isOperatorCategory(item.category);
+          if (operadorMode === "only" && !isOperatorItem) continue;
+          if (operadorMode === "others" && isOperatorItem) continue;
+          if (
+            operatorFilter &&
+            (!item.operator || item.operator.id_operator !== operatorFilter)
+          ) {
+            continue;
+          }
+          const linked = hasBookingAssociation(item);
+          if (associationFilter === "linked" && !linked) continue;
+          if (associationFilter === "unlinked" && linked) continue;
+
           const operatorName = item.operator?.name ?? "";
           const userName = item.user
             ? `${item.user.first_name} ${item.user.last_name}`.trim()
@@ -1433,7 +1464,15 @@ export default function Page() {
     } finally {
       setExportingCsv(false);
     }
-  }, [buildQuery, token]);
+  }, [
+    buildQuery,
+    token,
+    appliedListQuery,
+    associationFilter,
+    operadorMode,
+    operatorFilter,
+    isOperatorCategory,
+  ]);
 
   /* ========= Opciones desde Finance (sin fallbacks) ========= */
   const enabledCategories = useMemo(

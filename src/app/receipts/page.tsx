@@ -293,6 +293,7 @@ export default function ReceiptsPage() {
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [appliedListQuery, setAppliedListQuery] = useState("");
   const [pageInit, setPageInit] = useState(false);
   const [loadingPdfId, setLoadingPdfId] = useState<number | null>(null);
   const [loadingDeleteId, setLoadingDeleteId] = useState<number | null>(null);
@@ -819,6 +820,12 @@ export default function ReceiptsPage() {
       setLoading(true);
       try {
         const qs = buildQS(resetList ? undefined : cursor);
+        if (resetList) {
+          const appliedQS = new URLSearchParams(qs.toString());
+          appliedQS.delete("cursor");
+          appliedQS.delete("take");
+          setAppliedListQuery(appliedQS.toString());
+        }
         const res = await authFetch(
           `/api/receipts?${qs.toString()}`,
           { cache: "no-store" },
@@ -888,9 +895,17 @@ export default function ReceiptsPage() {
 
       let next: number | null = null;
       const rows: string[] = [];
+      const fallbackQuery = buildQS(undefined);
+      fallbackQuery.delete("cursor");
+      fallbackQuery.delete("take");
+      const baseFilters = new URLSearchParams(
+        appliedListQuery || fallbackQuery.toString(),
+      );
 
       for (let i = 0; i < 300; i++) {
-        const qs = buildQS(next);
+        const qs = new URLSearchParams(baseFilters.toString());
+        qs.set("take", String(TAKE));
+        if (next != null) qs.set("cursor", String(next));
         const res = await authFetch(
           `/api/receipts?${qs.toString()}`,
           { cache: "no-store" },

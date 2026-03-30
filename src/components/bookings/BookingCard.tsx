@@ -1,6 +1,6 @@
 // src/components/bookings/BookingCard.tsx
 "use client";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Booking } from "@/types";
 import Link from "next/link";
@@ -60,6 +60,7 @@ export default function BookingCard({
 }: BookingCardProps) {
   const isExpanded = expandedBookingId === booking.id_booking;
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const duplicateLockRef = useRef(false);
   const canManage =
     booking.status === "Abierta" ||
     role === "administrativo" ||
@@ -179,14 +180,16 @@ export default function BookingCard({
     );
 
   const handleDuplicate = useCallback(async () => {
-    if (isDuplicating) return;
+    if (duplicateLockRef.current) return;
+    duplicateLockRef.current = true;
     setIsDuplicating(true);
     try {
       await duplicateBooking(booking);
     } finally {
+      duplicateLockRef.current = false;
       setIsDuplicating(false);
     }
-  }, [booking, duplicateBooking, isDuplicating]);
+  }, [booking, duplicateBooking]);
 
   const toggleBtn = `${TOGGLE_BUTTON} p-2`;
 

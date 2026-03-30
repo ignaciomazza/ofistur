@@ -127,6 +127,7 @@ function BookingListRow({
   role,
 }: BookingRowProps) {
   const [isDuplicating, setIsDuplicating] = React.useState(false);
+  const duplicateLockRef = React.useRef(false);
   const isExpanded = expandedBookingId === booking.id_booking;
   const toggleRow = () =>
     setExpandedBookingId((prevId) =>
@@ -143,11 +144,13 @@ function BookingListRow({
   };
 
   const handleDuplicate = async () => {
-    if (isDuplicating) return;
+    if (duplicateLockRef.current) return;
+    duplicateLockRef.current = true;
     setIsDuplicating(true);
     try {
       await duplicateBooking(booking);
     } finally {
+      duplicateLockRef.current = false;
       setIsDuplicating(false);
     }
   };
