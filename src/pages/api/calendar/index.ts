@@ -4,12 +4,8 @@ import prisma, { Prisma } from "@/lib/prisma";
 import { jwtVerify, type JWTPayload } from "jose";
 import { encodePublicId } from "@/lib/publicIds";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
-import { resolveCalendarVisibilityByUser } from "@/lib/resourceAccess";
-import { getFinanceSectionGrants } from "@/lib/accessControl";
-import {
-  canAccessFinanceSection,
-  normalizeRole,
-} from "@/utils/permissions";
+import { getBookingLeaderScope } from "@/lib/bookingVisibility";
+import { normalizeRole } from "@/utils/permissions";
 import {
   endOfDayUtcFromDateKeyInBuenosAires,
   startOfDayUtcFromDateKeyInBuenosAires,
@@ -34,6 +30,7 @@ type OperationsKind = "trips" | "notes" | "birthdays";
 type FinanceKind = "client_payments" | "operator_dues";
 type FinanceStatus = "PENDIENTE" | "VENCIDA" | "PAGADA" | "CANCELADA";
 type PersistedFinanceStatus = "PENDIENTE" | "PAGADA" | "CANCELADA";
+type CalendarScopeMode = "all" | "team" | "own";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
@@ -258,11 +255,15 @@ export default async function handler(
     }
 
     const { id_agency } = auth;
-    const calendarVisibility = await resolveCalendarVisibilityByUser({
-      id_agency: auth.id_agency,
-      id_user: auth.id_user,
-      role: auth.role,
-    });
+    const normalizedRole = normalizeRole(auth.role);
+    const scopeMode: CalendarScopeMode =
+      normalizedRole === "gerente" ||
+      normalizedRole === "administrativo" ||
+      normalizedRole === "desarrollador"
+        ? "all"
+        : normalizedRole === "lider"
+          ? "team"
+          : "own";
 
     // --------- parámetros ---------
     const {
@@ -286,20 +287,46 @@ export default async function handler(
       typeof mode === "string" && mode === "services" ? "services" : "bookings";
 
     const baseBookingFilter: Prisma.BookingWhereInput = { id_agency };
+    const requestedUserIds =
+      typeof userIds === "string"
+        ? userIds
+            .split(",")
+            .map((s) => parseInt(s, 10))
+            .filter((n) => Number.isFinite(n))
+        : typeof userId === "string"
+          ? [parseInt(userId, 10)].filter((n) => Number.isFinite(n))
+          : [];
 
-    if (calendarVisibility === "own") {
+    if (scopeMode === "all") {
+      if (requestedUserIds.length === 1) {
+        baseBookingFilter.id_user = requestedUserIds[0];
+      } else if (requestedUserIds.length > 1) {
+        baseBookingFilter.id_user = { in: requestedUserIds };
+      }
+    } else if (scopeMode === "own") {
       baseBookingFilter.id_user = auth.id_user;
     } else {
-      // userIds CSV (p.ej. "5,12,27")
-      if (typeof userIds === "string") {
-        const ids = userIds
-          .split(",")
-          .map((s) => parseInt(s, 10))
-          .filter((n) => Number.isFinite(n));
-        if (ids.length) baseBookingFilter.id_user = { in: ids };
-      } else if (typeof userId === "string") {
-        const n = parseInt(userId, 10);
-        if (Number.isFinite(n)) baseBookingFilter.id_user = n;
+      const leaderScope = await getBookingLeaderScope(auth.id_user, id_agency);
+      const allowedUserIds =
+        leaderScope.userIds.length > 0
+          ? leaderScope.userIds
+          : [auth.id_user];
+      const allowedSet = new Set(allowedUserIds);
+
+      if (requestedUserIds.length > 0) {
+        const requestedAllowed = requestedUserIds.filter((id) =>
+          allowedSet.has(id),
+        );
+        if (requestedAllowed.length === 0) {
+          baseBookingFilter.id_user = -1;
+        } else if (requestedAllowed.length === 1) {
+          baseBookingFilter.id_user = requestedAllowed[0];
+        } else {
+          baseBookingFilter.id_user = { in: requestedAllowed };
+        }
+      } else {
+        // Lider: por defecto ve sus propios datos y puede elegir miembros del equipo.
+        baseBookingFilter.id_user = auth.id_user;
       }
     }
 
@@ -428,28 +455,6 @@ export default async function handler(
         : [];
 
     if (calendarContext === "finance") {
-      const financeGrants = await getFinanceSectionGrants(
-        auth.id_agency,
-        auth.id_user,
-      );
-      const normalizedRole = normalizeRole(auth.role);
-      const canAccessPaymentPlans = canAccessFinanceSection(
-        normalizedRole,
-        financeGrants,
-        "payment_plans",
-      );
-      const canAccessOperatorPayments = canAccessFinanceSection(
-        normalizedRole,
-        financeGrants,
-        "operator_payments",
-      );
-
-      if (!canAccessPaymentPlans && !canAccessOperatorPayments) {
-        return res
-          .status(403)
-          .json({ error: "Sin permisos para el calendario financiero" });
-      }
-
       const selectedKinds = parseFinanceKinds(financeKinds);
       const selectedStatuses = parseFinanceStatuses(financeStatuses);
       // El calendario financiero opera solo sobre flujos no-grupales.
@@ -500,7 +505,7 @@ export default async function handler(
       }
 
       const clientPaymentEvents =
-        selectedKinds.has("client_payments") && canAccessPaymentPlans
+        selectedKinds.has("client_payments")
           ? (
               await prisma.clientPayment.findMany({
                 where: {
@@ -568,7 +573,7 @@ export default async function handler(
           : [];
 
       const operatorDueEvents =
-        selectedKinds.has("operator_dues") && canAccessOperatorPayments
+        selectedKinds.has("operator_dues")
           ? (
               await prisma.operatorDue.findMany({
                 where: {

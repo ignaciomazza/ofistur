@@ -13,12 +13,9 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { authFetch } from "@/utils/authFetch";
 import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
 import {
-  canAccessFinanceSection,
   canManageResourceSection,
-  normalizeFinanceSectionRules,
+  normalizeRole,
   normalizeResourceSectionRules,
-  resolveCalendarVisibility,
-  type FinanceSectionKey,
   type ResourceSectionAccessRule,
 } from "@/utils/permissions";
 
@@ -34,6 +31,7 @@ type CalendarContext =
 type OperationsMode = "bookings" | "services";
 type FinanceStatus = "PENDIENTE" | "VENCIDA" | "PAGADA" | "CANCELADA";
 type DetailMode = "name" | "detail";
+type CalendarScopeMode = "all" | "team" | "own";
 
 interface User {
   id_user: number;
@@ -138,10 +136,6 @@ export default function CalendarPage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [currentView, setCurrentView] = useState<ViewOption>("dayGridMonth");
   const [detailMode, setDetailMode] = useState<DetailMode>("name");
-  const [financeSectionGrants, setFinanceSectionGrants] = useState<
-    FinanceSectionKey[]
-  >([]);
-  const [financeSectionLoaded, setFinanceSectionLoaded] = useState(false);
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
@@ -176,57 +170,50 @@ export default function CalendarPage() {
     "PAGADA",
     "CANCELADA",
   ];
+  const effectiveRole = useMemo(
+    () => role ?? profile?.role ?? null,
+    [profile?.role, role],
+  );
+  const normalizedRole = useMemo(
+    () => normalizeRole(effectiveRole),
+    [effectiveRole],
+  );
 
   const canManageCalendarNotes = useMemo(
     () =>
       canManageResourceSection(
-        role,
+        effectiveRole,
         resourceRule?.sections ?? [],
         "calendar",
         resourceHasCustomRule,
       ),
-    [resourceHasCustomRule, resourceRule, role],
+    [effectiveRole, resourceHasCustomRule, resourceRule],
   );
 
-  const calendarVisibility = useMemo(
-    () => resolveCalendarVisibility(role, resourceRule, resourceHasCustomRule),
-    [resourceHasCustomRule, resourceRule, role],
-  );
-
-  const canAccessPaymentPlansContext = useMemo(
-    () =>
-      canAccessFinanceSection(
-        role,
-        financeSectionGrants,
-        "payment_plans",
-      ),
-    [financeSectionGrants, role],
-  );
-
-  const canAccessOperatorDuesContext = useMemo(
-    () =>
-      canAccessFinanceSection(
-        role,
-        financeSectionGrants,
-        "operator_payments",
-      ),
-    [financeSectionGrants, role],
-  );
-
-  const availableContexts = useMemo(() => {
-    const options: Array<{ value: CalendarContext; label: string }> = [
-      { value: "trips", label: "Viajes" },
-      { value: "birthdays", label: "Cumple pax" },
-      { value: "notes", label: "Notas" },
-    ];
-    if (canAccessPaymentPlansContext) {
-      options.push({ value: "payment_plans", label: "Planes pago" });
+  const calendarScopeMode = useMemo<CalendarScopeMode>(() => {
+    if (
+      normalizedRole === "gerente" ||
+      normalizedRole === "administrativo" ||
+      normalizedRole === "desarrollador"
+    ) {
+      return "all";
     }
-    if (canAccessOperatorDuesContext) {
-      options.push({ value: "operator_dues", label: "Venc. operador" });
+    if (normalizedRole === "lider") {
+      return "team";
     }
-    return options;
-  }, [canAccessOperatorDuesContext, canAccessPaymentPlansContext]);
+    return "own";
+  }, [normalizedRole]);
+
+  const availableContexts = useMemo(
+    () => [
+      { value: "trips" as const, label: "Viajes" },
+      { value: "birthdays" as const, label: "Cumple pax" },
+      { value: "notes" as const, label: "Notas" },
+      { value: "payment_plans" as const, label: "Planes pago" },
+      { value: "operator_dues" as const, label: "Venc. operador" },
+    ],
+    [],
+  );
 
   const calendarContextLabel = useMemo(() => {
     const match = availableContexts.find((item) => item.value === calendarContext);
@@ -249,7 +236,7 @@ export default function CalendarPage() {
 
   const canShowNotesInfo = calendarContext === "notes";
 
-  const canShowVendorFilter = calendarVisibility === "all";
+  const canShowVendorFilter = calendarScopeMode !== "own";
 
   const activeDateRange = useMemo(() => {
     if (calendarContext === "trips") return travelDateRange;
@@ -303,8 +290,33 @@ export default function CalendarPage() {
         );
         if (!rUsers.ok) throw new Error("Error al obtener vendedores");
         const users = (await rUsers.json()) as User[];
+        let nextVendors = users;
+        const profileRole = normalizeRole(p.role);
 
-        setVendors(users);
+        if (profileRole === "lider") {
+          const rTeams = await authFetch(
+            `/api/teams?agencyId=${p.id_agency}`,
+            { cache: "no-store" },
+            token,
+          );
+          if (rTeams.ok) {
+            const teams = (await rTeams.json()) as Array<{
+              user_teams?: Array<{ user?: User | null }>;
+            }>;
+            const teamUsers = teams.flatMap((team) =>
+              (team.user_teams ?? [])
+                .map((item) => item.user)
+                .filter((user): user is User => Boolean(user?.id_user)),
+            );
+            const merged = new Map<number, User>();
+            [...users, ...teamUsers].forEach((user) => {
+              merged.set(user.id_user, user);
+            });
+            nextVendors = Array.from(merged.values());
+          }
+        }
+
+        setVendors(nextVendors);
       } catch (e) {
         console.error(e);
       } finally {
@@ -355,87 +367,61 @@ export default function CalendarPage() {
     };
   }, [token]);
 
-  useEffect(() => {
-    if (!token) return;
-    let alive = true;
-
-    (async () => {
-      try {
-        const res = await authFetch(
-          "/api/finance/section-access",
-          { cache: "no-store" },
-          token,
-        );
-        if (!res.ok) {
-          if (!alive) return;
-          setFinanceSectionGrants([]);
-          setFinanceSectionLoaded(true);
-          return;
-        }
-        const payload = (await res.json()) as {
-          rules?: unknown;
-        };
-        const rules = normalizeFinanceSectionRules(payload?.rules);
-        if (!alive) return;
-        setFinanceSectionGrants(rules[0]?.sections ?? []);
-      } catch {
-        if (!alive) return;
-        setFinanceSectionGrants([]);
-      } finally {
-        if (!alive) return;
-        setFinanceSectionLoaded(true);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [token]);
-
-  useEffect(() => {
-    if (!financeSectionLoaded) return;
-    const allowed = new Set(availableContexts.map((item) => item.value));
-    if (!allowed.has(calendarContext)) {
-      setCalendarContext(availableContexts[0]?.value ?? "trips");
-    }
-  }, [availableContexts, calendarContext, financeSectionLoaded]);
-
   // Vendedores permitidos según rol
   const allowedVendors = useMemo(() => {
     if (!profile) return [];
-    if (calendarVisibility === "own") {
+    if (calendarScopeMode === "own") {
       return vendors.filter((u) => u.id_user === profile.id_user);
     }
+    if (calendarScopeMode === "team") {
+      const merged = new Map<number, User>();
+      vendors.forEach((vendor) => {
+        merged.set(vendor.id_user, vendor);
+      });
+      if (!merged.has(profile.id_user)) {
+        merged.set(profile.id_user, profile);
+      }
+      return Array.from(merged.values());
+    }
     return vendors;
-  }, [calendarVisibility, profile, vendors]);
+  }, [calendarScopeMode, profile, vendors]);
 
   // Autocompletar -> id de vendedor
   useEffect(() => {
     const match = allowedVendors.find(
       (u) => `${u.first_name} ${u.last_name}` === vendorInput,
     );
-    setSelectedVendor(match ? match.id_user : 0);
-  }, [vendorInput, allowedVendors]);
+    if (match) {
+      setSelectedVendor(match.id_user);
+      return;
+    }
+    if (profile && (calendarScopeMode === "own" || calendarScopeMode === "team")) {
+      setSelectedVendor(profile.id_user);
+      return;
+    }
+    setSelectedVendor(0);
+  }, [vendorInput, allowedVendors, profile, calendarScopeMode]);
 
   useEffect(() => {
-    if (calendarVisibility !== "own") return;
-    setSelectedVendor(0);
-  }, [calendarVisibility]);
+    if (!profile) return;
+    const ownLabel = `${profile.first_name} ${profile.last_name}`;
+    if (calendarScopeMode === "own") {
+      setSelectedVendor(profile.id_user);
+      setVendorInput(ownLabel);
+      return;
+    }
+    if (calendarScopeMode === "team" && !vendorInput.trim()) {
+      setSelectedVendor(profile.id_user);
+      setVendorInput(ownLabel);
+    }
+  }, [calendarScopeMode, profile, vendorInput]);
 
   // Cargar eventos de calendario
   useEffect(() => {
     if (!token || !profile) return;
-    if (
-      (calendarContext === "payment_plans" && !canAccessPaymentPlansContext) ||
-      (calendarContext === "operator_dues" && !canAccessOperatorDuesContext)
-    ) {
-      setEvents([]);
-      setLoadingEvents(false);
-      return;
-    }
 
     const qs = new URLSearchParams();
-    if (calendarVisibility === "own") {
+    if (calendarScopeMode === "own") {
       qs.append("userId", String(profile.id_user));
     } else if (selectedVendor) {
       qs.append("userId", String(selectedVendor));
@@ -477,7 +463,20 @@ export default function CalendarPage() {
 
     setLoadingEvents(true);
     authFetch(`/api/calendar?${qs.toString()}`, { cache: "no-store" }, token)
-      .then((r) => r.json() as Promise<CalendarEvent[]>)
+      .then(async (r) => {
+        const payload = (await r.json().catch(() => null)) as
+          | CalendarEvent[]
+          | { error?: string }
+          | null;
+        if (!r.ok) {
+          const message =
+            payload && typeof payload === "object" && "error" in payload
+              ? String(payload.error || "Error al cargar eventos del calendario")
+              : "Error al cargar eventos del calendario";
+          throw new Error(message);
+        }
+        return Array.isArray(payload) ? payload : [];
+      })
       .then((data) => {
         const normalized = data.map((ev) => ({
           ...ev,
@@ -501,16 +500,17 @@ export default function CalendarPage() {
         }));
         setEvents(normalized);
       })
-      .catch(console.error)
+      .catch((error) => {
+        console.error(error);
+        setEvents([]);
+      })
       .finally(() => setLoadingEvents(false));
   }, [
     token,
     profile,
-    calendarVisibility,
+    calendarScopeMode,
     selectedVendor,
     calendarContext,
-    canAccessPaymentPlansContext,
-    canAccessOperatorDuesContext,
     selectedClientStatus,
     travelDateRange,
     birthdayDateRange,

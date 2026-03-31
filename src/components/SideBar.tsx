@@ -488,6 +488,18 @@ export default function SideBar({
     sections.forEach((s) => (init[s.id] = s.id === firstId));
     return init;
   }, [sections]);
+  const normalizeSingleExpanded = useCallback(
+    (source: Record<string, boolean>): Record<string, boolean> => {
+      const normalized: Record<string, boolean> = {};
+      const openId = sections.find((s) => source[s.id])?.id;
+      const fallbackId = openId ?? sections[0]?.id;
+      sections.forEach((s) => {
+        normalized[s.id] = s.id === fallbackId;
+      });
+      return normalized;
+    },
+    [sections],
+  );
 
   useEffect(() => {
     if (!mounted) return;
@@ -503,8 +515,8 @@ export default function SideBar({
     } catch {
       // noop
     }
-    setExpanded(next);
-  }, [buildDefaultExpanded, mounted, STORAGE_KEY]);
+    setExpanded(normalizeSingleExpanded(next));
+  }, [buildDefaultExpanded, mounted, normalizeSingleExpanded, STORAGE_KEY]);
 
   // Persistir cambios
   useEffect(() => {
@@ -523,12 +535,26 @@ export default function SideBar({
     );
     if (idx >= 0) {
       const id = sections[idx].id;
-      setExpanded((prev) => ({ ...prev, [id]: true }));
+      setExpanded((prev) => {
+        if (prev[id]) return prev;
+        const next: Record<string, boolean> = {};
+        sections.forEach((sec) => {
+          next[sec.id] = sec.id === id;
+        });
+        return next;
+      });
     }
   }, [currentPath, sections, isActive]);
 
   const toggleSection = (id: string) =>
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+    setExpanded((prev) => {
+      const next: Record<string, boolean> = {};
+      const shouldOpen = !prev[id];
+      sections.forEach((sec) => {
+        next[sec.id] = shouldOpen && sec.id === id;
+      });
+      return next;
+    });
 
   if (!mounted) return null;
 
@@ -689,7 +715,7 @@ export default function SideBar({
                   aria-hidden={!open}
                 >
                   <div className="overflow-hidden">
-                    <ul className="mb-3 space-y-2 pl-1">
+                    <ul className="mb-3 space-y-2 pl-3">
                       {sec.items.map((it) => {
                         const active = isActive(it.href);
                         return (
