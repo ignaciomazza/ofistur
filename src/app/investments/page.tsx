@@ -367,6 +367,7 @@ export default function Page() {
 
   const pathname = usePathname() || "";
   const operatorOnly = pathname.startsWith("/operators/payments");
+  const [requestedEditId, setRequestedEditId] = useState<number | null>(null);
 
   // ------- UI / form state -------
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -553,6 +554,21 @@ export default function Page() {
 
   // edición
   const [editingId, setEditingId] = useState<number | null>(null);
+  const autoOpenedEditRef = useRef<number | null>(null);
+  const beginEditRef = useRef<(inv: Investment) => void>(() => {});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = new URLSearchParams(window.location.search).get("edit");
+    if (!raw) {
+      setRequestedEditId(null);
+      return;
+    }
+    const parsed = Number(raw);
+    setRequestedEditId(
+      Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null,
+    );
+  }, [pathname]);
 
   useEffect(() => {
     if (!token) return;
@@ -875,6 +891,8 @@ export default function Page() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
+
+  beginEditRef.current = beginEdit;
 
   function beginRecurringEdit(rule: RecurringInvestment) {
     setRecurringForm({
@@ -1308,6 +1326,53 @@ export default function Page() {
   useEffect(() => {
     fetchList();
   }, [fetchList]);
+
+  useEffect(() => {
+    if (!operatorOnly) return;
+    if (!requestedEditId) return;
+    if (loadingList) return;
+    if (editingId === requestedEditId) return;
+    if (autoOpenedEditRef.current === requestedEditId) return;
+
+    const target = items.find(
+      (it) =>
+        it.id_investment === requestedEditId ||
+        it.agency_investment_id === requestedEditId,
+    );
+    if (target) {
+      autoOpenedEditRef.current = requestedEditId;
+      beginEditRef.current(target);
+      return;
+    }
+
+    if (!token) return;
+
+    autoOpenedEditRef.current = requestedEditId;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await authFetch(
+          `/api/investments/${requestedEditId}?includeAllocations=1`,
+          { cache: "no-store" },
+          token,
+        );
+        if (!res.ok) {
+          if (!cancelled) autoOpenedEditRef.current = null;
+          return;
+        }
+        const detail = await safeJson<Investment>(res);
+        if (cancelled || !detail?.id_investment) return;
+        beginEditRef.current(detail);
+      } catch {
+        if (!cancelled) autoOpenedEditRef.current = null;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [operatorOnly, requestedEditId, loadingList, editingId, items, token]);
 
   useEffect(() => {
     fetchRecurring();

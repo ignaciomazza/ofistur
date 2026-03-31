@@ -15,13 +15,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Operator,
   BillingData,
-  BillingBreakdownOverride,
+  BillingOverridePayload,
   BillingAdjustmentConfig,
   BillingAdjustmentComputed,
 } from "@/types";
 import BillingBreakdown from "@/components/BillingBreakdown";
 import BillingBreakdownManual from "@/components/BillingBreakdownManual";
 import { computeBillingAdjustments } from "@/utils/billingAdjustments";
+import {
+  extractBillingOverrideMeta,
+  extractBillingOverrideValues,
+} from "@/utils/billingOverride";
 import DestinationPicker, {
   DestinationOption,
 } from "@/components/DestinationPicker";
@@ -55,7 +59,7 @@ export type ServiceFormData = {
   return_date: string;
   transfer_fee_pct?: number | null;
   extra_adjustments?: BillingAdjustmentComputed[] | null;
-  billing_override?: Partial<BillingBreakdownOverride> | null;
+  billing_override?: BillingOverridePayload;
 };
 
 type ServiceFormProps = {
@@ -90,7 +94,7 @@ const Section: React.FC<{
   desc?: string;
   children: React.ReactNode;
 }> = ({ title, desc, children }) => (
-  <section className="rounded-2xl border border-sky-900/10 bg-white/35 p-4 shadow-sm shadow-sky-950/5 dark:border-white/10 dark:bg-white/[0.04]">
+  <section className="rounded-2xl border border-sky-300/35 bg-white/35 p-4 shadow-sm shadow-sky-950/5 dark:border-sky-500/25 dark:bg-white/[0.04]">
     <div className="mb-3">
       <h3 className="text-base font-semibold tracking-tight text-sky-950 dark:text-white">
         {title}
@@ -129,6 +133,33 @@ const Field: React.FC<{
       </p>
     )}
   </div>
+);
+
+const MiniToggle: React.FC<{
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}> = ({ checked, onChange, disabled = false, ariaLabel }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={ariaLabel}
+    disabled={disabled}
+    onClick={() => onChange(!checked)}
+    className={`relative inline-flex h-5 w-9 items-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-sky-300/60 ${
+      checked
+        ? "border-sky-500 bg-sky-500"
+        : "border-sky-300/80 bg-sky-100/80 dark:border-sky-500/40 dark:bg-sky-900/20"
+    } ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+  >
+    <span
+      className={`pointer-events-none inline-block size-3.5 rounded-full bg-white shadow-sm transition ${
+        checked ? "translate-x-4" : "translate-x-0.5"
+      }`}
+    />
+  </button>
 );
 
 const AdjustmentsPanel: React.FC<{
@@ -220,6 +251,17 @@ const makeAdjustmentId = () => {
   return `adj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 };
 
+const createDefaultServiceAdjustment = (): BillingAdjustmentConfig => ({
+  id: makeAdjustmentId(),
+  label: "Ajuste servicio",
+  kind: "cost",
+  basis: "sale",
+  valueType: "percent",
+  value: 0,
+  active: true,
+  source: "service",
+});
+
 const formatPercentInput = (value: number) => {
   const safe = Number.isFinite(value) ? value : 0;
   return String(parseFloat((safe * 100).toFixed(4)));
@@ -236,19 +278,7 @@ const ServiceAdjustmentsEditor: React.FC<{
   onChange: (next: BillingAdjustmentConfig[]) => void;
   disabled?: boolean;
 }> = ({ items, onChange, disabled = false }) => {
-  const addItem = () => {
-    const next: BillingAdjustmentConfig = {
-      id: makeAdjustmentId(),
-      label: "Ajuste servicio",
-      kind: "cost",
-      basis: "sale",
-      valueType: "percent",
-      value: 0,
-      active: true,
-      source: "service",
-    };
-    onChange([...items, next]);
-  };
+  if (items.length === 0) return null;
 
   const updateItem = (
     id: string,
@@ -262,35 +292,13 @@ const ServiceAdjustmentsEditor: React.FC<{
   };
 
   return (
-    <div className="mt-6 rounded-2xl border border-white/10 bg-white/10 p-4 text-sky-950 shadow-sm shadow-sky-950/10 dark:text-white">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold">Ajustes por servicio</h3>
-          <p className="text-[11px] opacity-70">
-            Se aplican solo al servicio actual. En venta total por reserva se
-            toman a nivel resumen.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={addItem}
-          disabled={disabled}
-          className="rounded-full border border-white/10 bg-white/20 px-3 py-1 text-xs font-semibold shadow-sm shadow-sky-950/10 transition disabled:opacity-50 dark:bg-white/10"
+    <div className="space-y-2.5 text-sky-950 dark:text-white">
+      {items.map((item) => (
+        <div
+          key={item.id}
+          className="rounded-2xl border border-sky-200/60 bg-sky-100/35 p-2.5 dark:border-sky-600/30 dark:bg-sky-900/15"
         >
-          Agregar mini ajuste
-        </button>
-      </div>
-
-      {items.length === 0 ? (
-        <p className="text-xs opacity-70">No hay ajustes por servicio.</p>
-      ) : (
-        <div className="space-y-3">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className="rounded-xl border border-white/10 bg-white/5 p-3"
-            >
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <label className="ml-1 block text-xs font-medium opacity-80">
                     Nombre
@@ -300,7 +308,7 @@ const ServiceAdjustmentsEditor: React.FC<{
                     value={item.label}
                     disabled={disabled}
                     onChange={(e) => updateItem(item.id, { label: e.target.value })}
-                    className="w-full rounded-xl border border-white/10 bg-white/60 px-2.5 py-1.5 text-sm outline-none dark:bg-white/10"
+                    className="w-full rounded-xl border border-sky-300/80 bg-white/60 px-2.5 py-1.5 text-sm outline-none focus:border-sky-400/80 focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10"
                   />
                 </div>
 
@@ -316,7 +324,7 @@ const ServiceAdjustmentsEditor: React.FC<{
                         kind: e.target.value as BillingAdjustmentConfig["kind"],
                       })
                     }
-                    className="w-full rounded-xl border border-white/10 bg-white/60 px-2.5 py-1.5 text-sm outline-none dark:bg-white/10"
+                    className="w-full rounded-xl border border-sky-300/80 bg-white/60 px-2.5 py-1.5 text-sm outline-none focus:border-sky-400/80 focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10"
                   >
                     <option value="cost">Costo</option>
                     <option value="tax">Impuesto</option>
@@ -335,7 +343,7 @@ const ServiceAdjustmentsEditor: React.FC<{
                         basis: e.target.value as BillingAdjustmentConfig["basis"],
                       })
                     }
-                    className="w-full rounded-xl border border-white/10 bg-white/60 px-2.5 py-1.5 text-sm outline-none dark:bg-white/10"
+                    className="w-full rounded-xl border border-sky-300/80 bg-white/60 px-2.5 py-1.5 text-sm outline-none focus:border-sky-400/80 focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10"
                   >
                     <option value="sale">Venta</option>
                     <option value="cost">Costo</option>
@@ -357,7 +365,7 @@ const ServiceAdjustmentsEditor: React.FC<{
                         value: item.value,
                       })
                     }
-                    className="w-full rounded-xl border border-white/10 bg-white/60 px-2.5 py-1.5 text-sm outline-none dark:bg-white/10"
+                    className="w-full rounded-xl border border-sky-300/80 bg-white/60 px-2.5 py-1.5 text-sm outline-none focus:border-sky-400/80 focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10"
                   >
                     <option value="percent">Porcentaje</option>
                     <option value="fixed">Monto fijo</option>
@@ -385,20 +393,19 @@ const ServiceAdjustmentsEditor: React.FC<{
                             : Number(e.target.value.replace(",", ".")) || 0,
                       })
                     }
-                    className="w-full rounded-xl border border-white/10 bg-white/60 px-2.5 py-1.5 text-sm outline-none dark:bg-white/10"
+                    className="w-full rounded-xl border border-sky-300/80 bg-white/60 px-2.5 py-1.5 text-sm outline-none focus:border-sky-400/80 focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10"
                   />
                 </div>
 
                 <div className="flex items-end gap-2">
                   <label className="inline-flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
+                    <MiniToggle
                       checked={item.active}
                       disabled={disabled}
-                      onChange={(e) =>
-                        updateItem(item.id, { active: e.target.checked })
+                      onChange={(checked) =>
+                        updateItem(item.id, { active: checked })
                       }
-                      className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 shadow-sm shadow-sky-950/10 focus:ring-2 focus:ring-sky-300/50 dark:border-white/20 dark:bg-white/10"
+                      ariaLabel="Activo"
                     />
                     Activo
                   </label>
@@ -413,9 +420,7 @@ const ServiceAdjustmentsEditor: React.FC<{
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+      ))}
     </div>
   );
 };
@@ -799,6 +804,7 @@ export default function ServiceForm({
   const [serviceAdjustments, setServiceAdjustments] = useState<
     BillingAdjustmentConfig[]
   >([]);
+  const [serviceAdjustmentsOpen, setServiceAdjustmentsOpen] = useState(false);
   const [baseBillingData, setBaseBillingData] = useState<BillingData | null>(
     null,
   );
@@ -990,7 +996,9 @@ export default function ServiceForm({
 
   useEffect(() => {
     if (!isFormVisible) return;
-    setServiceAdjustments(extractServiceAdjustments(formData.extra_adjustments));
+    const extracted = extractServiceAdjustments(formData.extra_adjustments);
+    setServiceAdjustments(extracted);
+    setServiceAdjustmentsOpen(extracted.length > 0);
   }, [editingServiceId, formData.extra_adjustments, isFormVisible]);
 
   /* ===================================================
@@ -1146,12 +1154,6 @@ export default function ServiceForm({
   );
 
   /* ========== FORMATO & KPI CABECERA ========== */
-  const currencySymbol = useMemo(() => {
-    if (displayCurrency === "USD") return "US$";
-    if (displayCurrency === "ARS") return "$";
-    return displayCurrency;
-  }, [displayCurrency]);
-
   const formatCurrency = (value: number) => {
     if (!Number.isFinite(value)) return "";
     try {
@@ -1578,6 +1580,14 @@ export default function ServiceForm({
     useBookingSaleTotal ||
     agencyBillingMode === "manual" ||
     (canOverrideBillingMode && manualOverride);
+  const initialBillingOverrideValues = useMemo(
+    () => extractBillingOverrideValues(formData.billing_override),
+    [formData.billing_override],
+  );
+  const initialBillingMeta = useMemo(
+    () => extractBillingOverrideMeta(formData.billing_override),
+    [formData.billing_override],
+  );
 
   // Solo bloqueamos si NO hay texto de destino y además el picker dice que no es válido.
   const destinationHasText = useMemo(
@@ -1622,7 +1632,13 @@ export default function ServiceForm({
     a.taxableCardInterest === b.taxableCardInterest &&
     a.vatOnCardInterest === b.vatOnCardInterest &&
     a.transferFeeAmount === b.transferFeeAmount &&
-    a.transferFeePct === b.transferFeePct;
+    a.transferFeePct === b.transferFeePct &&
+    (a.commissionVatMode || "automatic") === (b.commissionVatMode || "automatic") &&
+    (a.grossIncomeTaxEnabled === true) === (b.grossIncomeTaxEnabled === true) &&
+    (a.grossIncomeTaxBase || "netCommission") ===
+      (b.grossIncomeTaxBase || "netCommission") &&
+    Number(a.grossIncomeTaxPct || 0) === Number(b.grossIncomeTaxPct || 0) &&
+    Number(a.grossIncomeTaxAmount || 0) === Number(b.grossIncomeTaxAmount || 0);
 
   const combinedAdjustments = useMemo<BillingAdjustmentConfig[]>(
     () => [
@@ -1652,13 +1668,56 @@ export default function ServiceForm({
     formData.cost_price,
     useBookingSaleTotal,
   ]);
+  const activeServiceAdjustmentsCount = useMemo(
+    () => serviceAdjustments.filter((item) => item.active !== false).length,
+    [serviceAdjustments],
+  );
+
+  const addServiceAdjustment = useCallback(() => {
+    setServiceAdjustmentsOpen(true);
+    setServiceAdjustments((prev) => [...prev, createDefaultServiceAdjustment()]);
+  }, []);
+
+  const iibbAmount = useMemo(() => {
+    if (!baseBillingData?.grossIncomeTaxEnabled) return 0;
+    const raw = Number(baseBillingData.grossIncomeTaxAmount || 0);
+    return Number.isFinite(raw) && raw > 0 ? raw : 0;
+  }, [baseBillingData]);
+  const iibbAdjustmentItem = useMemo<BillingAdjustmentComputed | null>(() => {
+    if (iibbAmount <= 0) return null;
+    return {
+      id: "gross-income-tax",
+      label: "Ingresos Brutos",
+      kind: "tax",
+      basis:
+        baseBillingData?.grossIncomeTaxBase === "sale" ? "sale" : "margin",
+      valueType: "percent",
+      value: Number(baseBillingData?.grossIncomeTaxPct || 0) / 100,
+      active: true,
+      source: "global",
+      amount: iibbAmount,
+    };
+  }, [
+    baseBillingData?.grossIncomeTaxBase,
+    baseBillingData?.grossIncomeTaxPct,
+    iibbAmount,
+  ]);
+  const effectiveExtraCostsAmount = adjustmentTotals.totalCosts;
+  const effectiveExtraTaxesAmount = adjustmentTotals.totalTaxes + iibbAmount;
+  const effectiveExtraAdjustments = useMemo(
+    () =>
+      iibbAdjustmentItem
+        ? [...adjustmentTotals.items, iibbAdjustmentItem]
+        : adjustmentTotals.items,
+    [adjustmentTotals.items, iibbAdjustmentItem],
+  );
 
   const netCommissionAfterAdjustments = useMemo(() => {
     if (!baseBillingData) return null;
     const base = Number(baseBillingData.totalCommissionWithoutVAT || 0);
     const fee = Number(baseBillingData.transferFeeAmount || 0);
-    return base - fee - adjustmentTotals.total;
-  }, [adjustmentTotals.total, baseBillingData]);
+    return base - fee - adjustmentTotals.total - iibbAmount;
+  }, [adjustmentTotals.total, baseBillingData, iibbAmount]);
   const [internalNotesOpen, setInternalNotesOpen] = useState(false);
 
   useEffect(() => {
@@ -1677,11 +1736,17 @@ export default function ServiceForm({
     if (!onBillingUpdate || !baseBillingData) return;
     onBillingUpdate({
       ...baseBillingData,
-      extraCostsAmount: adjustmentTotals.totalCosts,
-      extraTaxesAmount: adjustmentTotals.totalTaxes,
-      extraAdjustments: adjustmentTotals.items,
+      extraCostsAmount: effectiveExtraCostsAmount,
+      extraTaxesAmount: effectiveExtraTaxesAmount,
+      extraAdjustments: effectiveExtraAdjustments,
     });
-  }, [adjustmentTotals, baseBillingData, onBillingUpdate]);
+  }, [
+    baseBillingData,
+    effectiveExtraAdjustments,
+    effectiveExtraCostsAmount,
+    effectiveExtraTaxesAmount,
+    onBillingUpdate,
+  ]);
 
   // ⚠️ Config todavía cargando (no dejamos enviar)
   const waitingConfig =
@@ -1706,7 +1771,7 @@ export default function ServiceForm({
         transition: { duration: 0.35, ease: "easeInOut" },
       }}
       id="service-form"
-      className="mb-6 overflow-auto rounded-3xl border border-sky-900/10 bg-white/20 text-sky-950 shadow-md shadow-sky-950/10 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
+      className="mb-6 overflow-auto rounded-3xl border border-transparent bg-white/20 text-sky-950 shadow-md shadow-sky-950/10 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
     >
       {/* HEADER */}
       <div
@@ -1827,7 +1892,7 @@ export default function ServiceForm({
                     onChange={handleChange}
                     required
                     disabled={loadingTypes}
-                    className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                     aria-describedby="type-hint"
                   >
                     {loadingTypes && (
@@ -1877,7 +1942,7 @@ export default function ServiceForm({
                     value={formData.description || ""}
                     onChange={handlePresetSensitiveChange}
                     placeholder="Detalle del servicio..."
-                    className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                   />
                 </Field>
 
@@ -1885,34 +1950,29 @@ export default function ServiceForm({
                 <div className="col-span-full -mb-1 flex flex-wrap items-center gap-4 px-1">
                   {selectedTypeAllowsNoDestination && (
                     <label className="inline-flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
+                      <MiniToggle
                         checked={noDestination}
-                        onChange={(e) =>
-                          handleNoDestinationToggle(e.target.checked)
-                        }
-                        className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 shadow-sm shadow-sky-950/10 focus:ring-2 focus:ring-sky-300/50 dark:border-white/20 dark:bg-white/10"
+                        onChange={handleNoDestinationToggle}
+                        ariaLabel="Sin destino"
                       />
                       Sin destino
                     </label>
                   )}
                   <label className="inline-flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
+                    <MiniToggle
                       checked={countryMode}
-                      onChange={(e) => setCountryMode(e.target.checked)}
+                      onChange={setCountryMode}
                       disabled={noDestination}
-                      className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 shadow-sm shadow-sky-950/10 focus:ring-2 focus:ring-sky-300/50 dark:border-white/20 dark:bg-white/10"
+                      ariaLabel="Solo país"
                     />
                     Solo país
                   </label>
                   <label className="inline-flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
+                    <MiniToggle
                       checked={multiMode}
-                      onChange={(e) => setMultiMode(e.target.checked)}
+                      onChange={setMultiMode}
                       disabled={noDestination}
-                      className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 shadow-sm shadow-sky-950/10 focus:ring-2 focus:ring-sky-300/50 dark:border-white/20 dark:bg-white/10"
+                      ariaLabel="Múltiples destinos"
                     />
                     Múltiples destinos
                   </label>
@@ -1931,6 +1991,7 @@ export default function ServiceForm({
                       value={destinationPickerValue}
                       onChange={handleDestinationChange}
                       onValidChange={setDestValid}
+                      inputContainerClassName="border-sky-300/80 focus-within:border-sky-400/70 dark:border-sky-500/40"
                       placeholder={
                         countryMode
                           ? "Ej.: Italia, Peru..."
@@ -1964,7 +2025,7 @@ export default function ServiceForm({
                     value={formData.reference || ""}
                     onChange={handleChange}
                     placeholder="Ej: ABC12345"
-                    className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                   />
                 </Field>
               </Section>
@@ -1990,7 +2051,7 @@ export default function ServiceForm({
                     onBlur={handleDateBlur}
                     inputMode="numeric"
                     placeholder="dd/mm/aaaa"
-                    className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                   />
                 </Field>
 
@@ -2013,7 +2074,7 @@ export default function ServiceForm({
                     onBlur={handleDateBlur}
                     inputMode="numeric"
                     placeholder="dd/mm/aaaa"
-                    className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                   />
                 </Field>
 
@@ -2024,7 +2085,7 @@ export default function ServiceForm({
                     value={formData.id_operator || 0}
                     onChange={handleChange}
                     required
-                    className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                   >
                     <option value={0} disabled>
                       Seleccionar operador
@@ -2045,7 +2106,7 @@ export default function ServiceForm({
                     onChange={handlePresetSensitiveChange}
                     required
                     disabled={currencyOptions.length === 0}
-                    className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
                   >
                     <option value="" disabled>
                       {loadingCurrencies
@@ -2065,8 +2126,336 @@ export default function ServiceForm({
                 </Field>
               </Section>
 
+              {/* PRECIOS */}
+              <Section
+                title="Precios"
+                desc="Ingresá los montos en la moneda seleccionada."
+              >
+                {useBookingSaleTotal && (
+                  <div className="col-span-full">
+                    <div className="rounded-xl border border-amber-200/40 bg-amber-100/30 p-3 text-xs text-amber-900/80 dark:border-amber-200/20 dark:bg-amber-100/10 dark:text-amber-100">
+                      La venta se define a nivel reserva. Los servicios sólo
+                      requieren costos e impuestos.
+                    </div>
+                  </div>
+                )}
+                {canOverrideBillingMode &&
+                  !loadingAgencyCfg &&
+                  agencyBillingMode === "auto" &&
+                  !useBookingSaleTotal && (
+                    <div className="col-span-full">
+                      <div className="flex flex-wrap items-center justify-end gap-3 rounded-xl border border-white/10 bg-white/10 p-3 text-xs">
+                        <label className="inline-flex items-center gap-2 text-sm">
+                          <MiniToggle
+                            checked={manualOverride}
+                            onChange={setManualOverride}
+                            ariaLabel="Manual"
+                          />
+                          Manual
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                <Field
+                  id="cost_price"
+                  label="Costo"
+                  required
+                >
+                  <div className="relative">
+                    <input
+                      id="cost_price"
+                      type="text"
+                      name="cost_price"
+                      inputMode="decimal"
+                      value={moneyInputs.cost_price}
+                      onFocus={() => setFocusedMoneyField("cost_price")}
+                      onChange={handleMoneyInputChange("cost_price", true)}
+                      onBlur={handleMoneyInputBlur("cost_price", true)}
+                      placeholder="0,00"
+                      required
+                      className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    />
+                  </div>
+                  <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                    {formatCurrency(formData.cost_price)}
+                  </p>
+                </Field>
+
+                <Field
+                  id="sale_price"
+                  label="Venta"
+                  required={!useBookingSaleTotal}
+                  hint={
+                    useBookingSaleTotal
+                      ? "Se toma de la venta total de la reserva."
+                      : undefined
+                  }
+                >
+                  <div className="relative">
+                    <input
+                      id="sale_price"
+                      type="text"
+                      name="sale_price"
+                      inputMode="decimal"
+                      value={moneyInputs.sale_price}
+                      onFocus={() => setFocusedMoneyField("sale_price")}
+                      onChange={handleMoneyInputChange("sale_price", true)}
+                      onBlur={handleMoneyInputBlur("sale_price", true)}
+                      placeholder="0,00"
+                      required={!useBookingSaleTotal}
+                      disabled={useBookingSaleTotal}
+                      className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                    />
+                  </div>
+                  <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                    {formatCurrency(formData.sale_price)}
+                  </p>
+                </Field>
+
+                {/* ⛔ Ocultos en modo manual */}
+                {!manualMode && (
+                  <>
+                    <Field id="tax_21" label="IVA 21%">
+                      <input
+                        id="tax_21"
+                        type="text"
+                        name="tax_21"
+                        inputMode="decimal"
+                        value={moneyInputs.tax_21}
+                        onFocus={() => setFocusedMoneyField("tax_21")}
+                        onChange={handleMoneyInputChange("tax_21", false)}
+                        onBlur={handleMoneyInputBlur("tax_21", false)}
+                        placeholder="0,00"
+                        className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                      />
+                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                        {formatCurrency(formData.tax_21 || 0)}
+                      </p>
+                    </Field>
+
+                    <Field id="tax_105" label="IVA 10,5%">
+                      <input
+                        id="tax_105"
+                        type="text"
+                        name="tax_105"
+                        inputMode="decimal"
+                        value={moneyInputs.tax_105}
+                        onFocus={() => setFocusedMoneyField("tax_105")}
+                        onChange={handleMoneyInputChange("tax_105", false)}
+                        onBlur={handleMoneyInputBlur("tax_105", false)}
+                        placeholder="0,00"
+                        className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                      />
+                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                        {formatCurrency(formData.tax_105 || 0)}
+                      </p>
+                    </Field>
+
+                    <Field id="exempt" label="Exento">
+                      <input
+                        id="exempt"
+                        type="text"
+                        name="exempt"
+                        inputMode="decimal"
+                        value={moneyInputs.exempt}
+                        onFocus={() => setFocusedMoneyField("exempt")}
+                        onChange={handleMoneyInputChange("exempt", false)}
+                        onBlur={handleMoneyInputBlur("exempt", false)}
+                        placeholder="0,00"
+                        className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                      />
+                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                        {formatCurrency(formData.exempt || 0)}
+                      </p>
+                    </Field>
+                  </>
+                )}
+
+                {/* Siempre visible: renombrado según modo */}
+                <Field
+                  id="other_taxes"
+                  label={manualMode ? "Impuestos" : "Otros Impuestos"}
+                >
+                  <input
+                    id="other_taxes"
+                    type="text"
+                    name="other_taxes"
+                    inputMode="decimal"
+                    value={moneyInputs.other_taxes}
+                    onFocus={() => setFocusedMoneyField("other_taxes")}
+                    onChange={handleMoneyInputChange("other_taxes", false)}
+                    onBlur={handleMoneyInputBlur("other_taxes", false)}
+                    placeholder="0,00"
+                    className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                  />
+                  <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                    {formatCurrency(formData.other_taxes || 0)}
+                  </p>
+                </Field>
+              </Section>
+
+              {/* TARJETA */}
+              <Section
+                title="Tarjeta"
+                desc={
+                  manualMode
+                    ? "En modo manual el interés/IVA de tarjeta no participa del desglose."
+                    : "Si la operación tiene interés por financiación, podés discriminarlo."
+                }
+              >
+                {/* ⛔ Ocultos en modo manual */}
+                {!manualMode && (
+                  <>
+                    <Field id="card_interest" label="Interés">
+                      <input
+                        id="card_interest"
+                        type="text"
+                        name="card_interest"
+                        inputMode="decimal"
+                        value={moneyInputs.card_interest}
+                        onFocus={() => setFocusedMoneyField("card_interest")}
+                        onChange={handleMoneyInputChange("card_interest", false)}
+                        onBlur={handleMoneyInputBlur("card_interest", false)}
+                        placeholder="0,00"
+                        className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                      />
+                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                        {formatCurrency(formData.card_interest || 0)}
+                      </p>
+                    </Field>
+
+                    <Field id="card_interest_21" label="IVA 21% (Interés)">
+                      <input
+                        id="card_interest_21"
+                        type="text"
+                        name="card_interest_21"
+                        inputMode="decimal"
+                        value={moneyInputs.card_interest_21}
+                        onFocus={() => setFocusedMoneyField("card_interest_21")}
+                        onChange={handleMoneyInputChange("card_interest_21", false)}
+                        onBlur={handleMoneyInputBlur("card_interest_21", false)}
+                        placeholder="0,00"
+                        className="w-full rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
+                      />
+                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
+                        {formatCurrency(formData.card_interest_21 || 0)}
+                      </p>
+                    </Field>
+                  </>
+                )}
+
+              </Section>
+
+              {/* DESGLOSE */}
+              {hasPrices &&
+                (manualMode ? (
+                  <>
+                    <div className="mt-6 rounded-2xl border border-sky-200/60 bg-sky-100/25 p-3 dark:border-sky-600/30 dark:bg-sky-900/10">
+                      <button
+                        type="button"
+                        onClick={addServiceAdjustment}
+                        disabled={waitingConfig}
+                        className="inline-flex items-center gap-1 rounded-full border border-sky-300/70 bg-sky-200/40 px-3 py-1 text-xs font-semibold text-sky-900 transition hover:bg-sky-200/55 disabled:opacity-50 dark:border-sky-500/40 dark:bg-sky-700/30 dark:text-sky-100"
+                      >
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={1.8}
+                          className="size-3.5"
+                          aria-hidden="true"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M5 8l5 5 5-5"
+                          />
+                        </svg>
+                        Agregar mini ajuste
+                        {activeServiceAdjustmentsCount > 0
+                          ? ` (${activeServiceAdjustmentsCount})`
+                          : ""}
+                      </button>
+                      {serviceAdjustmentsOpen && (
+                        <div className="mt-3">
+                          <ServiceAdjustmentsEditor
+                            items={serviceAdjustments}
+                            onChange={setServiceAdjustments}
+                            disabled={waitingConfig}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <BillingBreakdownManual
+                      importeVenta={formData.sale_price}
+                      costo={formData.cost_price}
+                      impuestos={formData.other_taxes || 0}
+                      moneda={displayCurrency}
+                      onBillingUpdate={handleBaseBillingUpdate}
+                      transferFeePct={pctToShow}
+                      showNetCommissionTotal={!useBookingSaleTotal}
+                      initialGrossIncomeTaxEnabled={
+                        initialBillingMeta?.grossIncomeTaxEnabled
+                      }
+                      initialGrossIncomeTaxBase={
+                        initialBillingMeta?.grossIncomeTaxBase
+                      }
+                      initialGrossIncomeTaxPct={
+                        initialBillingMeta?.grossIncomeTaxPct
+                      }
+                    />
+                  </>
+                ) : (
+                  <BillingBreakdown
+                    importeVenta={formData.sale_price}
+                    costo={formData.cost_price}
+                    montoIva21={formData.tax_21 || 0}
+                    montoIva10_5={formData.tax_105 || 0}
+                    montoExento={formData.exempt || 0}
+                    otrosImpuestos={formData.other_taxes || 0}
+                    cardInterest={formData.card_interest || 0}
+                    cardInterestIva={formData.card_interest_21 || 0}
+                    moneda={displayCurrency}
+                    onBillingUpdate={handleBaseBillingUpdate}
+                    transferFeePct={pctToShow}
+                    allowBreakdownOverrideEdit={canOverrideBillingMode}
+                    initialBreakdownOverride={initialBillingOverrideValues}
+                    showNetCommissionTotal={!useBookingSaleTotal}
+                    initialCommissionVatMode={initialBillingMeta?.commissionVatMode}
+                    initialGrossIncomeTaxEnabled={
+                      initialBillingMeta?.grossIncomeTaxEnabled
+                    }
+                    initialGrossIncomeTaxBase={
+                      initialBillingMeta?.grossIncomeTaxBase
+                    }
+                    initialGrossIncomeTaxPct={
+                      initialBillingMeta?.grossIncomeTaxPct
+                    }
+                    adjustmentsOpen={serviceAdjustmentsOpen}
+                    adjustmentsActiveCount={activeServiceAdjustmentsCount}
+                    onAddMiniAdjustment={addServiceAdjustment}
+                    adjustmentsPanel={
+                      serviceAdjustmentsOpen ? (
+                        <ServiceAdjustmentsEditor
+                          items={serviceAdjustments}
+                          onChange={setServiceAdjustments}
+                          disabled={waitingConfig}
+                        />
+                      ) : null
+                    }
+                  />
+                ))}
+
+              <AdjustmentsPanel
+                items={effectiveExtraAdjustments}
+                totalCosts={effectiveExtraCostsAmount}
+                totalTaxes={effectiveExtraTaxesAmount}
+                netCommission={netCommissionAfterAdjustments}
+                format={formatCurrency}
+              />
+
               {/* NOTAS INTERNAS */}
-              <section className="rounded-2xl border border-sky-900/10 bg-white/35 p-4 shadow-sm shadow-sky-950/5 dark:border-white/10 dark:bg-white/[0.04]">
+              <section className="rounded-2xl border border-sky-300/35 bg-white/35 p-4 shadow-sm shadow-sky-950/5 dark:border-sky-500/25 dark:bg-white/[0.04]">
                 <button
                   type="button"
                   onClick={() => setInternalNotesOpen((prev) => !prev)}
@@ -2082,7 +2471,7 @@ export default function ServiceForm({
                       Solo para uso interno del equipo.
                     </p>
                   </div>
-                  <span className="grid size-8 place-items-center rounded-full border border-sky-900/10 bg-white/70 dark:border-white/10 dark:bg-white/10">
+                  <span className="grid size-8 place-items-center rounded-full border border-sky-300/35 bg-white/70 dark:border-sky-500/25 dark:bg-white/10">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
                       className={`size-4 transition-transform ${internalNotesOpen ? "rotate-180" : ""}`}
@@ -2125,298 +2514,6 @@ export default function ServiceForm({
                   )}
                 </AnimatePresence>
               </section>
-
-              {/* PRECIOS */}
-              <Section
-                title="Precios"
-                desc="Ingresá los montos en la moneda seleccionada."
-              >
-                {useBookingSaleTotal && (
-                  <div className="col-span-full">
-                    <div className="rounded-xl border border-amber-200/40 bg-amber-100/30 p-3 text-xs text-amber-900/80 dark:border-amber-200/20 dark:bg-amber-100/10 dark:text-amber-100">
-                      La venta se define a nivel reserva. Los servicios sólo
-                      requieren costos e impuestos.
-                    </div>
-                  </div>
-                )}
-                {canOverrideBillingMode &&
-                  !loadingAgencyCfg &&
-                  agencyBillingMode === "auto" &&
-                  !useBookingSaleTotal && (
-                    <div className="col-span-full">
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/10 p-3 text-xs">
-                        <div>
-                          <p className="text-sm font-medium">
-                            Desglose de facturación
-                          </p>
-                          <p className="text-[11px] text-sky-950/70 dark:text-white/70">
-                            La agencia está en automático. Podés forzar manual
-                            para este servicio.
-                          </p>
-                        </div>
-                        <label className="inline-flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={manualOverride}
-                            onChange={(e) =>
-                              setManualOverride(e.target.checked)
-                            }
-                            className="size-4 rounded border-sky-900/20 bg-white/80 text-sky-600 shadow-sm shadow-sky-950/10 focus:ring-2 focus:ring-sky-300/50 dark:border-white/20 dark:bg-white/10"
-                          />
-                          Manual
-                        </label>
-                      </div>
-                    </div>
-                  )}
-                <Field
-                  id="cost_price"
-                  label="Costo"
-                  required
-                  hint={`Se mostrará como ${currencySymbol} en los totales.`}
-                >
-                  <div className="relative">
-                    <input
-                      id="cost_price"
-                      type="text"
-                      name="cost_price"
-                      inputMode="decimal"
-                      value={moneyInputs.cost_price}
-                      onFocus={() => setFocusedMoneyField("cost_price")}
-                      onChange={handleMoneyInputChange("cost_price", true)}
-                      onBlur={handleMoneyInputBlur("cost_price", true)}
-                      placeholder="0,00"
-                      required
-                      className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                    />
-                  </div>
-                  <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                    {formatCurrency(formData.cost_price)}
-                  </p>
-                </Field>
-
-                <Field
-                  id="sale_price"
-                  label="Venta"
-                  required={!useBookingSaleTotal}
-                  hint={
-                    useBookingSaleTotal
-                      ? "Se toma de la venta total de la reserva."
-                      : undefined
-                  }
-                >
-                  <div className="relative">
-                    <input
-                      id="sale_price"
-                      type="text"
-                      name="sale_price"
-                      inputMode="decimal"
-                      value={moneyInputs.sale_price}
-                      onFocus={() => setFocusedMoneyField("sale_price")}
-                      onChange={handleMoneyInputChange("sale_price", true)}
-                      onBlur={handleMoneyInputBlur("sale_price", true)}
-                      placeholder="0,00"
-                      required={!useBookingSaleTotal}
-                      disabled={useBookingSaleTotal}
-                      className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                    />
-                  </div>
-                  <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                    {formatCurrency(formData.sale_price)}
-                  </p>
-                </Field>
-
-                {/* ⛔ Ocultos en modo manual */}
-                {!manualMode && (
-                  <>
-                    <Field id="tax_21" label="IVA 21%">
-                      <input
-                        id="tax_21"
-                        type="text"
-                        name="tax_21"
-                        inputMode="decimal"
-                        value={moneyInputs.tax_21}
-                        onFocus={() => setFocusedMoneyField("tax_21")}
-                        onChange={handleMoneyInputChange("tax_21", false)}
-                        onBlur={handleMoneyInputBlur("tax_21", false)}
-                        placeholder="0,00"
-                        className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                      />
-                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                        {formatCurrency(formData.tax_21 || 0)}
-                      </p>
-                    </Field>
-
-                    <Field id="tax_105" label="IVA 10,5%">
-                      <input
-                        id="tax_105"
-                        type="text"
-                        name="tax_105"
-                        inputMode="decimal"
-                        value={moneyInputs.tax_105}
-                        onFocus={() => setFocusedMoneyField("tax_105")}
-                        onChange={handleMoneyInputChange("tax_105", false)}
-                        onBlur={handleMoneyInputBlur("tax_105", false)}
-                        placeholder="0,00"
-                        className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                      />
-                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                        {formatCurrency(formData.tax_105 || 0)}
-                      </p>
-                    </Field>
-
-                    <Field id="exempt" label="Exento">
-                      <input
-                        id="exempt"
-                        type="text"
-                        name="exempt"
-                        inputMode="decimal"
-                        value={moneyInputs.exempt}
-                        onFocus={() => setFocusedMoneyField("exempt")}
-                        onChange={handleMoneyInputChange("exempt", false)}
-                        onBlur={handleMoneyInputBlur("exempt", false)}
-                        placeholder="0,00"
-                        className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                      />
-                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                        {formatCurrency(formData.exempt || 0)}
-                      </p>
-                    </Field>
-                  </>
-                )}
-
-                {/* Siempre visible: renombrado según modo */}
-                <Field
-                  id="other_taxes"
-                  label={manualMode ? "Impuestos" : "Otros Impuestos"}
-                >
-                  <input
-                    id="other_taxes"
-                    type="text"
-                    name="other_taxes"
-                    inputMode="decimal"
-                    value={moneyInputs.other_taxes}
-                    onFocus={() => setFocusedMoneyField("other_taxes")}
-                    onChange={handleMoneyInputChange("other_taxes", false)}
-                    onBlur={handleMoneyInputBlur("other_taxes", false)}
-                    placeholder="0,00"
-                    className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                  />
-                  <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                    {formatCurrency(formData.other_taxes || 0)}
-                  </p>
-                </Field>
-              </Section>
-
-              {/* TARJETA */}
-              <Section
-                title="Tarjeta"
-                desc={
-                  manualMode
-                    ? "En modo manual el interés/IVA de tarjeta no participa del desglose."
-                    : "Si la operación tiene interés por financiación, podés discriminarlo."
-                }
-              >
-                {/* ⛔ Ocultos en modo manual */}
-                {!manualMode && (
-                  <>
-                    <Field id="card_interest" label="Interés">
-                      <input
-                        id="card_interest"
-                        type="text"
-                        name="card_interest"
-                        inputMode="decimal"
-                        value={moneyInputs.card_interest}
-                        onFocus={() => setFocusedMoneyField("card_interest")}
-                        onChange={handleMoneyInputChange("card_interest", false)}
-                        onBlur={handleMoneyInputBlur("card_interest", false)}
-                        placeholder="0,00"
-                        className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                      />
-                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                        {formatCurrency(formData.card_interest || 0)}
-                      </p>
-                    </Field>
-
-                    <Field id="card_interest_21" label="IVA 21% (Interés)">
-                      <input
-                        id="card_interest_21"
-                        type="text"
-                        name="card_interest_21"
-                        inputMode="decimal"
-                        value={moneyInputs.card_interest_21}
-                        onFocus={() => setFocusedMoneyField("card_interest_21")}
-                        onChange={handleMoneyInputChange("card_interest_21", false)}
-                        onBlur={handleMoneyInputBlur("card_interest_21", false)}
-                        placeholder="0,00"
-                        className="w-full rounded-2xl border border-sky-900/10 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                      />
-                      <p className="ml-1 text-xs text-sky-950/70 dark:text-white/70">
-                        {formatCurrency(formData.card_interest_21 || 0)}
-                      </p>
-                    </Field>
-                  </>
-                )}
-
-                <div className="col-span-full">
-                  <div className="rounded-xl border border-white/10 bg-white/10 p-3 text-xs">
-                    <span className="font-medium">Costos bancarios</span>{" "}
-                    aplicado en cálculos:{" "}
-                    <span className="rounded-full bg-white/30 px-2 py-0.5 font-medium">
-                      {(pctToShow * 100).toFixed(2)}%
-                    </span>
-                    {waitingConfig && (
-                      <span className="ml-2 text-[11px] text-amber-700 dark:text-amber-300">
-                        Cargando configuración…
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Section>
-
-              <ServiceAdjustmentsEditor
-                items={serviceAdjustments}
-                onChange={setServiceAdjustments}
-                disabled={waitingConfig}
-              />
-
-              {/* DESGLOSE */}
-              {hasPrices &&
-                (manualMode ? (
-                  <BillingBreakdownManual
-                    importeVenta={formData.sale_price}
-                    costo={formData.cost_price}
-                    impuestos={formData.other_taxes || 0}
-                    moneda={displayCurrency}
-                    onBillingUpdate={handleBaseBillingUpdate}
-                    transferFeePct={pctToShow}
-                    showNetCommissionTotal={!useBookingSaleTotal}
-                  />
-                ) : (
-                  <BillingBreakdown
-                    importeVenta={formData.sale_price}
-                    costo={formData.cost_price}
-                    montoIva21={formData.tax_21 || 0}
-                    montoIva10_5={formData.tax_105 || 0}
-                    montoExento={formData.exempt || 0}
-                    otrosImpuestos={formData.other_taxes || 0}
-                    cardInterest={formData.card_interest || 0}
-                    cardInterestIva={formData.card_interest_21 || 0}
-                    moneda={displayCurrency}
-                    onBillingUpdate={handleBaseBillingUpdate}
-                    transferFeePct={pctToShow}
-                    allowBreakdownOverrideEdit={canOverrideBillingMode}
-                    initialBreakdownOverride={formData.billing_override}
-                    showNetCommissionTotal={!useBookingSaleTotal}
-                  />
-                ))}
-
-              <AdjustmentsPanel
-                items={adjustmentTotals.items}
-                totalCosts={adjustmentTotals.totalCosts}
-                totalTaxes={adjustmentTotals.totalTaxes}
-                netCommission={netCommissionAfterAdjustments}
-                format={formatCurrency}
-              />
 
               {/* ACTION BAR */}
               <div className="sticky bottom-2 z-10 flex justify-end">

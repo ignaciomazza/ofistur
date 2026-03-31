@@ -9,6 +9,7 @@ import "react-toastify/dist/ReactToastify.css";
 import { authFetch } from "@/utils/authFetch";
 import { useAuth } from "@/context/AuthContext";
 import { computeBillingAdjustments } from "@/utils/billingAdjustments";
+import { getGrossIncomeTaxAmountFromBillingOverride } from "@/utils/billingOverride";
 import type { BillingAdjustmentConfig } from "@/types";
 import {
   formatDateOnlyInBuenosAires,
@@ -56,6 +57,7 @@ type ServiceForBalance = {
   totalCommissionWithoutVAT?: number | null;
   vatOnCommission21?: number | null;
   vatOnCommission10_5?: number | null;
+  billing_override?: unknown;
 };
 
 type ReceiptForBalance = {
@@ -690,11 +692,15 @@ export default function BalancesPage() {
     (b: Booking, saleTotals: Record<CurrencyCode, number>) => {
       const costTotals: Record<CurrencyCode, number> = { ARS: 0, USD: 0 };
       const taxTotals: Record<CurrencyCode, number> = { ARS: 0, USD: 0 };
+      const grossIncomeTaxTotals: Record<CurrencyCode, number> = { ARS: 0, USD: 0 };
 
       b.services.forEach((s) => {
         const cur = normCurrency(s.currency);
         costTotals[cur] = (costTotals[cur] || 0) + toNum(s.cost_price);
         taxTotals[cur] = (taxTotals[cur] || 0) + toNum(s.other_taxes);
+        grossIncomeTaxTotals[cur] =
+          (grossIncomeTaxTotals[cur] || 0) +
+          getGrossIncomeTaxAmountFromBillingOverride(s.billing_override);
       });
 
       const out: Record<CurrencyCode, number> = { ARS: 0, USD: 0 };
@@ -711,7 +717,8 @@ export default function BalancesPage() {
           sale,
           cost,
         ).total;
-        out[cur] = Math.max(commissionBeforeFee - fee - adjustments, 0);
+        const iibb = grossIncomeTaxTotals[cur] || 0;
+        out[cur] = Math.max(commissionBeforeFee - fee - adjustments - iibb, 0);
       }
 
       return out;

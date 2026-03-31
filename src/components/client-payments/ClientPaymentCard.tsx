@@ -23,11 +23,6 @@ type ChipProps = {
   tone?: "neutral" | "success" | "warn" | "danger";
 };
 
-type StatProps = {
-  label: string;
-  value: string;
-};
-
 const Chip = ({ children, tone = "neutral" }: ChipProps) => {
   const palette =
     tone === "success"
@@ -45,13 +40,6 @@ const Chip = ({ children, tone = "neutral" }: ChipProps) => {
     </span>
   );
 };
-
-const Stat = ({ label, value }: StatProps) => (
-  <div className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2">
-    <p className="text-xs opacity-70">{label}</p>
-    <p className="text-base font-medium tabular-nums">{value}</p>
-  </div>
-);
 
 const todayKey = () => todayDateKeyInBuenosAires();
 
@@ -98,11 +86,6 @@ export default function ClientPaymentCard({
     [payment?.due_date],
   );
 
-  const createdKey = useMemo(
-    () => dateKeyFrom(payment?.created_at),
-    [payment?.created_at],
-  );
-
   const isOverdue = useMemo(() => {
     if (!dueKey) return false;
     if (normalizeStatus(payment?.status) !== "PENDIENTE") return false;
@@ -116,10 +99,6 @@ export default function ClientPaymentCard({
   }, [dueKey, payment?.status]);
 
   const dueLabel = useMemo(() => formatDateKey(dueKey), [dueKey]);
-  const createdLabel = useMemo(
-    () => formatDateKey(createdKey),
-    [createdKey],
-  );
 
   const clientName = useMemo(() => {
     const fromPayment = payment?.client;
@@ -149,11 +128,6 @@ export default function ClientPaymentCard({
     booking.titular,
     booking.clients,
   ]);
-
-  const currencyCode = useMemo(
-    () => (payment?.currency || "ARS").toUpperCase(),
-    [payment?.currency],
-  );
 
   const persistedStatus = useMemo(
     () => normalizeStatus(payment?.status),
@@ -260,15 +234,10 @@ export default function ClientPaymentCard({
         <div className="flex flex-col items-end gap-2 text-xs">
           <Chip tone={statusBadge.tone}>{statusBadge.label}</Chip>
           <time className="text-sky-950/60 dark:text-white/60">
-            Creado {createdLabel}
+            Vence {dueLabel}
           </time>
         </div>
       </header>
-
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        <Stat label="Vence" value={dueLabel} />
-        <Stat label="Moneda" value={currencyCode} />
-      </div>
 
       {(payment.service || payment.receipt || payment.paid_at) && (
         <div className="space-y-1 rounded-2xl border border-white/10 bg-white/10 p-3 text-xs">

@@ -52,6 +52,7 @@ interface ServiceCardProps {
   status: string;
   agencyTransferFeePct: number;
   useBookingSaleTotal?: boolean;
+  operatorPaymentRefs?: string[];
 }
 
 /* ---------- UI helpers ---------- */
@@ -102,6 +103,7 @@ export default function ServiceCard({
   status,
   agencyTransferFeePct,
   useBookingSaleTotal,
+  operatorPaymentRefs = [],
 }: ServiceCardProps) {
   const isExpanded = expandedServiceId === service.id_service;
   const serviceNumber = service.agency_service_id ?? service.id_service;
@@ -312,6 +314,26 @@ export default function ServiceCard({
           </p>
         </div>
       </div>
+
+      {operatorPaymentRefs.length > 0 && (
+        <section className="rounded-2xl border border-white/10 bg-white/10 p-3 shadow-sm shadow-sky-950/10">
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-70">
+            Pagos operador
+          </p>
+          <div className="mt-1.5 space-y-1">
+            {operatorPaymentRefs.slice(0, 3).map((line) => (
+              <p key={line} className="text-xs leading-snug opacity-90">
+                {line}
+              </p>
+            ))}
+            {operatorPaymentRefs.length > 3 && (
+              <p className="text-[11px] opacity-70">
+                +{operatorPaymentRefs.length - 3} más
+              </p>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3">

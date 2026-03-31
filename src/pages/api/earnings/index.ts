@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
 import { jwtVerify, type JWTPayload } from "jose";
 import { computeBillingAdjustments } from "@/utils/billingAdjustments";
+import { getGrossIncomeTaxAmountFromBillingOverride } from "@/utils/billingOverride";
 import type { BillingAdjustmentConfig } from "@/types";
 import type { CommissionRule } from "@/types/commission";
 import { getFinanceSectionGrants } from "@/lib/accessControl";
@@ -341,6 +342,7 @@ export default async function handler(
         extra_costs_amount: true,
         extra_taxes_amount: true,
         extra_adjustments: true,
+        billing_override: true,
         destination: true,
         ServiceDestination: {
           select: {
@@ -379,6 +381,7 @@ export default async function handler(
     const fallbackSaleTotalsByBooking = new Map<number, Record<string, number>>();
     const costTotalsByBooking = new Map<number, Record<string, number>>();
     const taxTotalsByBooking = new Map<number, Record<string, number>>();
+    const grossIncomeTaxByBooking = new Map<number, Record<string, number>>();
     const serviceAdjustmentsByBookingCurrency = new Map<
       number,
       Record<string, BillingAdjustmentConfig[]>
@@ -408,6 +411,12 @@ export default async function handler(
         bid,
         cur,
         Number(svc.other_taxes) || 0,
+      );
+      addByBooking(
+        grossIncomeTaxByBooking,
+        bid,
+        cur,
+        getGrossIncomeTaxAmountFromBillingOverride(svc.billing_override),
       );
 
       const items = Array.isArray(svc.extra_adjustments)
@@ -1130,8 +1139,10 @@ export default async function handler(
           sale,
           cost,
         ).total;
+        const iibb =
+          grossIncomeTaxByBooking.get(bid)?.[cur] || 0;
         baseByCur[cur] = Math.max(
-          commissionBeforeFee - fee - adjustments,
+          commissionBeforeFee - fee - adjustments - iibb,
           0,
         );
       }

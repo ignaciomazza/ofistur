@@ -1,6 +1,6 @@
 // src/components/services/ServiceList.tsx
 "use client";
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useEffect, useState } from "react";
 import ServiceCard from "./ServiceCard";
 import SummaryCard from "./SummaryCard";
 import {
@@ -10,6 +10,8 @@ import {
   OperatorDue,
 } from "@/types";
 import { formatDateOnlyInBuenosAires } from "@/lib/buenosAiresDate";
+import { useAuth } from "@/context/AuthContext";
+import { authFetch } from "@/utils/authFetch";
 
 interface Totals {
   sale_price: number;
@@ -80,6 +82,17 @@ const KEYS_TO_SUM: readonly NumericKeys[] = [
   "extra_taxes_amount",
 ];
 
+const toPositiveInt = (value: unknown): number | null => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+};
+
+const truncate = (value: string, max: number): string => {
+  const text = String(value || "").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+};
+
 interface ServiceListProps {
   services: Service[];
   /** NUEVO: recibos para pasar a SummaryCard y calcular deuda */
@@ -119,6 +132,11 @@ export default function ServiceList({
   bookingSaleTotalsForm,
   onSaveCommission,
 }: ServiceListProps) {
+  const { token } = useAuth();
+  const [operatorPaymentsByService, setOperatorPaymentsByService] = useState<
+    Record<number, string[]>
+  >({});
+
   const formatDate = useCallback(
     (dateString?: string) =>
       dateString ? formatDateOnlyInBuenosAires(dateString) : "N/A",
@@ -198,6 +216,112 @@ export default function ServiceList({
     }, {});
   }, [services, agencyTransferFeePct]);
 
+  const bookingId = useMemo(() => {
+    for (const service of services) {
+      const id = toPositiveInt(
+        (service as Service & { booking_id?: unknown }).booking_id ??
+          (service as Service & { booking?: { id_booking?: unknown } }).booking
+            ?.id_booking,
+      );
+      if (id != null) return id;
+    }
+    return null;
+  }, [services]);
+
+  useEffect(() => {
+    if (!token || !bookingId) {
+      setOperatorPaymentsByService({});
+      return;
+    }
+
+    const ac = new AbortController();
+    let active = true;
+
+    void (async () => {
+      try {
+        const serviceMap = new Map<number, string[]>();
+        let cursor: number | null = null;
+
+        for (let i = 0; i < 20; i += 1) {
+          const qs = new URLSearchParams();
+          qs.set("take", "100");
+          qs.set("operatorOnly", "1");
+          qs.set("bookingId", String(bookingId));
+          qs.set("includeAllocations", "1");
+          if (cursor) qs.set("cursor", String(cursor));
+
+          const response = await authFetch(
+            `/api/investments?${qs.toString()}`,
+            { cache: "no-store", signal: ac.signal },
+            token,
+          );
+          if (!response.ok) throw new Error("fetch failed");
+
+          const json = (await response.json().catch(() => null)) as
+            | { items?: unknown; nextCursor?: unknown }
+            | null;
+          const items = Array.isArray(json?.items) ? json.items : [];
+
+          for (const item of items) {
+            if (!item || typeof item !== "object") continue;
+            const rec = item as Record<string, unknown>;
+            const investmentId = toPositiveInt(
+              rec.agency_investment_id ?? rec.id_investment,
+            );
+            if (investmentId == null) continue;
+
+            const rawDescription = String(rec.description || "").trim();
+            const line = `N° ${investmentId} • ${truncate(
+              rawDescription || "Pago a operador",
+              46,
+            )}`;
+
+            const rawServiceIds: unknown[] = [];
+            if (Array.isArray(rec.serviceIds)) rawServiceIds.push(...rec.serviceIds);
+            if (Array.isArray(rec.allocations)) {
+              for (const alloc of rec.allocations) {
+                if (alloc && typeof alloc === "object") {
+                  rawServiceIds.push(
+                    (alloc as { service_id?: unknown }).service_id,
+                  );
+                }
+              }
+            }
+
+            const serviceIds = Array.from(
+              new Set(
+                rawServiceIds
+                  .map(toPositiveInt)
+                  .filter((id): id is number => id != null),
+              ),
+            );
+
+            for (const serviceId of serviceIds) {
+              const existing = serviceMap.get(serviceId) ?? [];
+              if (!existing.includes(line)) existing.push(line);
+              serviceMap.set(serviceId, existing);
+            }
+          }
+
+          const next = toPositiveInt(json?.nextCursor);
+          if (!next || items.length === 0) break;
+          cursor = next;
+        }
+
+        if (!active) return;
+        setOperatorPaymentsByService(Object.fromEntries(serviceMap.entries()));
+      } catch (error) {
+        if ((error as { name?: string })?.name === "AbortError") return;
+        if (active) setOperatorPaymentsByService({});
+      }
+    })();
+
+    return () => {
+      active = false;
+      ac.abort();
+    };
+  }, [token, bookingId, operatorPaymentsReloadKey]);
+
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -215,6 +339,7 @@ export default function ServiceList({
             status={status}
             agencyTransferFeePct={agencyTransferFeePct}
             useBookingSaleTotal={useBookingSaleTotal}
+            operatorPaymentRefs={operatorPaymentsByService[service.id_service] ?? []}
           />
         ))}
       </div>

@@ -276,7 +276,7 @@ export interface Service {
   impIVA?: number;
   transfer_fee_pct?: number | null;
   transfer_fee_amount?: number | null;
-  billing_override?: BillingBreakdownOverride | null;
+  billing_override?: BillingOverridePayload | null;
   extra_costs_amount?: number | null;
   extra_taxes_amount?: number | null;
   extra_adjustments?: BillingAdjustmentComputed[] | null;
@@ -500,7 +500,30 @@ export interface BillingData {
   extraCostsAmount?: number;
   extraTaxesAmount?: number;
   extraAdjustments?: BillingAdjustmentComputed[];
+  commissionVatMode?:
+    | "automatic"
+    | "vat21"
+    | "vat10_5"
+    | "exempt"
+    | "mixed";
+  grossIncomeTaxEnabled?: boolean;
+  grossIncomeTaxBase?: "netCommission" | "sale";
+  grossIncomeTaxPct?: number;
+  grossIncomeTaxAmount?: number;
 }
+
+export type BillingBreakdownMeta = {
+  commissionVatMode?:
+    | "automatic"
+    | "vat21"
+    | "vat10_5"
+    | "exempt"
+    | "mixed";
+  grossIncomeTaxEnabled?: boolean;
+  grossIncomeTaxBase?: "netCommission" | "sale";
+  grossIncomeTaxPct?: number;
+  grossIncomeTaxAmount?: number;
+};
 
 export type BillingBreakdownOverride = {
   nonComputable: number;
@@ -518,6 +541,13 @@ export type BillingBreakdownOverride = {
   transferFeeAmount: number;
   transferFeePct: number;
 };
+
+export type BillingOverridePayload =
+  | (Partial<BillingBreakdownOverride> & {
+      meta?: BillingBreakdownMeta;
+      values?: Partial<BillingBreakdownOverride> | null;
+    })
+  | null;
 
 export type BillingAdjustmentSource = "global" | "service";
 

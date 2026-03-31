@@ -683,7 +683,7 @@ export default async function handler(
       calendarContext === "operations" && selectedOperationsKinds.has("notes")
         ? await prisma.calendarNote.findMany({
             where:
-              calendarVisibility === "own"
+              scopeMode === "own"
                 ? {
                     creator: { id_agency, id_user: auth.id_user },
                     ...(gte || lte

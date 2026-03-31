@@ -2,6 +2,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
 import { computeBillingAdjustments } from "@/utils/billingAdjustments";
+import { getGrossIncomeTaxAmountFromBillingOverride } from "@/utils/billingOverride";
 import type { BillingAdjustmentConfig } from "@/types";
 import type { CommissionOverrides, CommissionRule } from "@/types/commission";
 import {
@@ -156,6 +157,7 @@ export default async function handler(
         extra_costs_amount: true,
         extra_taxes_amount: true,
         extra_adjustments: true,
+        billing_override: true,
       },
     });
 
@@ -178,6 +180,7 @@ export default async function handler(
       const fallbackTotals: Record<string, number> = {};
       const costTotals: Record<string, number> = {};
       const taxTotals: Record<string, number> = {};
+      const grossIncomeTaxTotals: Record<string, number> = {};
 
       for (const s of services) {
         const cur = String(s.currency || "").trim().toUpperCase();
@@ -185,6 +188,11 @@ export default async function handler(
         addTo(fallbackTotals, cur, Number(s.sale_price) || 0);
         addTo(costTotals, cur, Number(s.cost_price) || 0);
         addTo(taxTotals, cur, Number(s.other_taxes) || 0);
+        addTo(
+          grossIncomeTaxTotals,
+          cur,
+          getGrossIncomeTaxAmountFromBillingOverride(s.billing_override),
+        );
       }
 
       const totals =
@@ -267,8 +275,9 @@ export default async function handler(
           sale,
           cost,
         );
+        const iibb = grossIncomeTaxTotals[cur] || 0;
         commissionBaseByCurrency[cur] = Math.max(
-          commissionBeforeFee - fee - adjustments.total,
+          commissionBeforeFee - fee - adjustments.total - iibb,
           0,
         );
       }

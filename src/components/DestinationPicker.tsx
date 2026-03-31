@@ -63,6 +63,8 @@ type DestinationPickerProps = {
   autoFocus?: boolean;
   /** Clase extra */
   className?: string;
+  /** Clase extra para el contenedor del input/chips */
+  inputContainerClassName?: string;
   /** Nombre del input (por si lo integrás a un form) */
   name?: string;
   /** Texto de ayuda debajo del campo */
@@ -104,6 +106,7 @@ export default function DestinationPicker({
   disabled,
   autoFocus,
   className = "",
+  inputContainerClassName = "",
   name,
   hint,
   minChars = 1,
@@ -459,7 +462,7 @@ export default function DestinationPicker({
 
       {/* Input + chips (para multiple) */}
       <div
-        className={`relative flex min-h-[42px] items-center gap-2 rounded-2xl border border-white/10 bg-white/50 p-2 shadow-sm shadow-sky-950/10 backdrop-blur dark:bg-white/10 ${
+        className={`relative flex min-h-[42px] items-center gap-2 rounded-2xl border border-white/10 bg-white/50 p-2 shadow-sm shadow-sky-950/10 backdrop-blur dark:bg-white/10 ${inputContainerClassName} ${
           disabled ? "opacity-60" : ""
         }`}
         onClick={() => {

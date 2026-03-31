@@ -30,6 +30,7 @@ import {
 import { normalizeRole as normalizeRoleValue } from "@/utils/permissions";
 import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
 import { parseAmountInput } from "@/utils/receipts/receiptForm";
+import { composeBillingOverridePayload } from "@/utils/billingOverride";
 
 // ===== Cookies utils =====
 type Role =
@@ -1202,6 +1203,16 @@ export default function ServicesPage() {
         breakdownOverride,
         ...billingPayload
       } = billingData;
+      const billingOverridePayload = composeBillingOverridePayload({
+        values: breakdownOverride,
+        meta: {
+          commissionVatMode: billingData.commissionVatMode,
+          grossIncomeTaxEnabled: billingData.grossIncomeTaxEnabled,
+          grossIncomeTaxBase: billingData.grossIncomeTaxBase,
+          grossIncomeTaxPct: billingData.grossIncomeTaxPct,
+          grossIncomeTaxAmount: billingData.grossIncomeTaxAmount,
+        },
+      });
 
       const payload = {
         ...formData,
@@ -1212,7 +1223,7 @@ export default function ServicesPage() {
         extra_costs_amount: billingData.extraCostsAmount,
         extra_taxes_amount: billingData.extraTaxesAmount,
         extra_adjustments: billingData.extraAdjustments,
-        billing_override: breakdownOverride ?? null,
+        billing_override: billingOverridePayload,
       };
 
       const res = await authFetch(

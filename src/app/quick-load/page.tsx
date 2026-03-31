@@ -16,6 +16,11 @@ import SummaryCard from "@/components/services/SummaryCard";
 import BillingBreakdown from "@/components/BillingBreakdown";
 import BillingBreakdownManual from "@/components/BillingBreakdownManual";
 import { computeBillingAdjustments } from "@/utils/billingAdjustments";
+import {
+  composeBillingOverridePayload,
+  extractBillingOverrideMeta,
+  extractBillingOverrideValues,
+} from "@/utils/billingOverride";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
 import { loadFinancePicks, type FinanceCurrency } from "@/utils/loadFinancePicks";
@@ -24,7 +29,7 @@ import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
 import type {
   BillingAdjustmentComputed,
   BillingAdjustmentConfig,
-  BillingBreakdownOverride,
+  BillingOverridePayload,
   BillingData,
   Client,
   ClientProfileConfig,
@@ -149,7 +154,7 @@ type ServiceDraft = {
   impIVA: number;
   transfer_fee_pct: number;
   transfer_fee_amount: number;
-  billing_override?: Partial<BillingBreakdownOverride> | null;
+  billing_override?: BillingOverridePayload;
   breakdown_warning_messages?: string[];
   service_adjustments?: BillingAdjustmentConfig[];
 };
@@ -1818,6 +1823,16 @@ export default function QuickLoadPage() {
         let changed = false;
         const next = prev.map((s) => {
           if (s.id !== id) return s;
+          const billingOverridePayload = composeBillingOverridePayload({
+            values: data.breakdownOverride,
+            meta: {
+              commissionVatMode: data.commissionVatMode,
+              grossIncomeTaxEnabled: data.grossIncomeTaxEnabled,
+              grossIncomeTaxBase: data.grossIncomeTaxBase,
+              grossIncomeTaxPct: data.grossIncomeTaxPct,
+              grossIncomeTaxAmount: data.grossIncomeTaxAmount,
+            },
+          });
           const nextValues = {
             nonComputable: data.nonComputable ?? 0,
             taxableBase21: data.taxableBase21 ?? 0,
@@ -1833,7 +1848,7 @@ export default function QuickLoadPage() {
             vatOnCardInterest: data.vatOnCardInterest ?? 0,
             transfer_fee_pct: data.transferFeePct ?? transferFeePct,
             transfer_fee_amount: data.transferFeeAmount ?? 0,
-            billing_override: data.breakdownOverride ?? null,
+            billing_override: billingOverridePayload,
             breakdown_warning_messages: Array.isArray(
               data.breakdownWarningMessages,
             )
@@ -2010,48 +2025,73 @@ export default function QuickLoadPage() {
   const canConfirm = missingSummary.length === 0 && !saving;
 
   const summaryServices = useMemo(() => {
-    return services.map((service, idx) => ({
-      id_service: idx + 1,
-      type: service.type,
-      description: service.description,
-      sale_price: toNumber(service.sale_price),
-      cost_price: toNumber(service.cost_price),
-      destination: service.destination,
-      reference: service.reference,
-      tax_21: toNumber(service.tax_21),
-      tax_105: toNumber(service.tax_105),
-      exempt: toNumber(service.exempt),
-      other_taxes: toNumber(service.other_taxes),
-      card_interest: toNumber(service.card_interest),
-      card_interest_21: toNumber(service.card_interest_21),
-      taxableCardInterest: service.taxableCardInterest,
-      vatOnCardInterest: service.vatOnCardInterest,
-      nonComputable: service.nonComputable,
-      taxableBase21: service.taxableBase21,
-      taxableBase10_5: service.taxableBase10_5,
-      commissionExempt: service.commissionExempt,
-      commission21: service.commission21,
-      commission10_5: service.commission10_5,
-      vatOnCommission21: service.vatOnCommission21,
-      vatOnCommission10_5: service.vatOnCommission10_5,
-      totalCommissionWithoutVAT: service.totalCommissionWithoutVAT,
-      impIVA: service.impIVA,
-      transfer_fee_pct: Number.isFinite(service.transfer_fee_pct)
-        ? service.transfer_fee_pct
-        : transferFeePct,
-      transfer_fee_amount: service.transfer_fee_amount,
-      extra_costs_amount:
-        adjustmentsByServiceId.get(service.id)?.totalCosts ?? 0,
-      extra_taxes_amount:
-        adjustmentsByServiceId.get(service.id)?.totalTaxes ?? 0,
-      extra_adjustments: adjustmentsByServiceId.get(service.id)?.items ?? [],
-      currency: service.currency,
-      departure_date: service.departure_date,
-      return_date: service.return_date,
-      booking_id: 0,
-      id_operator: service.id_operator,
-      created_at: new Date().toISOString(),
-    }));
+    return services.map((service, idx) => {
+      const adjustments = adjustmentsByServiceId.get(service.id) ?? EMPTY_ADJUSTMENTS;
+      const billingMeta = extractBillingOverrideMeta(service.billing_override);
+      const iibbAmount =
+        billingMeta?.grossIncomeTaxEnabled === true
+          ? Number(billingMeta.grossIncomeTaxAmount || 0)
+          : 0;
+      const iibbAdjustment: BillingAdjustmentComputed | null =
+        iibbAmount > 0
+          ? {
+              id: "gross-income-tax",
+              label: "Ingresos Brutos",
+              kind: "tax",
+              basis:
+                billingMeta?.grossIncomeTaxBase === "sale" ? "sale" : "margin",
+              valueType: "percent",
+              value: Number(billingMeta?.grossIncomeTaxPct || 0) / 100,
+              active: true,
+              source: "global",
+              amount: iibbAmount,
+            }
+          : null;
+      const effectiveExtraAdjustments = iibbAdjustment
+        ? [...adjustments.items, iibbAdjustment]
+        : adjustments.items;
+
+      return {
+        id_service: idx + 1,
+        type: service.type,
+        description: service.description,
+        sale_price: toNumber(service.sale_price),
+        cost_price: toNumber(service.cost_price),
+        destination: service.destination,
+        reference: service.reference,
+        tax_21: toNumber(service.tax_21),
+        tax_105: toNumber(service.tax_105),
+        exempt: toNumber(service.exempt),
+        other_taxes: toNumber(service.other_taxes),
+        card_interest: toNumber(service.card_interest),
+        card_interest_21: toNumber(service.card_interest_21),
+        taxableCardInterest: service.taxableCardInterest,
+        vatOnCardInterest: service.vatOnCardInterest,
+        nonComputable: service.nonComputable,
+        taxableBase21: service.taxableBase21,
+        taxableBase10_5: service.taxableBase10_5,
+        commissionExempt: service.commissionExempt,
+        commission21: service.commission21,
+        commission10_5: service.commission10_5,
+        vatOnCommission21: service.vatOnCommission21,
+        vatOnCommission10_5: service.vatOnCommission10_5,
+        totalCommissionWithoutVAT: service.totalCommissionWithoutVAT,
+        impIVA: service.impIVA,
+        transfer_fee_pct: Number.isFinite(service.transfer_fee_pct)
+          ? service.transfer_fee_pct
+          : transferFeePct,
+        transfer_fee_amount: service.transfer_fee_amount,
+        extra_costs_amount: adjustments.totalCosts,
+        extra_taxes_amount: adjustments.totalTaxes + iibbAmount,
+        extra_adjustments: effectiveExtraAdjustments,
+        currency: service.currency,
+        departure_date: service.departure_date,
+        return_date: service.return_date,
+        booking_id: 0,
+        id_operator: service.id_operator,
+        created_at: new Date().toISOString(),
+      };
+    });
   }, [services, transferFeePct, adjustmentsByServiceId]);
 
   const totalsByCurrency = useMemo(() => {
@@ -2364,6 +2404,31 @@ export default function QuickLoadPage() {
             : toNumber(service.sale_price) * transferPct;
         const adjustments =
           adjustmentsByServiceId.get(service.id) ?? EMPTY_ADJUSTMENTS;
+        const billingMeta = extractBillingOverrideMeta(service.billing_override);
+        const iibbAmount =
+          billingMeta?.grossIncomeTaxEnabled === true
+            ? Number(billingMeta.grossIncomeTaxAmount || 0)
+            : 0;
+        const iibbAdjustment: BillingAdjustmentComputed | null =
+          iibbAmount > 0
+            ? {
+                id: "gross-income-tax",
+                label: "Ingresos Brutos",
+                kind: "tax",
+                basis:
+                  billingMeta?.grossIncomeTaxBase === "sale"
+                    ? "sale"
+                    : "margin",
+                valueType: "percent",
+                value: Number(billingMeta?.grossIncomeTaxPct || 0) / 100,
+                active: true,
+                source: "global",
+                amount: iibbAmount,
+              }
+            : null;
+        const effectiveExtraAdjustments = iibbAdjustment
+          ? [...adjustments.items, iibbAdjustment]
+          : adjustments.items;
         const servicePayload = {
           type: service.type,
           description: service.description,
@@ -2391,8 +2456,8 @@ export default function QuickLoadPage() {
           transfer_fee_amount: transferAmount,
           billing_override: service.billing_override ?? null,
           extra_costs_amount: adjustments.totalCosts,
-          extra_taxes_amount: adjustments.totalTaxes,
-          extra_adjustments: adjustments.items,
+          extra_taxes_amount: adjustments.totalTaxes + iibbAmount,
+          extra_adjustments: effectiveExtraAdjustments,
           destination: service.destination,
           reference: service.reference,
           currency: service.currency,
@@ -3806,6 +3871,39 @@ export default function QuickLoadPage() {
                           const adjustmentTotals =
                             adjustmentsByServiceId.get(service.id) ??
                             EMPTY_ADJUSTMENTS;
+                          const billingOverrideValues =
+                            extractBillingOverrideValues(service.billing_override);
+                          const billingMeta = extractBillingOverrideMeta(
+                            service.billing_override,
+                          );
+                          const iibbAmount =
+                            billingMeta?.grossIncomeTaxEnabled === true
+                              ? Number(billingMeta.grossIncomeTaxAmount || 0)
+                              : 0;
+                          const iibbAdjustment: BillingAdjustmentComputed | null =
+                            iibbAmount > 0
+                              ? {
+                                  id: "gross-income-tax",
+                                  label: "Ingresos Brutos",
+                                  kind: "tax",
+                                  basis:
+                                    billingMeta?.grossIncomeTaxBase === "sale"
+                                      ? "sale"
+                                      : "margin",
+                                  valueType: "percent",
+                                  value:
+                                    Number(billingMeta?.grossIncomeTaxPct || 0) /
+                                    100,
+                                  active: true,
+                                  source: "global",
+                                  amount: iibbAmount,
+                                }
+                              : null;
+                          const effectiveAdjustmentItems = iibbAdjustment
+                            ? [...adjustmentTotals.items, iibbAdjustment]
+                            : adjustmentTotals.items;
+                          const effectiveAdjustmentTaxes =
+                            adjustmentTotals.totalTaxes + iibbAmount;
                           const serviceMiniAdjustments =
                             normalizeServiceAdjustmentConfigs(
                               service.service_adjustments,
@@ -3823,7 +3921,10 @@ export default function QuickLoadPage() {
                             service.totalCommissionWithoutVAT ?? 0,
                           );
                           const netCommission = showBreakdown
-                            ? baseCommission - transferAmount - adjustmentTotals.total
+                            ? baseCommission -
+                              transferAmount -
+                              adjustmentTotals.total -
+                              iibbAmount
                             : null;
                           return (
                             <motion.div
@@ -4351,11 +4452,11 @@ export default function QuickLoadPage() {
                                     en el resumen por moneda.
                                   </p>
                                 </div>
-                              ) : adjustmentTotals.items.length > 0 ? (
+                              ) : effectiveAdjustmentItems.length > 0 ? (
                                 <AdjustmentsPanel
-                                  items={adjustmentTotals.items}
+                                  items={effectiveAdjustmentItems}
                                   totalCosts={adjustmentTotals.totalCosts}
-                                  totalTaxes={adjustmentTotals.totalTaxes}
+                                  totalTaxes={effectiveAdjustmentTaxes}
                                   netCommission={netCommission}
                                   format={(value) =>
                                     fmtMoney(value, service.currency || "ARS")
@@ -4371,6 +4472,15 @@ export default function QuickLoadPage() {
                                     impuestos={toNumber(service.other_taxes)}
                                     moneda={service.currency || "ARS"}
                                     transferFeePct={transferPct}
+                                    initialGrossIncomeTaxEnabled={
+                                      billingMeta?.grossIncomeTaxEnabled
+                                    }
+                                    initialGrossIncomeTaxBase={
+                                      billingMeta?.grossIncomeTaxBase
+                                    }
+                                    initialGrossIncomeTaxPct={
+                                      billingMeta?.grossIncomeTaxPct
+                                    }
                                     onBillingUpdate={(data) =>
                                       updateServiceBilling(service.id, data)
                                     }
@@ -4399,8 +4509,18 @@ export default function QuickLoadPage() {
                                     allowBreakdownOverrideEdit={
                                       canOverrideBillingMode
                                     }
-                                    initialBreakdownOverride={
-                                      service.billing_override ?? null
+                                    initialBreakdownOverride={billingOverrideValues}
+                                    initialCommissionVatMode={
+                                      billingMeta?.commissionVatMode
+                                    }
+                                    initialGrossIncomeTaxEnabled={
+                                      billingMeta?.grossIncomeTaxEnabled
+                                    }
+                                    initialGrossIncomeTaxBase={
+                                      billingMeta?.grossIncomeTaxBase
+                                    }
+                                    initialGrossIncomeTaxPct={
+                                      billingMeta?.grossIncomeTaxPct
                                     }
                                   />
                                 ))}

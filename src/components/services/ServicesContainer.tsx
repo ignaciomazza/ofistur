@@ -59,7 +59,7 @@ import type {
 import type {
   BillingData,
   BillingAdjustmentComputed,
-  BillingBreakdownOverride,
+  BillingOverridePayload,
   Booking,
   ClientPayment,
   Invoice,
@@ -94,7 +94,7 @@ export type ServiceFormData = {
   return_date: string;
   transfer_fee_pct?: number | null;
   extra_adjustments?: BillingAdjustmentComputed[] | null;
-  billing_override?: Partial<BillingBreakdownOverride> | null;
+  billing_override?: BillingOverridePayload;
 };
 
 type BookingServiceItem = {
@@ -1865,7 +1865,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
       ) : (
         <>
           {/* TOP BAR */}
-          <div className="sticky top-2 z-10 mb-4 md:mb-6">
+          <div className="sticky top-2 isolate z-[120] mb-4 md:mb-6">
             <div className="flex items-center justify-between gap-2 rounded-3xl border border-white/10 bg-white/20 p-2 shadow-md shadow-sky-950/10 backdrop-blur dark:bg-white/[0.08]">
               {/* Volver */}
               <Link
@@ -2909,6 +2909,8 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                   <OperatorPaymentList
                     token={token}
                     bookingId={booking.id_booking}
+                    services={services}
+                    role={role}
                     reloadKey={paymentsReloadKey}
                   />
                 </div>

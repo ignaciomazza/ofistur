@@ -16,6 +16,7 @@ import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
 import Spinner from "@/components/Spinner";
 import { computeBillingAdjustments } from "@/utils/billingAdjustments";
+import { getGrossIncomeTaxAmountFromBillingOverride } from "@/utils/billingOverride";
 import { resolveCommissionForContext } from "@/utils/commissionOverrides";
 
 /* ===== Tipos ===== */
@@ -69,6 +70,7 @@ type ServiceWithCalcs = Service &
     extra_costs_amount: number;
     extra_taxes_amount: number;
     extra_adjustments: BillingAdjustmentComputed[] | null;
+    billing_override: unknown;
     currency: "ARS" | "USD" | string;
     sale_price: number;
     booking: {
@@ -818,6 +820,19 @@ export default function SummaryCard({
       const cur = normalizeCurrencyCode(s.currency || "ARS");
       const taxes = toNum(s.other_taxes);
       acc[cur] = (acc[cur] || 0) + taxes;
+      return acc;
+    }, {});
+  }, [services]);
+
+  const grossIncomeTaxByCurrency = useMemo(() => {
+    return services.reduce<Record<string, number>>((acc, raw) => {
+      const s = raw as ServiceWithCalcs;
+      const cur = normalizeCurrencyCode(s.currency || "ARS");
+      const amount = getGrossIncomeTaxAmountFromBillingOverride(
+        s.billing_override,
+      );
+      if (amount <= 0) return acc;
+      acc[cur] = (acc[cur] || 0) + amount;
       return acc;
     }, {});
   }, [services]);
@@ -1580,7 +1595,8 @@ export default function SummaryCard({
         const commissionBeforeFee = sale - cost - taxes;
         const fee = sale * (Number.isFinite(transferPct) ? transferPct : 0.024);
         const adjustments = bookingAdjustmentsByCurrency[cur]?.total || 0;
-        out[cur] = Math.max(commissionBeforeFee - fee - adjustments, 0);
+        const iibb = grossIncomeTaxByCurrency[cur] || 0;
+        out[cur] = Math.max(commissionBeforeFee - fee - adjustments - iibb, 0);
       }
       return out;
     }
@@ -1602,6 +1618,7 @@ export default function SummaryCard({
     bookingAdjustmentsByCurrency,
     bookingSaleMode,
     costTotalsByCurrency,
+    grossIncomeTaxByCurrency,
     saleTotalsByCurrency,
     services,
     taxTotalsByCurrency,
@@ -2035,10 +2052,12 @@ export default function SummaryCard({
           const extraCosts = bookingSaleMode
             ? bookingAdjustmentsByCurrency[code]?.totalCosts || 0
             : t.extra_costs_amount || 0;
+          const iibbValue = grossIncomeTaxByCurrency[code] || 0;
           const extraTaxes = bookingSaleMode
             ? bookingAdjustmentsByCurrency[code]?.totalTaxes || 0
             : t.extra_taxes_amount || 0;
-          const extraAdjustmentsTotal = extraCosts + extraTaxes;
+          const extraTaxesWithIibb = extraTaxes + iibbValue;
+          const extraAdjustmentsTotal = extraCosts + extraTaxesWithIibb;
           const showAdjustments = Math.abs(extraAdjustmentsTotal) > 0.000001;
           const adjustmentsForCurrency = adjustmentsByCurrency[code] || [];
 
@@ -2073,6 +2092,7 @@ export default function SummaryCard({
                     {chipImpuestos}
                   </Chip>
                   <Chip>Costo transf.: {feeTransfer}</Chip>
+                  {iibbValue > 0 && <Chip>IIBB: {fmt(iibbValue, code)}</Chip>}
                   {adjustmentsForCurrency.length > 0
                     ? adjustmentsForCurrency.map((adj) => (
                         <Chip key={`${code}-${adj.label}`}>
@@ -2150,7 +2170,7 @@ export default function SummaryCard({
                     />
                     <Row
                       label="Impuestos adicionales"
-                      value={fmt(extraTaxes, code)}
+                      value={fmt(extraTaxesWithIibb, code)}
                     />
                   </Section>
                 )}
@@ -2177,7 +2197,7 @@ export default function SummaryCard({
                   <div className="flex flex-wrap justify-between gap-3 p-3">
                     <div>
                       <p className="text-sm opacity-70">
-                        Total Comisión neta (Costos Bancarios + ajustes)
+                        Total Comisión neta (Costos Bancarios, ajustes e IIBB)
                       </p>
                       <p className="text-lg font-semibold tabular-nums">
                         {fmt(netCommission, code)}

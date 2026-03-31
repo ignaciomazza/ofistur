@@ -5,11 +5,6 @@ import { useMemo } from "react";
 import { Booking, ClientPayment } from "@/types";
 import Spinner from "@/components/Spinner";
 import ClientPaymentCard from "./ClientPaymentCard";
-import {
-  formatDateInBuenosAires,
-  toDateKeyInBuenosAiresLegacySafe,
-  todayDateKeyInBuenosAires,
-} from "@/lib/buenosAiresDate";
 
 interface Props {
   payments: ClientPayment[] | undefined;
@@ -17,49 +12,6 @@ interface Props {
   role: string;
   onPaymentDeleted?: (id: number) => void;
   loading?: boolean;
-}
-
-function normalizeCurrency(code?: string | null): string {
-  const c = String(code || "ARS").trim().toUpperCase();
-  return c || "ARS";
-}
-
-const todayKey = () => todayDateKeyInBuenosAires();
-
-const dateKeyFrom = (d?: string | Date | null): string | null =>
-  toDateKeyInBuenosAiresLegacySafe(d ?? null);
-
-const formatDateKey = (key: string | null): string =>
-  key ? formatDateInBuenosAires(key) : "–";
-
-function toAmount(value: number | string | null | undefined): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
-function formatMoney(value: number, currency: string): string {
-  const safe = Number.isFinite(value) ? value : 0;
-  const code = normalizeCurrency(currency);
-  try {
-    return new Intl.NumberFormat("es-AR", {
-      style: "currency",
-      currency: code,
-      minimumFractionDigits: 2,
-    }).format(safe);
-  } catch {
-    return `${safe.toFixed(2)} ${code}`;
-  }
-}
-
-function normalizeStatus(status?: string): "PENDIENTE" | "PAGADA" | "CANCELADA" {
-  const normalized = String(status || "").trim().toUpperCase();
-  if (normalized === "PAGADA") return "PAGADA";
-  if (normalized === "CANCELADA") return "CANCELADA";
-  return "PENDIENTE";
 }
 
 export default function ClientPaymentList({
@@ -76,50 +28,6 @@ export default function ClientPaymentList({
       ),
     [payments],
   );
-
-  const totalsByCurrency = useMemo(() => {
-    const acc = new Map<string, number>();
-    for (const payment of validPayments) {
-      const cur = normalizeCurrency(payment.currency);
-      const amount = toAmount(payment.amount);
-      acc.set(cur, (acc.get(cur) ?? 0) + amount);
-    }
-    return Array.from(acc.entries());
-  }, [validPayments]);
-
-  const overdueCount = useMemo(() => {
-    const today = todayKey();
-    return validPayments.reduce((count, payment) => {
-      if (normalizeStatus(payment.status) !== "PENDIENTE") return count;
-      const dueKey = dateKeyFrom(payment.due_date);
-      if (!dueKey) return count;
-      return dueKey < today ? count + 1 : count;
-    }, 0);
-  }, [validPayments]);
-
-  const statusCounts = useMemo(() => {
-    return validPayments.reduce(
-      (acc, payment) => {
-        const status = normalizeStatus(payment.status);
-        if (status === "PAGADA") acc.paid += 1;
-        else if (status === "CANCELADA") acc.cancelled += 1;
-        else acc.pending += 1;
-        return acc;
-      },
-      { pending: 0, paid: 0, cancelled: 0 },
-    );
-  }, [validPayments]);
-
-  const nextDueKey = useMemo(() => {
-    const today = todayKey();
-    const keys = validPayments
-      .filter((payment) => normalizeStatus(payment.status) === "PENDIENTE")
-      .map((payment) => dateKeyFrom(payment.due_date))
-      .filter((key): key is string => !!key)
-      .sort();
-    const upcoming = keys.find((key) => key >= today);
-    return upcoming ?? keys[0] ?? null;
-  }, [validPayments]);
 
   if (loading) {
     return (
@@ -138,75 +46,16 @@ export default function ClientPaymentList({
   }
 
   return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {validPayments.map((payment) => (
-          <ClientPaymentCard
-            key={payment.id_payment}
-            payment={payment}
-            booking={booking}
-            role={role}
-            onPaymentDeleted={onPaymentDeleted}
-          />
-        ))}
-      </div>
-
-      <div>
-        <div className="mb-4 mt-8 flex justify-center">
-          <p className="text-2xl font-medium">Resumen</p>
-        </div>
-        <div className="rounded-3xl border border-white/10 bg-white/10 p-4 text-sky-950 shadow-md shadow-sky-950/10 dark:text-white">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <p className="text-xs opacity-70">Cuotas</p>
-              <p className="text-base font-medium tabular-nums">
-                {validPayments.length}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <p className="text-xs opacity-70">Pendientes</p>
-              <p className="text-base font-medium tabular-nums">
-                {statusCounts.pending}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <p className="text-xs opacity-70">Pagadas</p>
-              <p className="text-base font-medium tabular-nums">
-                {statusCounts.paid}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <p className="text-xs opacity-70">Canceladas</p>
-              <p className="text-base font-medium tabular-nums">
-                {statusCounts.cancelled}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <p className="text-xs opacity-70">Vencidos</p>
-              <p className="text-base font-medium tabular-nums">
-                {overdueCount}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <p className="text-xs opacity-70">Proximo vencimiento</p>
-              <p className="text-base font-medium tabular-nums">
-                {nextDueKey ? formatDateKey(nextDueKey) : "—"}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {totalsByCurrency.map(([cur, total]) => (
-              <span
-                key={cur}
-                className="rounded-full bg-white/30 px-3 py-1 text-xs font-medium dark:bg-white/10"
-              >
-                {formatMoney(total, cur)}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
+    <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+      {validPayments.map((payment) => (
+        <ClientPaymentCard
+          key={payment.id_payment}
+          payment={payment}
+          booking={booking}
+          role={role}
+          onPaymentDeleted={onPaymentDeleted}
+        />
+      ))}
     </div>
   );
 }

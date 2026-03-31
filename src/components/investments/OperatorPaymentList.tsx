@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Spinner from "@/components/Spinner";
 import { toast } from "react-toastify";
 import { authFetch } from "@/utils/authFetch";
+import type { Service } from "@/types";
 import OperatorPaymentCard, {
   InvestmentItem,
 } from "@/components/investments/OperatorPaymentCard";
@@ -13,8 +14,11 @@ type Props = {
   token: string | null;
   bookingId?: number; // listar pagos asociados a esta reserva
   operatorId?: number; // opcional: filtrar por operador
+  services?: Service[];
+  role?: string;
   className?: string;
   reloadKey?: number; // forzar refetch al cambiar
+  onEditPayment?: (item: InvestmentItem) => void;
 };
 
 type ApiError = { error?: string; message?: string; details?: string };
@@ -36,8 +40,11 @@ export default function OperatorPaymentList({
   token,
   bookingId,
   operatorId,
+  services,
+  role,
   className,
   reloadKey,
+  onEditPayment,
 }: Props) {
   const [items, setItems] = useState<InvestmentItem[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
@@ -52,10 +59,23 @@ export default function OperatorPaymentList({
     const qs = new URLSearchParams();
     qs.set("take", "24");
     qs.set("operatorOnly", "1");
+    qs.set("includeAllocations", "1");
     if (operatorId) qs.set("operatorId", String(operatorId));
     if (bookingId) qs.set("bookingId", String(bookingId));
     return qs.toString();
   }, [bookingId, operatorId]);
+
+  const belongsToBooking = useCallback(
+    (item: InvestmentItem) => {
+      if (!bookingId) return true;
+      if (Number(item.booking_id) === bookingId) return true;
+      if (!Array.isArray(item.allocations)) return false;
+      return item.allocations.some(
+        (alloc) => Number(alloc?.booking_id) === bookingId,
+      );
+    },
+    [bookingId],
+  );
 
   const fetchList = useCallback(async () => {
     if (!token) return;
@@ -77,7 +97,7 @@ export default function OperatorPaymentList({
       if (!res.ok) {
         // Fallback por si tu back no soportara bookingId (lo filtramos client-side).
         const onlyCategory = await authFetch(
-          `/api/investments?take=24&operatorOnly=1${operatorId ? `&operatorId=${operatorId}` : ""}`,
+          `/api/investments?take=24&operatorOnly=1&includeAllocations=1${operatorId ? `&operatorId=${operatorId}` : ""}`,
           { cache: "no-store", signal: controller.signal, credentials: "omit" },
           token,
         );
@@ -94,9 +114,7 @@ export default function OperatorPaymentList({
           nextCursor: number | null;
         };
         if (myId !== reqIdRef.current) return;
-        const filtered = bookingId
-          ? items.filter((i) => i.booking_id === bookingId)
-          : items;
+        const filtered = bookingId ? items.filter(belongsToBooking) : items;
         setItems(filtered);
         setNextCursor(nextCursor ?? null);
         return;
@@ -120,7 +138,7 @@ export default function OperatorPaymentList({
     } finally {
       if (!controller.signal.aborted) setLoadingList(false);
     }
-  }, [token, queryString, operatorId, bookingId]);
+  }, [token, queryString, operatorId, bookingId, belongsToBooking]);
 
   // Carga inicial / cuando cambien dependencias
   useEffect(() => {
@@ -158,9 +176,7 @@ export default function OperatorPaymentList({
       };
 
       // Si el backend no filtra por bookingId, filtramos client-side
-      const filtered = bookingId
-        ? more.filter((i) => i.booking_id === bookingId)
-        : more;
+      const filtered = bookingId ? more.filter(belongsToBooking) : more;
 
       setItems((prev) => [...prev, ...filtered]);
       setNextCursor(c ?? null);
@@ -172,11 +188,15 @@ export default function OperatorPaymentList({
     } finally {
       setLoadingMore(false);
     }
-  }, [token, nextCursor, loadingMore, queryString, bookingId]);
+  }, [token, nextCursor, loadingMore, queryString, bookingId, belongsToBooking]);
+
+  const handleDeleted = useCallback((id: number) => {
+    setItems((prev) => prev.filter((it) => it.id_investment !== id));
+  }, []);
 
   return (
-    <div className={`space-y-3 ${className ?? ""}`}>
-      <div className="space-y-3">
+    <div className={`space-y-4 ${className ?? ""}`}>
+      <div>
         {loadingList ? (
           <div className="flex min-h-[16vh] items-center">
             <Spinner />
@@ -187,16 +207,22 @@ export default function OperatorPaymentList({
           </div>
         ) : (
           <>
-            {items.map((it) => (
-              <OperatorPaymentCard
-                key={it.id_investment}
-                item={it}
-                token={token}
-              />
-            ))}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {items.map((it) => (
+                <OperatorPaymentCard
+                  key={it.id_investment}
+                  item={it}
+                  services={services}
+                  token={token}
+                  role={role}
+                  onDeleted={handleDeleted}
+                  onEdit={onEditPayment}
+                />
+              ))}
+            </div>
 
             {nextCursor && (
-              <div className="flex justify-center">
+              <div className="mt-4 flex justify-center">
                 <button
                   onClick={loadMore}
                   disabled={loadingMore}

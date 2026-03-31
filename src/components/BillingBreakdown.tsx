@@ -1,7 +1,14 @@
 // src/components/BillingBreakdown.tsx
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { BillingBreakdownOverride, BillingData } from "@/types/index";
 
 interface BillingBreakdownProps {
@@ -19,6 +26,14 @@ interface BillingBreakdownProps {
   allowBreakdownOverrideEdit?: boolean;
   initialBreakdownOverride?: Partial<BillingBreakdownOverride> | null;
   showNetCommissionTotal?: boolean;
+  adjustmentsOpen?: boolean;
+  adjustmentsActiveCount?: number;
+  onAddMiniAdjustment?: () => void;
+  adjustmentsPanel?: ReactNode;
+  initialCommissionVatMode?: "automatic" | "vat21" | "vat10_5" | "exempt" | "mixed";
+  initialGrossIncomeTaxEnabled?: boolean;
+  initialGrossIncomeTaxBase?: "netCommission" | "sale";
+  initialGrossIncomeTaxPct?: number;
 }
 
 type BreakdownField = keyof BillingBreakdownOverride;
@@ -96,6 +111,16 @@ const sameBillingData = (a: BillingData | null, b: BillingData) => {
   if (!a) return false;
   const aWarning = (a.breakdownWarningMessages || []).join("|");
   const bWarning = (b.breakdownWarningMessages || []).join("|");
+  const aVatMode = a.commissionVatMode || "automatic";
+  const bVatMode = b.commissionVatMode || "automatic";
+  const aIibbEnabled = a.grossIncomeTaxEnabled === true;
+  const bIibbEnabled = b.grossIncomeTaxEnabled === true;
+  const aIibbBase = a.grossIncomeTaxBase || "netCommission";
+  const bIibbBase = b.grossIncomeTaxBase || "netCommission";
+  const aIibbPct = Number(a.grossIncomeTaxPct || 0);
+  const bIibbPct = Number(b.grossIncomeTaxPct || 0);
+  const aIibbAmount = Number(a.grossIncomeTaxAmount || 0);
+  const bIibbAmount = Number(b.grossIncomeTaxAmount || 0);
   return (
     a.nonComputable === b.nonComputable &&
     a.taxableBase21 === b.taxableBase21 &&
@@ -111,10 +136,40 @@ const sameBillingData = (a: BillingData | null, b: BillingData) => {
     a.vatOnCardInterest === b.vatOnCardInterest &&
     a.transferFeeAmount === b.transferFeeAmount &&
     a.transferFeePct === b.transferFeePct &&
+    aVatMode === bVatMode &&
+    aIibbEnabled === bIibbEnabled &&
+    aIibbBase === bIibbBase &&
+    aIibbPct === bIibbPct &&
+    aIibbAmount === bIibbAmount &&
     sameOverride(a.breakdownOverride ?? null, b.breakdownOverride ?? null) &&
     aWarning === bWarning
   );
 };
+
+const MiniToggle: React.FC<{
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  ariaLabel: string;
+}> = ({ checked, onChange, ariaLabel }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={ariaLabel}
+    onClick={() => onChange(!checked)}
+    className={`relative inline-flex h-5 w-9 items-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-sky-300/60 ${
+      checked
+        ? "border-sky-500 bg-sky-500"
+        : "border-sky-300/80 bg-sky-100/80 dark:border-sky-500/40 dark:bg-sky-900/20"
+    }`}
+  >
+    <span
+      className={`pointer-events-none inline-block size-3.5 rounded-full bg-white shadow-sm transition ${
+        checked ? "translate-x-4" : "translate-x-0.5"
+      }`}
+    />
+  </button>
+);
 
 function PencilIcon({ className }: { className?: string }) {
   return (
@@ -149,6 +204,14 @@ export default function BillingBreakdown({
   allowBreakdownOverrideEdit = false,
   initialBreakdownOverride = null,
   showNetCommissionTotal = true,
+  adjustmentsOpen = true,
+  adjustmentsActiveCount = 0,
+  onAddMiniAdjustment,
+  adjustmentsPanel,
+  initialCommissionVatMode,
+  initialGrossIncomeTaxEnabled,
+  initialGrossIncomeTaxBase,
+  initialGrossIncomeTaxPct,
 }: BillingBreakdownProps) {
   const lastPayloadRef = useRef<BillingData | null>(null);
   const onBillingUpdateRef = useRef(onBillingUpdate);
@@ -157,10 +220,35 @@ export default function BillingBreakdown({
     null,
   );
   const [editMode, setEditMode] = useState(false);
+  const [commissionVatMode, setCommissionVatMode] = useState<
+    "automatic" | "vat21" | "vat10_5" | "exempt" | "mixed"
+  >("automatic");
+  const [grossIncomeTaxEnabled, setGrossIncomeTaxEnabled] = useState(false);
+  const [grossIncomeTaxBase, setGrossIncomeTaxBase] = useState<
+    "netCommission" | "sale"
+  >("netCommission");
+  const [grossIncomeTaxPct, setGrossIncomeTaxPct] = useState(0);
 
   useEffect(() => {
     onBillingUpdateRef.current = onBillingUpdate;
   }, [onBillingUpdate]);
+
+  useEffect(() => {
+    setCommissionVatMode(initialCommissionVatMode || "automatic");
+  }, [initialCommissionVatMode]);
+
+  useEffect(() => {
+    setGrossIncomeTaxEnabled(initialGrossIncomeTaxEnabled === true);
+  }, [initialGrossIncomeTaxEnabled]);
+
+  useEffect(() => {
+    setGrossIncomeTaxBase(initialGrossIncomeTaxBase || "netCommission");
+  }, [initialGrossIncomeTaxBase]);
+
+  useEffect(() => {
+    const nextPct = toNumber(initialGrossIncomeTaxPct, 0);
+    setGrossIncomeTaxPct(nextPct >= 0 ? nextPct : 0);
+  }, [initialGrossIncomeTaxPct]);
 
   const calculatedBreakdown = useMemo<BillingBreakdownOverride>(() => {
     const baseNetoDesglose = round(
@@ -174,45 +262,77 @@ export default function BillingBreakdown({
       baseNetoDesglose - (montoExento + taxableBase21 + taxableBase10_5),
     );
 
-    const porcentajeExento =
-      baseNetoDesglose !== 0 ? round(montoExento / baseNetoDesglose) : 0;
     let commissionExempt = 0;
     let commission21 = 0;
     let commission10_5 = 0;
     let vatOnCommission21 = 0;
     let vatOnCommission10_5 = 0;
 
-    const defaultIVA = 0.21;
-    if (montoIva21 === 0 && montoIva10_5 === 0) {
-      const factor = round(
-        porcentajeExento + (1 - porcentajeExento) * (1 + defaultIVA),
-      );
-      if (factor !== 0) {
-        const netComm = round(margen / factor);
-        commissionExempt = round(netComm * porcentajeExento);
-        const gravada = round(netComm - commissionExempt);
-        commission21 = round(gravada);
-        vatOnCommission21 = round(commission21 * defaultIVA);
+    if (commissionVatMode === "automatic") {
+      const porcentajeExento =
+        baseNetoDesglose !== 0 ? round(montoExento / baseNetoDesglose) : 0;
+      const defaultIVA = 0.21;
+      if (montoIva21 === 0 && montoIva10_5 === 0) {
+        const factor = round(
+          porcentajeExento + (1 - porcentajeExento) * (1 + defaultIVA),
+        );
+        if (factor !== 0) {
+          const netComm = round(margen / factor);
+          commissionExempt = round(netComm * porcentajeExento);
+          const gravada = round(netComm - commissionExempt);
+          commission21 = round(gravada);
+          vatOnCommission21 = round(commission21 * defaultIVA);
+        }
+      } else {
+        const costoGravable = round(baseNetoDesglose - montoExento);
+        const remanente = round(
+          costoGravable - (taxableBase21 + taxableBase10_5),
+        );
+        const eff21 = round(taxableBase21 + remanente);
+        const eff10_5 = round(taxableBase10_5);
+        const totalEff = round(eff21 + eff10_5);
+        const w21 = totalEff !== 0 ? round(eff21 / totalEff) : 0;
+        const w10_5 = totalEff !== 0 ? round(eff10_5 / totalEff) : 0;
+        const factor = round(
+          porcentajeExento +
+            (1 - porcentajeExento) * (w21 * (1 + 0.21) + w10_5 * (1 + 0.105)),
+        );
+        if (factor !== 0) {
+          const netComm = round(margen / factor);
+          commissionExempt = round(netComm * porcentajeExento);
+          const gravada = round(netComm - commissionExempt);
+          commission21 = totalEff !== 0 ? round((gravada * eff21) / totalEff) : 0;
+          commission10_5 =
+            totalEff !== 0 ? round((gravada * eff10_5) / totalEff) : 0;
+          vatOnCommission21 = round(commission21 * 0.21);
+          vatOnCommission10_5 = round(commission10_5 * 0.105);
+        }
       }
     } else {
-      const costoGravable = round(baseNetoDesglose - montoExento);
-      const remanente = round(costoGravable - (taxableBase21 + taxableBase10_5));
-      const eff21 = round(taxableBase21 + remanente);
-      const eff10_5 = round(taxableBase10_5);
-      const totalEff = round(eff21 + eff10_5);
-      const w21 = totalEff !== 0 ? round(eff21 / totalEff) : 0;
-      const w10_5 = totalEff !== 0 ? round(eff10_5 / totalEff) : 0;
-      const factor = round(
-        porcentajeExento +
-          (1 - porcentajeExento) * (w21 * (1 + 0.21) + w10_5 * (1 + 0.105)),
-      );
-      if (factor !== 0) {
-        const netComm = round(margen / factor);
-        commissionExempt = round(netComm * porcentajeExento);
-        const gravada = round(netComm - commissionExempt);
-        commission21 = totalEff !== 0 ? round((gravada * eff21) / totalEff) : 0;
-        commission10_5 =
-          totalEff !== 0 ? round((gravada * eff10_5) / totalEff) : 0;
+      const totalBase = round(taxableBase21 + taxableBase10_5);
+      const mixedWeight21 =
+        totalBase > 0 ? round(taxableBase21 / totalBase, 6) : 0.5;
+      const mixedWeight10_5 = round(1 - mixedWeight21, 6);
+
+      let factor = 1;
+      if (commissionVatMode === "vat21") factor = 1.21;
+      if (commissionVatMode === "vat10_5") factor = 1.105;
+      if (commissionVatMode === "mixed") {
+        factor = round(mixedWeight21 * 1.21 + mixedWeight10_5 * 1.105, 6);
+      }
+      const netComm = factor !== 0 ? round(margen / factor) : 0;
+
+      if (commissionVatMode === "exempt") {
+        commissionExempt = netComm;
+      } else if (commissionVatMode === "vat21") {
+        commission21 = netComm;
+        vatOnCommission21 = round(commission21 * 0.21);
+      } else if (commissionVatMode === "vat10_5") {
+        commission10_5 = netComm;
+        vatOnCommission10_5 = round(commission10_5 * 0.105);
+      } else if (commissionVatMode === "mixed") {
+        commission21 = round(netComm * mixedWeight21, 8);
+        commission10_5 = round(netComm - commission21, 8);
         vatOnCommission21 = round(commission21 * 0.21);
         vatOnCommission10_5 = round(commission10_5 * 0.105);
       }
@@ -251,6 +371,7 @@ export default function BillingBreakdown({
     };
   }, [
     cardInterestIva,
+    commissionVatMode,
     costo,
     importeVenta,
     montoExento,
@@ -321,6 +442,15 @@ export default function BillingBreakdown({
   }, [calculatedBreakdown, initialBreakdownOverride, initialOverrideKey]);
 
   const activeBreakdown = manualOverride ?? calculatedBreakdown;
+  const netCommissionAfterFee = round(
+    activeBreakdown.totalCommissionWithoutVAT - activeBreakdown.transferFeeAmount,
+    2,
+  );
+  const grossIncomeTaxBaseAmount =
+    grossIncomeTaxBase === "sale" ? round(importeVenta, 2) : netCommissionAfterFee;
+  const grossIncomeTaxAmount = grossIncomeTaxEnabled
+    ? round(grossIncomeTaxBaseAmount * (grossIncomeTaxPct / 100), 2)
+    : 0;
 
   const toggleEditMode = useCallback(() => {
     if (!allowBreakdownOverrideEdit) return;
@@ -367,11 +497,25 @@ export default function BillingBreakdown({
       transferFeePct: activeBreakdown.transferFeePct,
       breakdownOverride: manualOverride ? activeBreakdown : null,
       breakdownWarningMessages: warningMessages,
+      commissionVatMode,
+      grossIncomeTaxEnabled,
+      grossIncomeTaxBase,
+      grossIncomeTaxPct,
+      grossIncomeTaxAmount,
     };
     if (sameBillingData(lastPayloadRef.current, payload)) return;
     lastPayloadRef.current = payload;
     onBillingUpdateRef.current(payload);
-  }, [activeBreakdown, manualOverride, warningMessages]);
+  }, [
+    activeBreakdown,
+    commissionVatMode,
+    grossIncomeTaxAmount,
+    grossIncomeTaxBase,
+    grossIncomeTaxEnabled,
+    grossIncomeTaxPct,
+    manualOverride,
+    warningMessages,
+  ]);
 
   const fmt = useMemo(
     () =>
@@ -386,7 +530,7 @@ export default function BillingBreakdown({
     value: number;
     field?: BreakdownField;
   }> = ({ label, value, field }) => (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-sky-200/60 bg-sky-100/30 px-3 py-2 dark:border-sky-600/30 dark:bg-sky-900/10">
       <span className="text-sm">{label}</span>
       {editMode && field ? (
         <input
@@ -394,7 +538,7 @@ export default function BillingBreakdown({
           value={String(value)}
           step="0.01"
           onChange={(e) => updateOverrideField(field, e.target.value)}
-          className="w-40 rounded-xl border border-white/10 bg-white/60 px-2 py-1 text-right text-sm font-medium tabular-nums outline-none dark:bg-white/10"
+          className="w-40 rounded-xl border border-sky-300/80 bg-white/60 px-2 py-1 text-right text-sm font-medium tabular-nums outline-none focus:border-sky-400/80 focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10"
         />
       ) : (
         <span className="font-medium tabular-nums">{f(value)}</span>
@@ -404,21 +548,156 @@ export default function BillingBreakdown({
 
   return (
     <div className="mt-6 rounded-2xl border border-white/10 bg-white/10 p-4 text-sky-950 shadow-sm shadow-sky-950/10 dark:text-white">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+      <div className="mb-4 rounded-3xl border border-sky-200/60 bg-sky-100/25 p-3.5 shadow-sm shadow-sky-950/10 transition-colors duration-200 dark:border-sky-600/30 dark:bg-sky-900/10">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {onAddMiniAdjustment && (
+            <button
+              type="button"
+              onClick={onAddMiniAdjustment}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-sky-300/80 bg-sky-200/45 px-3.5 text-xs font-semibold text-sky-900 shadow-sm shadow-sky-900/10 transition duration-200 hover:-translate-y-0.5 hover:bg-sky-200/65 hover:shadow-md hover:shadow-sky-900/15 active:translate-y-0 active:scale-[0.99] dark:border-sky-500/50 dark:bg-sky-700/35 dark:text-sky-100 dark:hover:bg-sky-700/50"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                className="size-3.5"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M5 8l5 5 5-5"
+                />
+              </svg>
+              Agregar mini ajuste
+              {adjustmentsActiveCount > 0 ? ` (${adjustmentsActiveCount})` : ""}
+            </button>
+          )}
+
+          <label className="inline-flex h-9 items-center gap-2 rounded-full border border-sky-200/80 bg-white/75 px-3.5 text-xs font-medium shadow-sm shadow-sky-900/5 transition duration-200 hover:-translate-y-0.5 hover:border-sky-300/80 hover:bg-white/90 hover:shadow-md hover:shadow-sky-900/10 dark:border-sky-600/35 dark:bg-sky-900/35 dark:hover:border-sky-500/55 dark:hover:bg-sky-900/55">
+            <MiniToggle
+              checked={grossIncomeTaxEnabled}
+              onChange={setGrossIncomeTaxEnabled}
+              ariaLabel="Ingresos Brutos estimado"
+            />
+            Ingresos Brutos (estimado)
+          </label>
+
+          <label className="inline-flex h-9 items-center gap-2 rounded-full border border-sky-200/80 bg-white/75 px-2 pl-3.5 text-xs font-medium shadow-sm shadow-sky-900/5 transition duration-200 hover:-translate-y-0.5 hover:border-sky-300/80 hover:bg-white/90 hover:shadow-md hover:shadow-sky-900/10 dark:border-sky-600/35 dark:bg-sky-900/35 dark:hover:border-sky-500/55 dark:hover:bg-sky-900/55">
+            <span className="whitespace-nowrap">IVA comisión</span>
+            <select
+              value={commissionVatMode}
+              onChange={(e) =>
+                setCommissionVatMode(
+                  e.target.value as
+                    | "automatic"
+                    | "vat21"
+                    | "vat10_5"
+                    | "exempt"
+                    | "mixed",
+                )
+              }
+              className="h-7 cursor-pointer rounded-lg border border-sky-300/80 bg-white/90 px-2.5 text-xs font-medium outline-none transition focus:border-sky-400/90 focus:ring-2 focus:ring-sky-200/70 dark:border-sky-500/45 dark:bg-sky-900/40 dark:focus:ring-sky-500/35"
+            >
+              <option value="automatic">Automático</option>
+              <option value="vat21">21%</option>
+              <option value="vat10_5">10,5%</option>
+              <option value="exempt">Exenta</option>
+              <option value="mixed">21% + 10,5% (mixto)</option>
+            </select>
+          </label>
+
+          {allowBreakdownOverrideEdit && (
+            <button
+              type="button"
+              onClick={toggleEditMode}
+              className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold shadow-sm shadow-sky-900/10 transition duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-sky-900/15 active:translate-y-0 active:scale-[0.99] ${
+                editMode
+                  ? "border-emerald-400/40 bg-emerald-500/20 text-emerald-900 dark:text-emerald-100"
+                  : "border-sky-200/80 bg-sky-100/50 text-sky-900 dark:border-sky-600/35 dark:bg-sky-900/25 dark:text-white"
+              }`}
+              title="Editar desglose"
+              aria-label="Editar desglose"
+            >
+              <PencilIcon className="size-3.5" />
+              {editMode ? "Editando" : "Editar"}
+            </button>
+          )}
+          {allowBreakdownOverrideEdit && manualOverride && (
+            <button
+              type="button"
+              onClick={restoreAutomatic}
+              className="inline-flex h-9 items-center rounded-full border border-rose-300/55 bg-rose-200/45 px-3.5 text-xs font-semibold text-rose-900 shadow-sm shadow-rose-900/10 transition duration-200 hover:-translate-y-0.5 hover:bg-rose-200/65 hover:shadow-md hover:shadow-rose-900/15 active:translate-y-0 active:scale-[0.99] dark:border-rose-400/35 dark:bg-rose-500/15 dark:text-rose-100 dark:hover:bg-rose-500/25"
+            >
+              Restaurar automático
+            </button>
+          )}
+        </div>
+        {adjustmentsOpen && adjustmentsPanel && (
+          <div className="mt-3">{adjustmentsPanel}</div>
+        )}
+        {commissionVatMode === "mixed" && (
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <span className="rounded-full border border-sky-200/70 bg-white/70 px-2.5 py-1 text-[11px] dark:border-sky-600/30 dark:bg-sky-900/30">
+              Mixto proporcional: reparto según bases 21% y 10,5%.
+            </span>
+          </div>
+        )}
+        {grossIncomeTaxEnabled && (
+          <div className="mt-3 rounded-2xl border border-sky-200/60 bg-sky-100/35 p-3 dark:border-sky-600/30 dark:bg-sky-900/15">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="inline-flex items-center gap-2 text-xs">
+                Base
+                <select
+                  value={grossIncomeTaxBase}
+                  onChange={(e) =>
+                    setGrossIncomeTaxBase(
+                      e.target.value as "netCommission" | "sale",
+                    )
+                  }
+                  className="rounded-lg border border-sky-300/80 bg-white/80 px-2 py-1 text-xs outline-none focus:border-sky-400/80 dark:border-sky-500/40 dark:bg-white/10"
+                >
+                  <option value="netCommission">Comisión neta</option>
+                  <option value="sale">Venta</option>
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-2 text-xs">
+                Alícuota
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={Number.isFinite(grossIncomeTaxPct) ? grossIncomeTaxPct : 0}
+                  onChange={(e) => setGrossIncomeTaxPct(toNumber(e.target.value, 0))}
+                  className="w-24 rounded-lg border border-sky-300/80 bg-white/80 px-2 py-1 text-right text-xs outline-none focus:border-sky-400/80 dark:border-sky-500/40 dark:bg-white/10"
+                />
+                <span>%</span>
+              </label>
+              <div className="text-sm">
+                IIBB estimado:{" "}
+                <span className="font-semibold">{f(grossIncomeTaxAmount)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-start gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="rounded-full border border-white/10 bg-white/30 px-3 py-1 text-xs font-medium dark:bg-white/10">
+          <div className="rounded-full border border-sky-200/70 bg-sky-100/40 px-3 py-1 text-xs font-medium dark:border-sky-600/30 dark:bg-sky-900/20">
             <span className="opacity-70">Venta: </span>
             <span>{f(importeVenta)}</span>
           </div>
-          <div className="rounded-full border border-white/10 bg-white/30 px-3 py-1 text-xs font-medium dark:bg-white/10">
+          <div className="rounded-full border border-sky-200/70 bg-sky-100/40 px-3 py-1 text-xs font-medium dark:border-sky-600/30 dark:bg-sky-900/20">
             <span className="opacity-70">Costo: </span>
             <span>{f(costo)}</span>
           </div>
-          <div className="rounded-full border border-white/10 bg-white/30 px-3 py-1 text-xs font-medium dark:bg-white/10">
+          <div className="rounded-full border border-sky-200/70 bg-sky-100/40 px-3 py-1 text-xs font-medium dark:border-sky-600/30 dark:bg-sky-900/20">
             <span className="opacity-70">Margen: </span>
             <span>{f(margen)}</span>
           </div>
-          <div className="rounded-full border border-white/10 bg-white/30 px-3 py-1 text-xs font-medium dark:bg-white/10">
+          <div className="rounded-full border border-sky-200/70 bg-sky-100/40 px-3 py-1 text-xs font-medium dark:border-sky-600/30 dark:bg-sky-900/20">
             <span className="opacity-70">
               {(activeBreakdown.transferFeePct * 100).toFixed(2)}% Costos Bancarios:
             </span>{" "}
@@ -430,34 +709,6 @@ export default function BillingBreakdown({
             </div>
           )}
         </div>
-
-        {allowBreakdownOverrideEdit && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={toggleEditMode}
-              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                editMode
-                  ? "border-emerald-400/40 bg-emerald-500/20 text-emerald-900 dark:text-emerald-100"
-                  : "border-white/10 bg-white/20 text-sky-900 dark:text-white"
-              }`}
-              title="Editar desglose"
-              aria-label="Editar desglose"
-            >
-              <PencilIcon className="size-3.5" />
-              {editMode ? "Aplicando cambios" : "Editar desglose"}
-            </button>
-            {manualOverride && (
-              <button
-                type="button"
-                onClick={restoreAutomatic}
-                className="rounded-full border border-rose-300/50 bg-rose-200/40 px-3 py-1 text-xs font-semibold text-rose-900 transition dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-100"
-              >
-                Restaurar automático
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       {warningMessages.length > 0 && (
@@ -554,7 +805,7 @@ export default function BillingBreakdown({
           value={activeBreakdown.transferFeeAmount}
           field="transferFeeAmount"
         />
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-sky-200/60 bg-sky-100/30 px-3 py-2 dark:border-sky-600/30 dark:bg-sky-900/10">
           <span className="text-sm">Costos bancarios %</span>
           {editMode ? (
             <div className="flex items-center gap-2">
@@ -568,7 +819,7 @@ export default function BillingBreakdown({
                     String(toNumber(e.target.value, 0) / 100),
                   )
                 }
-                className="w-28 rounded-xl border border-white/10 bg-white/60 px-2 py-1 text-right text-sm font-medium tabular-nums outline-none dark:bg-white/10"
+                className="w-28 rounded-xl border border-sky-300/80 bg-white/60 px-2 py-1 text-right text-sm font-medium tabular-nums outline-none focus:border-sky-400/80 focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10"
               />
               <span className="text-xs opacity-70">%</span>
             </div>
@@ -583,13 +834,16 @@ export default function BillingBreakdown({
       {showNetCommissionTotal && (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/20 p-3">
           <div className="text-sm opacity-70">
-            Total Comisión (sin IVA) – neta de Costos Bancarios
+            {grossIncomeTaxEnabled
+              ? "Total Comisión (sin IVA, Costos Bancarios e Ingresos Brutos)"
+              : "Total Comisión (sin IVA y Costos Bancarios)"}
           </div>
           <div className="text-lg font-semibold tabular-nums">
             {f(
               round(
                 activeBreakdown.totalCommissionWithoutVAT -
-                  activeBreakdown.transferFeeAmount,
+                  activeBreakdown.transferFeeAmount -
+                  (grossIncomeTaxEnabled ? grossIncomeTaxAmount : 0),
                 2,
               ),
             )}
