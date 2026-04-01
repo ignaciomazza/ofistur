@@ -176,7 +176,6 @@ export default function GroupsPage() {
   const [groups, setGroups] = useState<GroupItem[]>([]);
 
   const [name, setName] = useState("");
-  const [type, setType] = useState<GroupType>("AGENCIA");
   const [status, setStatus] = useState<GroupStatus>("BORRADOR");
   const [capacityMode, setCapacityMode] = useState<"TOTAL" | "SERVICIO">(
     "TOTAL",
@@ -277,7 +276,6 @@ export default function GroupsPage() {
 
   function resetGroupForm() {
     setName("");
-    setType("AGENCIA");
     setStatus("BORRADOR");
     setDepartureMode("UNICA");
     setCapacityMode("TOTAL");
@@ -292,7 +290,6 @@ export default function GroupsPage() {
   function startEditGroup(group: GroupItem) {
     setEditingGroup(group);
     setName(group.name || "");
-    setType(group.type || "AGENCIA");
     setStatus(group.status || "BORRADOR");
     setCapacityMode(group.capacity_mode === "SERVICIO" ? "SERVICIO" : "TOTAL");
     setCapacityTotal(
@@ -375,6 +372,22 @@ export default function GroupsPage() {
       toast.error(msg);
       return;
     }
+    const rawCapacityTotal = capacityTotal.trim();
+    let normalizedCapacityTotal: number | null = null;
+    if (rawCapacityTotal !== "") {
+      const parsedCapacityTotal = Number(rawCapacityTotal.replace(",", "."));
+      if (
+        !Number.isFinite(parsedCapacityTotal) ||
+        parsedCapacityTotal < 0 ||
+        !Number.isInteger(parsedCapacityTotal)
+      ) {
+        const msg = "El cupo debe ser un número entero mayor o igual a 0.";
+        setError(msg);
+        toast.error(msg);
+        return;
+      }
+      normalizedCapacityTotal = parsedCapacityTotal;
+    }
     if (!editingGroup && departureMode === "UNICA" && !departureDate) {
       const msg =
         "Para grupales con salida única, la fecha de salida es obligatoria.";
@@ -396,11 +409,11 @@ export default function GroupsPage() {
     try {
       const payload: Record<string, unknown> = {
         name: name.trim(),
-        type,
+        type: "AGENCIA",
         status,
         sale_mode: departureMode,
         capacity_mode: capacityMode,
-        capacity_total: null,
+        capacity_total: normalizedCapacityTotal,
         allow_overbooking: true,
         waitlist_enabled: false,
       };
@@ -413,9 +426,7 @@ export default function GroupsPage() {
               status,
               departure_date: departureDate,
               return_date: departureReturnDate || null,
-              capacity_total: capacityTotal.trim()
-                ? Number(capacityTotal)
-                : null,
+              capacity_total: normalizedCapacityTotal,
               allow_overbooking: true,
               waitlist_enabled: false,
             },
@@ -426,9 +437,7 @@ export default function GroupsPage() {
               name: departureName.trim(),
               departure_date: departureDate,
               return_date: departureReturnDate || null,
-              capacity_total: capacityTotal.trim()
-                ? Number(capacityTotal)
-                : null,
+              capacity_total: normalizedCapacityTotal,
               allow_overbooking: true,
               waitlist_enabled: false,
             },
@@ -647,25 +656,6 @@ export default function GroupsPage() {
                     required
                   />
                 </label>
-
-                <div className="flex flex-col gap-1 text-sm">
-                  <span className="text-slate-800 dark:text-slate-200">
-                    Tipo
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {TYPE_OPTIONS.map((item) => (
-                      <button
-                        key={item.value}
-                        type="button"
-                        onClick={() => setType(item.value)}
-                        disabled={createDisabled}
-                        className={pillClass(type === item.value, "sky")}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
 
                 <div className="flex flex-col gap-1 text-sm">
                   <span className="text-slate-800 dark:text-slate-200">
@@ -1166,24 +1156,15 @@ export default function GroupsPage() {
                             {formatGroupReference(group)}
                           </p>
                           <span className="rounded-full border border-sky-100/10 bg-sky-50/15 px-2 py-0.5 text-[11px] font-semibold dark:bg-sky-100/10">
-                            {formatGroupType(group.type)}
+                            Pasajeros: {group._count.passengers}
                           </span>
                         </div>
                         <p className="mt-2 line-clamp-2 text-xl font-semibold leading-tight">
                           {group.name}
                         </p>
-                        <div className="mt-3 flex flex-wrap items-center gap-2"></div>
-                        <div className="mt-4 grid grid-cols-3 gap-2 text-xs text-sky-900/85 dark:text-sky-100/85">
-                          <span className="rounded-full border border-white/10 bg-white/15 px-2 py-1 dark:bg-white/10">
-                            Cupo base por salida: {group.capacity_total ?? "-"}
-                          </span>
-                          <span className="rounded-full border border-white/10 bg-white/15 px-2 py-1 dark:bg-white/10">
-                            Salidas: {group._count.departures}
-                          </span>
-                          <span className="rounded-full border border-white/10 bg-white/15 px-2 py-1 dark:bg-white/10">
-                            Pasajeros: {group._count.passengers}
-                          </span>
-                        </div>
+                        <p className="mt-4 text-xs text-sky-900/85 dark:text-sky-100/85">
+                          Cupo base por salida: {group.capacity_total ?? "-"}
+                        </p>
                         <CollapsiblePanel
                           open={multipleDepartures && departureExpanded}
                           className="mt-4"
@@ -1268,7 +1249,7 @@ export default function GroupsPage() {
 
                           <div className="flex items-center gap-2">
                             <span className="rounded-full border border-white/10 bg-white/15 px-2 py-0.5 text-[11px] font-semibold dark:bg-white/10">
-                              {formatGroupType(group.type)}
+                              Pasajeros: {group._count.passengers}
                             </span>
                           </div>
                         </div>
@@ -1330,17 +1311,9 @@ export default function GroupsPage() {
                           </div>
                         </CollapsiblePanel>
 
-                        <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-sky-900/85 dark:text-sky-100/85 sm:grid-cols-3">
-                          <span className="rounded-full border border-white/10 bg-white/15 px-2 py-1 dark:bg-white/10">
-                            Cupo base por salida: {group.capacity_total ?? "-"}
-                          </span>
-                          <span className="rounded-full border border-white/10 bg-white/15 px-2 py-1 dark:bg-white/10">
-                            Salidas: {group._count.departures}
-                          </span>
-                          <span className="rounded-full border border-white/10 bg-white/15 px-2 py-1 dark:bg-white/10">
-                            Pasajeros: {group._count.passengers}
-                          </span>
-                        </div>
+                        <p className="mt-3 text-xs text-sky-900/85 dark:text-sky-100/85">
+                          Cupo base por salida: {group.capacity_total ?? "-"}
+                        </p>
                       </article>
                     );
                   })}

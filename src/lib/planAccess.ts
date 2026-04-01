@@ -4,6 +4,7 @@ export type PlanFeatureKey =
   | "calendar"
   | "resources"
   | "templates"
+  | "groups"
   | "insights"
   | "client_stats"
   | "cashbox"
@@ -27,6 +28,7 @@ export const PLAN_FEATURE_MIN: Record<PlanFeatureKey, PlanKey> = {
   calendar: "medio",
   resources: "medio",
   templates: "medio",
+  groups: "pro",
   insights: "medio",
   client_stats: "medio",
   cashbox: "medio",
@@ -60,6 +62,7 @@ const PLAN_ROUTE_FEATURES: Array<{ prefix: string; feature: PlanFeatureKey }> = 
   { prefix: "/resources", feature: "resources" },
   { prefix: "/template-config", feature: "templates" },
   { prefix: "/templates", feature: "templates" },
+  { prefix: "/groups", feature: "groups" },
 ];
 
 function matchesPrefix(pathname: string, prefix: string): boolean {

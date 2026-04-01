@@ -19,6 +19,7 @@ export type VisibleKey =
   | "tax_id"
   | "nationality"
   | "gender"
+  | "birth_date"
   | "age"
   | "locality"
   | "registration_date";

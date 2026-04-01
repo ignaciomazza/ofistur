@@ -135,14 +135,32 @@ export async function middleware(req: NextRequest) {
 
   const role = normalizeRole(payload.role);
   const userId = Number(payload.userId ?? payload.id_user ?? 0) || 0;
+  const groupWriterRoles = [
+    "desarrollador",
+    "gerente",
+    "administrativo",
+    "lider",
+    "vendedor",
+  ];
+  const groupConfigRoles = [
+    "desarrollador",
+    "gerente",
+    "administrativo",
+    "lider",
+  ];
 
   // Guards por rol (incluye páginas y APIs sensibles)
   let allowed: string[] = [];
   if (
+    /^\/groups\/config(\/|$)/.test(pathname) ||
+    /^\/api\/groups\/config(\/|$)/.test(pathname)
+  ) {
+    allowed = groupConfigRoles;
+  } else if (
     /^\/groups(\/|$)/.test(pathname) ||
     /^\/api\/groups(\/|$)/.test(pathname)
   ) {
-    allowed = ["desarrollador"];
+    allowed = groupWriterRoles;
   } else if (!pathname.startsWith("/api")) {
     if (/^\/(teams|agency)(\/|$)/.test(pathname)) {
       allowed = ["desarrollador", "gerente"];

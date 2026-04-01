@@ -32,6 +32,7 @@ import {
   parseAmountInput,
   resolveReceiptIdFrom,
 } from "@/utils/receipts/receiptForm";
+import { formatMoneyInput } from "@/utils/moneyInput";
 import { filterAccountsByCurrency } from "@/utils/receipts/accounts";
 import type { GroupFinanceContextOption } from "@/components/groups/finance/contextTypes";
 
@@ -1010,7 +1011,14 @@ export default function GroupReceiptForm({
     if (!suggestions) return;
 
     if (currencyOverride && lockedCurrency) {
-      if (suggestions.base != null) setBaseAmount(String(suggestions.base));
+      if (suggestions.base != null) {
+        setBaseAmount(
+          formatMoneyInput(
+            String(suggestions.base),
+            baseCurrency || lockedCurrency || freeCurrency || "ARS",
+          ),
+        );
+      }
       if (!baseCurrency) setBaseCurrency(lockedCurrency);
       return;
     }
@@ -1023,7 +1031,10 @@ export default function GroupReceiptForm({
         return [
           {
             key: uid(),
-            amount: String(target),
+            amount: formatMoneyInput(
+              String(target),
+              freeCurrency || lockedCurrency || "ARS",
+            ),
             payment_method_id: null,
             account_id: null,
             payment_currency: normalizeCurrencyCodeLoose(
@@ -1043,19 +1054,15 @@ export default function GroupReceiptForm({
       const nextLast = Math.max(0, target - sumExceptLast);
 
       const next = [...prev];
+      const lineCurrency =
+        next[lastIdx].payment_currency || freeCurrency || lockedCurrency || "ARS";
       next[lastIdx] = {
         ...next[lastIdx],
-        amount: nextLast.toLocaleString("es-AR", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }),
+        amount: formatMoneyInput(String(nextLast), lineCurrency),
         ...(suggestions.fee != null
           ? {
               fee_mode: "FIXED" as const,
-              fee_value: suggestions.fee.toLocaleString("es-AR", {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              }),
+              fee_value: formatMoneyInput(String(suggestions.fee), lineCurrency),
             }
           : {}),
       };
@@ -1579,6 +1586,15 @@ export default function GroupReceiptForm({
 
   /* ===== Validación ===== */
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const notifyFirstValidationError = useCallback(
+    (validationErrors: Record<string, string>) => {
+      const firstMessage = Object.values(validationErrors).find(
+        (message) => typeof message === "string" && message.trim().length > 0,
+      );
+      if (firstMessage) toast.error(firstMessage);
+    },
+    [],
+  );
 
   const validateCreate = () => {
     const e: Record<string, string> = {};
@@ -1694,11 +1710,10 @@ export default function GroupReceiptForm({
     }
 
     if (!amountWords.trim()) e.amountWords = "Ingresá el importe en palabras.";
-    if (!paymentDescription.trim())
-      e.paymentDescription =
-        "Agregá el detalle del método de pago (para el PDF).";
-
     setErrors(e);
+    if (Object.keys(e).length > 0) {
+      notifyFirstValidationError(e);
+    }
     return Object.keys(e).length === 0;
   };
 
@@ -1709,6 +1724,9 @@ export default function GroupReceiptForm({
     if (requireServiceSelection && serviceIdsForContext.length === 0)
       e.services = "Selecciona al menos un servicio.";
     setErrors(e);
+    if (Object.keys(e).length > 0) {
+      notifyFirstValidationError(e);
+    }
     return Object.keys(e).length === 0;
   };
 
@@ -1866,6 +1884,11 @@ export default function GroupReceiptForm({
         ? effectiveCurrency
         : undefined;
     const normalizedConcept = (concept ?? "").trim() || "Cobro de grupal";
+    const normalizedPaymentDescription =
+      paymentDescription?.trim() ||
+      paymentDescriptionAuto.trim() ||
+      paymentSummary.trim() ||
+      undefined;
     const payloadClientIds = clientIds.filter(
       (v): v is number => typeof v === "number" && Number.isFinite(v),
     );
@@ -1905,7 +1928,7 @@ export default function GroupReceiptForm({
 
       payments: normalizedPayments,
 
-      currency: paymentDescription?.trim() || undefined,
+      currency: normalizedPaymentDescription,
 
       base_amount: payloadBaseAmount,
       base_currency: payloadBaseCurrency,

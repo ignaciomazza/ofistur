@@ -133,7 +133,14 @@ export default async function handler(
         where: {
           id_agency: auth.id_agency,
           travel_group_id: group.id_travel_group,
-          ...(departureId ? { travel_group_departure_id: departureId } : {}),
+          ...(departureId
+            ? {
+                OR: [
+                  { travel_group_departure_id: null },
+                  { travel_group_departure_id: departureId },
+                ],
+              }
+            : {}),
         },
         include: {
           travelGroupDeparture: {

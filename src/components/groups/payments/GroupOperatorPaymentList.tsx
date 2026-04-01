@@ -16,8 +16,11 @@ type Props = {
   groupPassengerId?: number | null;
   contextId?: number; // listar pagos asociados a este contexto
   operatorId?: number; // opcional: filtrar por operador
+  role?: string;
   className?: string;
   reloadKey?: number; // forzar refetch al cambiar
+  onPaymentEdit?: (item: InvestmentItem) => void;
+  onPaymentDeleted?: (id: number) => void;
 };
 
 type ApiError = { error?: string; message?: string; details?: string };
@@ -42,8 +45,11 @@ export default function GroupOperatorPaymentList({
   groupPassengerId,
   contextId,
   operatorId,
+  role,
   className,
   reloadKey,
+  onPaymentEdit,
+  onPaymentDeleted,
 }: Props) {
   const [items, setItems] = useState<InvestmentItem[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
@@ -220,7 +226,7 @@ export default function GroupOperatorPaymentList({
   }, [token, nextCursor, loadingMore, queryString, contextId, groupId]);
 
   return (
-    <div className={`space-y-7 ${className ?? ""}`}>
+    <div className={`space-y-6 ${className ?? ""}`}>
       <div className="space-y-6">
         {loadingList ? (
           <div className="flex min-h-[18vh] items-center">
@@ -229,18 +235,27 @@ export default function GroupOperatorPaymentList({
         ) : items.length === 0 ? (
           <div className="rounded-2xl border border-sky-300/80 bg-white p-5 text-center text-[13px] text-slate-700 shadow-sm shadow-slate-900/10 backdrop-blur-sm dark:border-sky-600/30 dark:bg-sky-950/10 dark:text-slate-300 md:text-sm">
             {groupId
-              ? "No hay pagos cargados para esta salida."
-              : `No hay pagos cargados ${contextId ? "para este contexto." : "."}`}
+              ? "No hay pagos registrados para esta salida."
+              : `No hay pagos registrados ${contextId ? "para este contexto." : "."}`}
           </div>
         ) : (
           <>
-            <div className="space-y-5">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {items.map((it) => (
                 <GroupOperatorPaymentCard
                   key={it.id_investment}
                   item={it}
                   token={token}
+                  groupId={groupId}
+                  role={role}
                   allowDownload={!groupId}
+                  onEdit={onPaymentEdit}
+                  onDeleted={(id) => {
+                    setItems((prev) =>
+                      prev.filter((item) => item.id_investment !== id),
+                    );
+                    onPaymentDeleted?.(id);
+                  }}
                 />
               ))}
             </div>

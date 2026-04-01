@@ -13,6 +13,7 @@ import type {
 import type { Client } from "@/types";
 import Spinner from "@/components/Spinner";
 import { parseAmountInput } from "@/utils/receipts/receiptForm";
+import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
 import { Field, Section, inputBase } from "./primitives";
 
 type CreditAccountOption = {
@@ -34,6 +35,22 @@ type PaymentDraft = {
 
   operator_id: number | null;
   credit_account_id: number | null;
+};
+
+const sanitizePercentInput = (raw: string): string => {
+  const cleaned = String(raw || "").replace(/[^\d.,]/g, "");
+  if (!cleaned) return "";
+
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  const sepIndex = Math.max(lastComma, lastDot);
+  if (sepIndex < 0) {
+    return cleaned.replace(/[^\d]/g, "");
+  }
+
+  const intPart = cleaned.slice(0, sepIndex).replace(/[^\d]/g, "") || "0";
+  const decPart = cleaned.slice(sepIndex + 1).replace(/[^\d]/g, "").slice(0, 2);
+  return decPart ? `${intPart},${decPart}` : intPart;
 };
 
 export default function GroupCreateReceiptFields(props: {
@@ -412,9 +429,14 @@ export default function GroupCreateReceiptFields(props: {
                     </label>
                     <input
                       value={line.amount}
-                      onChange={(e) =>
-                        setPaymentLineAmount(line.key, e.target.value)
-                      }
+                      onChange={(e) => {
+                        const nextValue = formatMoneyInput(
+                          e.target.value,
+                          line.payment_currency || effectiveCurrency,
+                          { preferDotDecimal: shouldPreferDotDecimal(e) },
+                        );
+                        setPaymentLineAmount(line.key, nextValue);
+                      }}
                       placeholder={formatNum(
                         0,
                         line.payment_currency || effectiveCurrency,
@@ -666,9 +688,21 @@ export default function GroupCreateReceiptFields(props: {
                     </label>
                     <input
                       value={line.fee_value}
-                      onChange={(e) =>
-                        setPaymentLineFeeValue(line.key, e.target.value)
-                      }
+                      onChange={(e) => {
+                        if (line.fee_mode === "PERCENT") {
+                          setPaymentLineFeeValue(
+                            line.key,
+                            sanitizePercentInput(e.target.value),
+                          );
+                          return;
+                        }
+                        const nextValue = formatMoneyInput(
+                          e.target.value,
+                          line.payment_currency || effectiveCurrency,
+                          { preferDotDecimal: shouldPreferDotDecimal(e) },
+                        );
+                        setPaymentLineFeeValue(line.key, nextValue);
+                      }}
                       placeholder={line.fee_mode === "PERCENT" ? "Ej: 5" : "0,00"}
                       className={inputBase}
                       disabled={line.fee_mode === "NONE"}
@@ -768,13 +802,32 @@ export default function GroupCreateReceiptFields(props: {
             <div className="flex gap-2">
               <input
                 value={baseAmount}
-                onChange={(e) => setBaseAmount(e.target.value)}
+                onChange={(e) =>
+                  setBaseAmount(
+                    formatMoneyInput(
+                      e.target.value,
+                      baseCurrency || lockedCurrency || effectiveCurrency,
+                      { preferDotDecimal: shouldPreferDotDecimal(e) },
+                    ),
+                  )
+                }
                 placeholder="1500"
                 className={inputBase}
               />
               <select
                 value={baseCurrency}
-                onChange={(e) => setBaseCurrency(e.target.value)}
+                onChange={(e) => {
+                  const nextCurrency = e.target.value;
+                  setBaseCurrency(nextCurrency);
+                  if (baseAmount.trim()) {
+                    setBaseAmount(
+                      formatMoneyInput(
+                        baseAmount,
+                        nextCurrency || lockedCurrency || effectiveCurrency,
+                      ),
+                    );
+                  }
+                }}
                 className={`${inputBase} cursor-pointer appearance-none`}
               >
                 <option value="">Moneda</option>
@@ -800,13 +853,32 @@ export default function GroupCreateReceiptFields(props: {
             <div className="flex gap-2">
               <input
                 value={counterAmount}
-                onChange={(e) => setCounterAmount(e.target.value)}
+                onChange={(e) =>
+                  setCounterAmount(
+                    formatMoneyInput(
+                      e.target.value,
+                      counterCurrency || effectiveCurrency,
+                      { preferDotDecimal: shouldPreferDotDecimal(e) },
+                    ),
+                  )
+                }
                 placeholder="2000000"
                 className={inputBase}
               />
               <select
                 value={counterCurrency}
-                onChange={(e) => setCounterCurrency(e.target.value)}
+                onChange={(e) => {
+                  const nextCurrency = e.target.value;
+                  setCounterCurrency(nextCurrency);
+                  if (counterAmount.trim()) {
+                    setCounterAmount(
+                      formatMoneyInput(
+                        counterAmount,
+                        nextCurrency || effectiveCurrency,
+                      ),
+                    );
+                  }
+                }}
                 className={`${inputBase} cursor-pointer appearance-none`}
               >
                 <option value="">Moneda</option>

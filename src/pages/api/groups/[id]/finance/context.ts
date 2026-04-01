@@ -409,7 +409,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ...(departureScope === null
         ? { travel_group_departure_id: null }
         : typeof departureScope === "number"
-          ? { travel_group_departure_id: departureScope }
+          ? {
+              OR: [
+                { travel_group_departure_id: null },
+                { travel_group_departure_id: departureScope },
+              ],
+            }
           : {}),
     },
     include: {

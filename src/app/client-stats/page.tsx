@@ -8,7 +8,10 @@ import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { authFetch } from "@/utils/authFetch";
 import { useAuth } from "@/context/AuthContext";
-import { todayDateKeyInBuenosAires } from "@/lib/buenosAiresDate";
+import {
+  formatDateOnlyInBuenosAires,
+  todayDateKeyInBuenosAires,
+} from "@/lib/buenosAiresDate";
 import {
   downloadCsvFile,
   toCsvHeaderRow,
@@ -80,10 +83,12 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "tax_id", label: "CUIT/CUIL" },
   { key: "nationality", label: "Nacionalidad" },
   { key: "gender", label: "Género" },
+  { key: "birth_date", label: "Nacimiento" },
   { key: "age", label: "Edad" },
   { key: "locality", label: "Localidad" },
   { key: "registration_date", label: "Registrado" },
 ];
+const ALL_COLUMN_KEYS = new Set<VisibleKey>(ALL_COLUMNS.map((c) => c.key));
 
 /* =========================================================
  * HELPERS DE FORMATEO / RENDER
@@ -130,6 +135,8 @@ function valueFor(
       return c._natDisplay || "—"; // solo el nombre del país
     case "gender":
       return c._gender || "—";
+    case "birth_date":
+      return c.birth_date ? formatDateOnlyInBuenosAires(c.birth_date) : "—";
     case "age":
       return typeof c._age === "number" ? c._age : "—";
     case "locality":
@@ -292,6 +299,7 @@ export default function ClientStatsPage() {
 
   /* ------------ columnas visibles / picker ------------- */
   const STORAGE_KEY = "client-stats-columns-minimal";
+  const COLUMN_PREFS_VERSION = 2;
   const defaultVisible: VisibleKey[] = [
     "id_client",
     "full_name",
@@ -299,6 +307,7 @@ export default function ClientStatsPage() {
     "email",
     "owner",
     "dni_number",
+    "birth_date",
     "age",
     "nationality",
     "registration_date",
@@ -310,14 +319,32 @@ export default function ClientStatsPage() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { visible?: VisibleKey[] };
-      if (Array.isArray(parsed.visible)) setVisible(parsed.visible);
+      const parsed = JSON.parse(raw) as {
+        visible?: unknown;
+        version?: number;
+      };
+      if (!Array.isArray(parsed.visible)) return;
+
+      const storedVisible = parsed.visible.filter(
+        (key): key is VisibleKey =>
+          typeof key === "string" && ALL_COLUMN_KEYS.has(key as VisibleKey),
+      );
+      if (storedVisible.length === 0) return;
+
+      const migratedVisible =
+        parsed.version === COLUMN_PREFS_VERSION
+          ? storedVisible
+          : Array.from(new Set<VisibleKey>([...storedVisible, "birth_date"]));
+      setVisible(migratedVisible);
     } catch {
       // ignore
     }
   }, []);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ visible }));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: COLUMN_PREFS_VERSION, visible }),
+    );
   }, [visible]);
 
   const allKeys = useMemo(() => ALL_COLUMNS.map((c) => c.key), []);

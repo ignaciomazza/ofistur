@@ -3,7 +3,9 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { decodePublicId, encodePublicId } from "@/lib/publicIds";
 import { resolveAuth, type AuthContext } from "@/lib/auth";
+import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { normalizeRole } from "@/utils/permissions";
+import { groupApiError } from "@/lib/groups/apiErrors";
 
 export const GROUP_TYPES = [
   "AGENCIA",
@@ -68,13 +70,15 @@ export async function requireAuth(
     });
     return null;
   }
+  let resolvedAuth: AuthContext = auth;
+
   try {
     const user = await prisma.user.findUnique({
       where: { id_user: auth.id_user },
       select: { id_agency: true, role: true, email: true },
     });
     if (user?.id_agency && user.id_agency !== auth.id_agency) {
-      return {
+      resolvedAuth = {
         id_user: auth.id_user,
         id_agency: user.id_agency,
         role: normalizeRole(auth.role || user.role),
@@ -84,7 +88,22 @@ export async function requireAuth(
   } catch {
     // Si falla esta verificación, seguimos con el contexto del token.
   }
-  return auth;
+
+  const planAccess = await ensurePlanFeatureAccess(resolvedAuth.id_agency, "groups");
+  if (!planAccess.allowed) {
+    groupApiError(
+      res,
+      403,
+      "Plan insuficiente para usar grupales.",
+      {
+        code: "GROUP_PLAN_FORBIDDEN",
+        solution: "Actualizá la suscripción de la agencia al plan Pro para habilitar Grupales.",
+      },
+    );
+    return null;
+  }
+
+  return resolvedAuth;
 }
 
 export function parsePositiveInt(value: unknown): number | null {

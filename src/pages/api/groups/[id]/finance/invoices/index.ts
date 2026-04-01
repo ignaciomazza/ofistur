@@ -13,7 +13,10 @@ import {
   toAmountNumber,
   toDecimal,
 } from "@/lib/groups/financeShared";
-import { decodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
+import {
+  decodeInventoryServiceId,
+  resolveInventorySaleUnitPrice,
+} from "@/lib/groups/inventoryServiceRefs";
 
 type GroupInvoiceRow = {
   id_travel_group_invoice: number;
@@ -282,6 +285,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
             select: {
               unit_cost: true,
               currency: true,
+              total_qty: true,
+              note: true,
             },
           })
         : Promise.resolve([]),
@@ -300,7 +305,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       new Prisma.Decimal(0),
     );
     const inventoryTotal = inventoryServices.reduce(
-      (acc, item) => acc.plus(toDecimal(toAmountNumber(item.unit_cost))),
+      (acc, item) => acc.plus(toDecimal(resolveInventorySaleUnitPrice(item))),
       new Prisma.Decimal(0),
     );
     servicesTotal = regularTotal.plus(inventoryTotal);

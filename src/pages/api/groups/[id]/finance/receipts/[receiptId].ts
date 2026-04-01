@@ -14,6 +14,7 @@ import { validateGroupReceiptDebt } from "@/lib/groups/groupReceiptDebtValidatio
 import {
   decodeInventoryServiceId,
   encodeInventoryServiceId,
+  resolveInventorySaleUnitPrice,
 } from "@/lib/groups/inventoryServiceRefs";
 
 async function findReceipt(
@@ -233,6 +234,8 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
               id_travel_group_inventory: true,
               currency: true,
               unit_cost: true,
+              total_qty: true,
+              note: true,
             },
           })
         : Promise.resolve([]),
@@ -266,7 +269,7 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
     const inventoryServices = inventoryRows.map((row) => ({
       id_service: encodeInventoryServiceId(row.id_travel_group_inventory),
       currency: row.currency,
-      sale_price: toAmountNumber(row.unit_cost),
+      sale_price: resolveInventorySaleUnitPrice(row),
       card_interest: 0,
       taxableCardInterest: 0,
       vatOnCardInterest: 0,

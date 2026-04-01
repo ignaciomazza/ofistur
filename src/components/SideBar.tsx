@@ -199,10 +199,23 @@ export default function SideBar({
     const adm: Role[] = ["desarrollador", "gerente", "administrativo"];
     const devMgr: Role[] = ["desarrollador", "gerente"];
     const insightsRoles: Role[] = [...adm, "marketing"];
+    const groupWriterRoles: Role[] = [
+      "desarrollador",
+      "gerente",
+      "administrativo",
+      "lider",
+      "vendedor",
+    ];
+    const groupConfigRoles: Role[] = [
+      "desarrollador",
+      "gerente",
+      "administrativo",
+      "lider",
+    ];
     const devOnly: Role[] = ["desarrollador"];
 
     return {
-      "/groups": devOnly,
+      "/groups": groupWriterRoles,
       "/operators": ["desarrollador", "administrativo", "gerente"],
       "/operators/payments": ["desarrollador", "administrativo", "gerente"],
       "/operators/panel": ["desarrollador", "administrativo", "gerente"],
@@ -217,7 +230,7 @@ export default function SideBar({
       "/invoices": adm,
       "/quotes/config": adm,
       "/bookings/config": adm,
-      "/groups/config": devOnly,
+      "/groups/config": groupConfigRoles,
       "/balances": adm,
       "/earnings": adm,
       "/earnings/my": [

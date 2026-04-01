@@ -48,6 +48,7 @@ import GroupOperatorDueForm from "@/components/groups/payments/GroupOperatorDueF
 import GroupOperatorDueList from "@/components/groups/payments/GroupOperatorDueList";
 import GroupOperatorPaymentForm from "@/components/groups/payments/GroupOperatorPaymentForm";
 import GroupOperatorPaymentList from "@/components/groups/payments/GroupOperatorPaymentList";
+import type { InvestmentItem as GroupOperatorPaymentItem } from "@/components/groups/payments/GroupOperatorPaymentCard";
 import GroupInvoiceForm, {
   type InvoiceFormData,
 } from "@/components/groups/billing/GroupInvoiceForm";
@@ -1456,6 +1457,8 @@ export default function GroupDetailPage() {
     financeOperatorPaymentsReloadKey,
     setFinanceOperatorPaymentsReloadKey,
   ] = useState(0);
+  const [editingOperatorPayment, setEditingOperatorPayment] =
+    useState<GroupOperatorPaymentItem | null>(null);
 
   const [paymentsContext, setPaymentsContext] =
     useState<GroupFinanceContextPayload | null>(null);
@@ -3048,6 +3051,10 @@ export default function GroupDetailPage() {
     setFinanceInvoiceFormVisible(false);
     setFinanceInvoiceFormData(createEmptyInvoiceFormData());
   }, [selectedFinanceScope?.key]);
+
+  useEffect(() => {
+    setEditingOperatorPayment(null);
+  }, [selectedPaymentsScope?.key]);
 
   useEffect(() => {
     const clientId = selectedFinanceInvoiceClientId;
@@ -5579,7 +5586,12 @@ export default function GroupDetailPage() {
                         }
                         availableServices={paymentsContextServices}
                         operators={operatorOptions as unknown as Operator[]}
+                        editingPayment={editingOperatorPayment}
+                        onCancelEdit={() => {
+                          setEditingOperatorPayment(null);
+                        }}
                         onCreated={() => {
+                          setEditingOperatorPayment(null);
                           setFinanceOperatorPaymentsReloadKey(
                             (prev) => prev + 1,
                           );
@@ -5590,8 +5602,19 @@ export default function GroupDetailPage() {
                     <GroupOperatorPaymentList
                       token={token}
                       groupId={groupId}
+                      role={financeRole}
                       scopeKey={selectedPaymentsScope.key}
                       reloadKey={financeOperatorPaymentsReloadKey}
+                      onPaymentEdit={(payment) => {
+                        setEditingOperatorPayment(payment);
+                      }}
+                      onPaymentDeleted={(deletedId) => {
+                        setEditingOperatorPayment((prev) =>
+                          prev && prev.id_investment === deletedId ? null : prev,
+                        );
+                        setFinanceOperatorPaymentsReloadKey((prev) => prev + 1);
+                        void refreshPaymentsData();
+                      }}
                     />
                   </section>
 
