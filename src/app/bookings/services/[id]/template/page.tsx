@@ -1441,9 +1441,14 @@ export default function BookingVoucherPage() {
     setEditableBlocks((prev) => {
       const byId = new Map(prev.map((b) => [b.id, b]));
       const previewIds = new Set(previewBlocks.map((b) => b.id));
-      const mergedPreview = previewBlocks.map(
-        (b) => byId.get(b.id) ?? contentBlockToOrdered(b, false),
-      );
+      const mergedPreview = previewBlocks.map((b) => {
+        const baseBlock = contentBlockToOrdered(b, false);
+        const previous = byId.get(b.id);
+        if (!previous) return baseBlock;
+        if (previous.origin === "fixed") return baseBlock;
+        if (previous.type !== baseBlock.type) return baseBlock;
+        return previous;
+      });
       const customBlocks = prev.filter((block) => !previewIds.has(block.id));
       return [...mergedPreview, ...customBlocks];
     });
