@@ -35,6 +35,7 @@ export type ReceiptStandalonePdfData = {
   base_currency?: string | null;
   counter_amount?: number | null;
   counter_currency?: string | null;
+  manualFreeText?: string;
   agency: {
     name: string;
     legalName: string;
@@ -278,6 +279,7 @@ export default function ReceiptStandaloneDocument(
     base_currency,
     counter_amount,
     counter_currency,
+    manualFreeText,
     agency,
     recipients,
   } = props;
@@ -301,6 +303,7 @@ export default function ReceiptStandaloneDocument(
     0,
   );
   const showLegacyGlobalFee = fee > 0 && linesFeeTotal <= 0.0001;
+  const manualFreeTextValue = String(manualFreeText || "").trim();
   const clientTotal = amount + fee;
   const displayAmount = safeFmtCurrency(clientTotal, displayCurrency);
   const amountStringLabel =
@@ -408,6 +411,14 @@ export default function ReceiptStandaloneDocument(
             </View>
           </View>
         )}
+
+        {manualFreeTextValue ? (
+          <View style={styles.section}>
+            <Text>
+              {softWrapLongWords(manualFreeTextValue, { breakChar: " " })}
+            </Text>
+          </View>
+        ) : null}
 
         {payments.length > 0 && (
           <View style={styles.section}>

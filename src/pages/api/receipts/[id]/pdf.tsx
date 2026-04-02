@@ -454,6 +454,7 @@ export default async function handler(
   const paymentDetailForPdf =
     pdfItemsPayload.paymentDetail || receipt.amount_currency;
   const manualPdfItems = pdfItemsPayload.items;
+  const manualPdfFreeText = pdfItemsPayload.freeText;
   const servicesForPdf =
     manualPdfItems.length > 0
       ? manualPdfItems.map((item, idx) => ({
@@ -617,6 +618,7 @@ export default async function handler(
     payments,
 
     services: servicesForPdf,
+    manualFreeText: manualPdfFreeText,
 
     booking: {
       details: receipt.booking?.details ?? "-",
@@ -659,6 +661,7 @@ export default async function handler(
     paymentFeeAmount: paymentFeeAmountTotal,
     payments,
     services: servicesForPdf,
+    manualFreeText: manualPdfFreeText,
     base_amount:
       receiptTyped.base_amount != null
         ? toNum(receiptTyped.base_amount, 0)

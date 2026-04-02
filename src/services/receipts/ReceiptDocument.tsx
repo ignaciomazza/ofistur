@@ -50,6 +50,7 @@ export interface ReceiptPdfData {
   base_currency?: string | null;
   counter_amount?: number | null;
   counter_currency?: string | null;
+  manualFreeText?: string;
 
   services: Array<{
     id: number;
@@ -283,6 +284,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: "#eee",
   },
+  rowLast: {
+    borderBottomWidth: 0,
+  },
   rowAlt: { backgroundColor: "#fcfcfc" },
   cellDesc: { width: "70%", padding: 6, fontSize: 9 },
   cellDate: {
@@ -329,6 +333,22 @@ const styles = StyleSheet.create({
     color: "#333",
   },
   payMeta: { fontSize: 8.5, color: "#666" },
+  manualFreeTextBox: {
+    marginTop: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 6,
+    backgroundColor: "#f8fafc",
+    padding: 8,
+  },
+  manualFreeTextValue: {
+    fontSize: 9,
+    color: "#1f2937",
+  },
+  paymentSummaryTitle: {
+    marginTop: 14,
+  },
 });
 
 /* ====== Componente ====== */
@@ -346,6 +366,7 @@ const ReceiptDocument: React.FC<ReceiptPdfData> = ({
   base_currency,
   counter_amount,
   counter_currency,
+  manualFreeText,
   services,
   booking: { details, departureDate, returnDate, agency },
   recipients,
@@ -392,6 +413,7 @@ const ReceiptDocument: React.FC<ReceiptPdfData> = ({
   const showCounter = hasCounter && !hideAltValues;
   const showPaymentAmounts = !hideAltValues;
   const paymentDetail = (currency || "").trim();
+  const manualFreeTextValue = (manualFreeText || "").trim();
   const showPaymentDetail =
     paymentDetail.length > 0 && !/^[A-Z]{3}$/.test(paymentDetail);
 
@@ -461,20 +483,36 @@ const ReceiptDocument: React.FC<ReceiptPdfData> = ({
             <Text style={styles.cellDesc}>Descripción</Text>
             <Text style={styles.cellDate}>Fecha</Text>
           </View>
-          {services.map((svc, i) => (
-            <View
-              key={svc.id}
-              style={i % 2 ? [styles.row, styles.rowAlt] : styles.row}
-            >
-              <Text style={styles.cellDesc}>
-                {softWrapLongWords(svc.description, { breakChar: " " })}
-              </Text>
-              <Text style={styles.cellDate}>{formatServiceRange(svc)}</Text>
-            </View>
-          ))}
+          {services.map((svc, i) => {
+            const isLastRow = i === services.length - 1;
+            return (
+              <View
+                key={svc.id}
+                style={[
+                  styles.row,
+                  i % 2 ? styles.rowAlt : undefined,
+                  isLastRow ? styles.rowLast : undefined,
+                ]}
+              >
+                <Text style={styles.cellDesc}>
+                  {softWrapLongWords(svc.description, { breakChar: " " })}
+                </Text>
+                <Text style={styles.cellDate}>{formatServiceRange(svc)}</Text>
+              </View>
+            );
+          })}
         </View>
+        {manualFreeTextValue ? (
+          <View style={styles.manualFreeTextBox}>
+            <Text style={styles.manualFreeTextValue}>
+              {softWrapLongWords(manualFreeTextValue, { breakChar: " " })}
+            </Text>
+          </View>
+        ) : null}
 
-        <Text style={styles.sectionTitle}>Resumen de pago</Text>
+        <Text style={[styles.sectionTitle, styles.paymentSummaryTitle]}>
+          Resumen de pago
+        </Text>
         <View style={styles.twoCols}>
           <View style={styles.col}>
             <View style={styles.amountBox}>

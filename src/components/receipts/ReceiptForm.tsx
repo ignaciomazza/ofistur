@@ -1964,7 +1964,8 @@ export default function ReceiptForm({
     ),
   );
   const [manualPdfItemsEnabled, setManualPdfItemsEnabled] = useState(
-    initialPdfItemsPayload.items.length > 0,
+    initialPdfItemsPayload.items.length > 0 ||
+      initialPdfItemsPayload.freeText.length > 0,
   );
   const [manualPdfItems, setManualPdfItems] = useState<ManualPdfItemDraft[]>(
     () =>
@@ -1973,6 +1974,9 @@ export default function ReceiptForm({
         description: item.description,
         date_label: item.date_label || "",
       })),
+  );
+  const [manualPdfFreeText, setManualPdfFreeText] = useState(
+    initialPdfItemsPayload.freeText,
   );
 
   const handlePaymentDescriptionChange = useCallback((v: string) => {
@@ -3053,9 +3057,13 @@ export default function ReceiptForm({
     if (!paymentDescription.trim())
       e.paymentDescription =
         "Agregá el detalle del método de pago (para el PDF).";
-    if (manualPdfItemsEnabled && normalizedManualPdfItems.length === 0) {
+    if (
+      manualPdfItemsEnabled &&
+      normalizedManualPdfItems.length === 0 &&
+      !manualPdfFreeText.trim()
+    ) {
       e.pdf_items =
-        "Cargá al menos un ítem manual o desactivá la carga manual del PDF.";
+        "Cargá al menos un ítem manual, un texto libre, o desactivá la carga manual del PDF.";
     }
 
     setErrors(e);
@@ -3317,6 +3325,7 @@ export default function ReceiptForm({
         encodeReceiptPdfItemsPayload({
           paymentDetail: paymentDescription?.trim() || "",
           items: normalizedManualPdfItems,
+          freeText: manualPdfFreeText,
           enabled: manualPdfItemsEnabled,
         }) || undefined,
 
@@ -3674,10 +3683,12 @@ export default function ReceiptForm({
                   manualPdfItemsEnabled={manualPdfItemsEnabled}
                   setManualPdfItemsEnabled={setManualPdfItemsEnabled}
                   manualPdfItems={manualPdfItems}
+                  manualPdfFreeText={manualPdfFreeText}
                   addManualPdfItem={addManualPdfItem}
                   removeManualPdfItem={removeManualPdfItem}
                   setManualPdfItemDescription={setManualPdfItemDescription}
                   setManualPdfItemDateLabel={setManualPdfItemDateLabel}
+                  setManualPdfFreeText={setManualPdfFreeText}
                   concept={concept}
                   setConcept={setConcept}
                   baseAmount={baseAmount}

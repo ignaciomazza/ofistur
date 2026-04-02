@@ -140,10 +140,12 @@ export default function CreateReceiptFields(props: {
   manualPdfItemsEnabled: boolean;
   setManualPdfItemsEnabled: (next: boolean) => void;
   manualPdfItems: ManualPdfItemDraft[];
+  manualPdfFreeText: string;
   addManualPdfItem: () => void;
   removeManualPdfItem: (key: string) => void;
   setManualPdfItemDescription: (key: string, value: string) => void;
   setManualPdfItemDateLabel: (key: string, value: string) => void;
+  setManualPdfFreeText: (value: string) => void;
 
   // concepto / conversión
   concept: string;
@@ -247,10 +249,12 @@ export default function CreateReceiptFields(props: {
     manualPdfItemsEnabled,
     setManualPdfItemsEnabled,
     manualPdfItems,
+    manualPdfFreeText,
     addManualPdfItem,
     removeManualPdfItem,
     setManualPdfItemDescription,
     setManualPdfItemDateLabel,
+    setManualPdfFreeText,
 
     concept,
     setConcept,
@@ -542,7 +546,7 @@ export default function CreateReceiptFields(props: {
               >
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-950/70 dark:text-white/70">
-                    Pago #{idx + 1}
+                    Pago Nº {idx + 1}
                   </p>
                   <button
                     type="button"
@@ -1285,47 +1289,34 @@ export default function CreateReceiptFields(props: {
         <Section
           title="Ajustar monto por servicio"
           desc="Asigná cuánto del cobro corresponde a cada servicio seleccionado."
+          headerRight={
+            <button
+              type="button"
+              role="switch"
+              aria-checked={manualServiceAllocationsEnabled}
+              onClick={() =>
+                allocationServices.length > 0 &&
+                setManualServiceAllocationsEnabled(!manualServiceAllocationsEnabled)
+              }
+              disabled={allocationServices.length === 0}
+              className={[
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                manualServiceAllocationsEnabled
+                  ? "bg-sky-500/70"
+                  : "bg-sky-950/20 dark:bg-white/20",
+                allocationServices.length === 0 ? "cursor-not-allowed opacity-60" : "",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                  manualServiceAllocationsEnabled ? "translate-x-5" : "translate-x-1",
+                ].join(" ")}
+              />
+            </button>
+          }
         >
           <div className="space-y-3 md:col-span-2">
-            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-3">
-              <div>
-                <p className="text-sm font-medium">Ajuste por servicio</p>
-                <p className="text-xs text-sky-950/70 dark:text-white/70">
-                  Activalo para distribuir el cobro por servicio.
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={manualServiceAllocationsEnabled}
-                onClick={() =>
-                  allocationServices.length > 0 &&
-                  setManualServiceAllocationsEnabled(
-                    !manualServiceAllocationsEnabled,
-                  )
-                }
-                disabled={allocationServices.length === 0}
-                className={[
-                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                  manualServiceAllocationsEnabled
-                    ? "bg-sky-500/70"
-                    : "bg-sky-950/20 dark:bg-white/20",
-                  allocationServices.length === 0
-                    ? "cursor-not-allowed opacity-60"
-                    : "",
-                ].join(" ")}
-              >
-                <span
-                  className={[
-                    "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
-                    manualServiceAllocationsEnabled
-                      ? "translate-x-5"
-                      : "translate-x-1",
-                  ].join(" ")}
-                />
-              </button>
-            </div>
-
             {allocationServices.length === 0 && (
               <p className="text-xs text-sky-950/70 dark:text-white/70">
                 Seleccioná servicios para poder asignar montos.
@@ -1614,45 +1605,35 @@ export default function CreateReceiptFields(props: {
       <Section
         title="Ítems del recibo"
         desc="Opcional: cargá manualmente las filas del detalle de servicios del PDF."
+        headerRight={
+          <button
+            type="button"
+            role="switch"
+            aria-checked={manualPdfItemsEnabled}
+            onClick={() => {
+              const next = !manualPdfItemsEnabled;
+              setManualPdfItemsEnabled(next);
+              if (next && manualPdfItems.length === 0) {
+                addManualPdfItem();
+              }
+            }}
+            className={[
+              "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+              manualPdfItemsEnabled
+                ? "bg-sky-500/70"
+                : "bg-sky-950/20 dark:bg-white/20",
+            ].join(" ")}
+          >
+            <span
+              className={[
+                "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                manualPdfItemsEnabled ? "translate-x-5" : "translate-x-1",
+              ].join(" ")}
+            />
+          </button>
+        }
       >
         <div className="rounded-2xl border border-white/10 bg-white/5 p-3 md:col-span-2">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium">
-                Cargar ítems del recibo manualmente
-              </p>
-              <p className="text-xs text-sky-950/70 dark:text-white/70">
-                Si lo activás, podés agregar, quitar y editar filas del detalle
-                de servicios del PDF.
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={manualPdfItemsEnabled}
-              onClick={() => {
-                const next = !manualPdfItemsEnabled;
-                setManualPdfItemsEnabled(next);
-                if (next && manualPdfItems.length === 0) {
-                  addManualPdfItem();
-                }
-              }}
-              className={[
-                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                manualPdfItemsEnabled
-                  ? "bg-sky-500/70"
-                  : "bg-sky-950/20 dark:bg-white/20",
-              ].join(" ")}
-            >
-              <span
-                className={[
-                  "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
-                  manualPdfItemsEnabled ? "translate-x-5" : "translate-x-1",
-                ].join(" ")}
-              />
-            </button>
-          </div>
-
           {manualPdfItemsEnabled && (
             <div className="mt-3 space-y-2">
               {manualPdfItems.length === 0 && (
@@ -1721,6 +1702,18 @@ export default function CreateReceiptFields(props: {
                 >
                   + Agregar ítem
                 </button>
+              </div>
+
+              <div className="pt-1">
+                <label className="ml-1 block text-xs font-semibold uppercase tracking-wide text-sky-950/75 dark:text-white/75">
+                  Texto libre debajo de la tabla (opcional)
+                </label>
+                <textarea
+                  value={manualPdfFreeText}
+                  onChange={(e) => setManualPdfFreeText(e.target.value)}
+                  placeholder="Ej.: Los servicios sujetos a reconfirmación se informarán por correo."
+                  className={`${inputBase} mt-1 min-h-[88px] resize-y`}
+                />
               </div>
             </div>
           )}

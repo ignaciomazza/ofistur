@@ -58,8 +58,6 @@ export default function ContextSection(props: {
     clearBookingContext,
 
     forcedBookingMode,
-    bookingId,
-    selectedBookingDisplayId,
 
     bookingQuery,
     setBookingQuery,
@@ -155,17 +153,7 @@ export default function ContextSection(props: {
 
           {mode === "booking" && (
             <>
-              {forcedBookingMode ? (
-                <div className="rounded-xl border border-white/10 bg-white/10 p-3 text-sm md:col-span-2">
-                  Reserva:{" "}
-                  <span className="font-semibold">
-                    N° {selectedBookingDisplayId ?? bookingId}
-                  </span>{" "}
-                  <span className="ml-2 rounded-full bg-white/30 px-2 py-0.5 text-xs">
-                    bloqueado
-                  </span>
-                </div>
-              ) : (
+              {!forcedBookingMode && (
                 <>
                   <Field id="booking_search" label="Buscar reserva" hint="Por número o titular…">
                     <input
