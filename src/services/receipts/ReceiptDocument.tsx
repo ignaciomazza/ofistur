@@ -485,14 +485,18 @@ const ReceiptDocument: React.FC<ReceiptPdfData> = ({
           </View>
           {services.map((svc, i) => {
             const isLastRow = i === services.length - 1;
+            const rowStyle =
+              i % 2
+                ? isLastRow
+                  ? [styles.row, styles.rowAlt, styles.rowLast]
+                  : [styles.row, styles.rowAlt]
+                : isLastRow
+                  ? [styles.row, styles.rowLast]
+                  : styles.row;
             return (
               <View
                 key={svc.id}
-                style={[
-                  styles.row,
-                  i % 2 ? styles.rowAlt : undefined,
-                  isLastRow ? styles.rowLast : undefined,
-                ]}
+                style={rowStyle}
               >
                 <Text style={styles.cellDesc}>
                   {softWrapLongWords(svc.description, { breakChar: " " })}
