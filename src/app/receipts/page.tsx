@@ -148,6 +148,10 @@ type ReceiptRow = {
     amount: number;
     payment_method_id: number | null;
     account_id: number | null;
+    payment_currency?: string | null;
+    fee_mode?: "FIXED" | "PERCENT" | null;
+    fee_value?: number | null;
+    fee_amount?: number | null;
     payment_method_text?: string;
     account_text?: string;
   }[];
@@ -181,9 +185,18 @@ type ReceiptRow = {
   } | null;
 };
 
+type ReceiptDetailRow = ReceiptRow & {
+  bookingId_booking?: number | null;
+};
+
 type ReceiptsAPI = {
   items: ReceiptRow[];
   nextCursor: number | null;
+  error?: string;
+};
+
+type ReceiptDetailAPI = {
+  receipt?: ReceiptDetailRow;
   error?: string;
 };
 
@@ -297,6 +310,9 @@ export default function ReceiptsPage() {
   const [pageInit, setPageInit] = useState(false);
   const [loadingPdfId, setLoadingPdfId] = useState<number | null>(null);
   const [loadingDeleteId, setLoadingDeleteId] = useState<number | null>(null);
+  const [loadingDuplicateId, setLoadingDuplicateId] = useState<number | null>(
+    null,
+  );
   const [editingReceipt, setEditingReceipt] = useState<ReceiptRow | null>(null);
   const [formVisible, setFormVisible] = useState(false);
   const pendingEditScrollRef = useRef(false);
@@ -540,10 +556,7 @@ export default function ReceiptsPage() {
         (r.amount_currency as string | null) ||
         "ARS";
 
-      const feeLabel =
-        fee > 0 || r.payment_fee_amount != null
-          ? fmtMoney(fee, feeCurrency)
-          : "—";
+      const feeLabel = fee > 0 ? fmtMoney(fee, feeCurrency) : "—";
 
       // Total cobrado al pax = amount (entra a la agencia) + fee (retención medio)
       const clientTotal = toNum(r.amount) + fee;
@@ -1482,6 +1495,222 @@ export default function ReceiptsPage() {
     }
   };
 
+  const duplicateReceipt = async (row: ReceiptRow) => {
+    if (!token) {
+      toast.error("Sesión expirada. Volvé a iniciar sesión.");
+      return;
+    }
+    if (loadingDuplicateId) return;
+
+    setLoadingDuplicateId(row.id_receipt);
+    try {
+      const sourceRes = await authFetch(
+        `/api/receipts/${row.public_id ?? row.id_receipt}`,
+        { cache: "no-store" },
+        token,
+      );
+      if (!sourceRes.ok) {
+        throw new Error(
+          await responseErrorMessage(
+            sourceRes,
+            "No se pudo leer el recibo a duplicar.",
+          ),
+        );
+      }
+
+      const sourceJson = (await sourceRes.json().catch(() => null)) as
+        | ReceiptDetailAPI
+        | null;
+      const source = sourceJson?.receipt;
+      if (!source?.id_receipt) {
+        throw new Error("No se pudo leer el recibo a duplicar.");
+      }
+
+      const concept = String(source.concept || row.concept || "").trim();
+      const amountString = String(
+        source.amount_string || row.amount_string || "",
+      ).trim();
+      const amountCurrency = String(
+        source.amount_currency || row.amount_currency || "ARS",
+      ).toUpperCase();
+      const amount = toNum(source.amount ?? row.amount);
+
+      if (!concept) throw new Error("El recibo no tiene concepto para duplicar.");
+      if (!amountString)
+        throw new Error("El recibo no tiene monto en letras para duplicar.");
+      if (!Number.isFinite(amount))
+        throw new Error("El recibo tiene un monto inválido para duplicar.");
+
+      const normalizeIdList = (value: unknown): number[] => {
+        if (!Array.isArray(value)) return [];
+        return Array.from(
+          new Set(
+            value
+              .map((item) => Number(item))
+              .filter((id) => Number.isFinite(id) && id > 0)
+              .map((id) => Math.trunc(id)),
+          ),
+        );
+      };
+
+      const sourcePayments = Array.isArray(source.payments)
+        ? source.payments
+        : [];
+      type DuplicatePaymentPayload = {
+        amount: number;
+        payment_method_id: number;
+        account_id: number | undefined;
+        payment_currency: string;
+        fee_mode: "FIXED" | "PERCENT" | undefined;
+        fee_value?: number;
+        fee_amount?: number;
+      };
+      const normalizedPayments = sourcePayments
+        .map((payment): DuplicatePaymentPayload | null => {
+          const paymentAmount = toNum(payment.amount);
+          const paymentMethodId = Number(payment.payment_method_id ?? NaN);
+          if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) return null;
+          if (!Number.isFinite(paymentMethodId) || paymentMethodId <= 0)
+            return null;
+
+          const accountId = Number(payment.account_id ?? NaN);
+          const feeValue = toNum(payment.fee_value);
+          const feeAmount = toNum(payment.fee_amount);
+          return {
+            amount: paymentAmount,
+            payment_method_id: Math.trunc(paymentMethodId),
+            account_id:
+              Number.isFinite(accountId) && accountId > 0
+                ? Math.trunc(accountId)
+                : undefined,
+            payment_currency:
+              payment.payment_currency || amountCurrency || "ARS",
+            fee_mode:
+              payment.fee_mode === "FIXED" || payment.fee_mode === "PERCENT"
+                ? payment.fee_mode
+                : undefined,
+            ...(Number.isFinite(feeValue) ? { fee_value: feeValue } : {}),
+            ...(Number.isFinite(feeAmount) ? { fee_amount: feeAmount } : {}),
+          };
+        })
+        .filter(
+          (
+            payment,
+          ): payment is DuplicatePaymentPayload => payment !== null,
+        );
+
+      const canReusePayments =
+        sourcePayments.length > 0 &&
+        normalizedPayments.length === sourcePayments.length;
+
+      const serviceAllocations = Array.isArray(source.service_allocations)
+        ? source.service_allocations
+            .map((alloc) => {
+              const serviceId = Number(alloc.service_id ?? NaN);
+              const amountService = toNum(alloc.amount_service);
+              if (!Number.isFinite(serviceId) || serviceId <= 0) return null;
+              if (!Number.isFinite(amountService) || amountService <= 0)
+                return null;
+              const serviceCurrency = String(
+                alloc.service_currency || "",
+              ).trim();
+              return {
+                service_id: Math.trunc(serviceId),
+                amount_service: amountService,
+                ...(serviceCurrency
+                  ? { service_currency: serviceCurrency }
+                  : {}),
+              };
+            })
+            .filter(
+              (
+                alloc,
+              ): alloc is {
+                service_id: number;
+                amount_service: number;
+                service_currency?: string;
+              } => alloc !== null,
+            )
+        : [];
+
+      const issueDate = toInputDate(source.issue_date ?? row.issue_date);
+      const payload: Record<string, unknown> = {
+        concept,
+        currency: source.currency ?? row.currency ?? amountCurrency,
+        amountString,
+        amountCurrency,
+        amount,
+        ...(issueDate ? { issue_date: issueDate } : {}),
+        serviceIds: normalizeIdList(source.serviceIds ?? row.serviceIds),
+        clientIds: normalizeIdList(source.clientIds ?? row.clientIds),
+        serviceAllocations,
+        ...(Number.isFinite(toNum(source.payment_fee_amount))
+          ? { payment_fee_amount: toNum(source.payment_fee_amount) }
+          : {}),
+        ...(source.base_amount != null ? { base_amount: source.base_amount } : {}),
+        ...(source.base_currency ? { base_currency: source.base_currency } : {}),
+        ...(source.counter_amount != null
+          ? { counter_amount: source.counter_amount }
+          : {}),
+        ...(source.counter_currency
+          ? { counter_currency: source.counter_currency }
+          : {}),
+      };
+
+      const bookingId = Number(
+        source.bookingId_booking ?? row.booking?.id_booking ?? NaN,
+      );
+      if (Number.isFinite(bookingId) && bookingId > 0) {
+        payload.booking = { id_booking: Math.trunc(bookingId) };
+      }
+
+      if (canReusePayments) {
+        payload.payments = normalizedPayments;
+      } else {
+        const paymentMethodId = Number(
+          source.payment_method_id ?? row.payment_method_id ?? NaN,
+        );
+        const accountId = Number(source.account_id ?? row.account_id ?? NaN);
+        if (Number.isFinite(paymentMethodId) && paymentMethodId > 0) {
+          payload.payment_method_id = Math.trunc(paymentMethodId);
+        }
+        if (Number.isFinite(accountId) && accountId > 0) {
+          payload.account_id = Math.trunc(accountId);
+        }
+        if (source.payment_method || row.payment_method) {
+          payload.payment_method = source.payment_method ?? row.payment_method;
+        }
+        if (source.account || row.account) {
+          payload.account = source.account ?? row.account;
+        }
+      }
+
+      const createRes = await authFetch(
+        "/api/receipts",
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+        token,
+      );
+
+      if (!createRes.ok) {
+        throw new Error(
+          await responseErrorMessage(createRes, "No se pudo duplicar el recibo."),
+        );
+      }
+
+      refreshList();
+      toast.success("Recibo duplicado.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "No se pudo duplicar el recibo.",
+      );
+    } finally {
+      setLoadingDuplicateId(null);
+    }
+  };
+
   const renderReceiptActions = (
     r: NormalizedReceipt,
     variant: "full" | "compact" = "full",
@@ -1498,6 +1727,8 @@ export default function ReceiptsPage() {
     const tonePdf =
       "text-emerald-700 hover:text-emerald-800 dark:text-emerald-200";
     const toneEdit = "text-amber-700 hover:text-amber-800 dark:text-amber-200";
+    const toneDuplicate =
+      "text-violet-700 hover:text-violet-800 dark:text-violet-200";
     const toneDelete = "text-rose-700 hover:text-rose-800 dark:text-rose-200";
     const toneAttach = "text-sky-700 hover:text-sky-800 dark:text-sky-200";
 
@@ -1532,6 +1763,26 @@ export default function ReceiptsPage() {
             {variant === "full" && "Editar"}
           </button>
         )}
+        <button
+          className={`${btnClass} ${toneDuplicate}`}
+          onClick={() => duplicateReceipt(r)}
+          disabled={
+            loadingDuplicateId === r.id_receipt ||
+            loadingPdfId === r.id_receipt ||
+            loadingDeleteId === r.id_receipt
+          }
+          title="Duplicar recibo"
+          aria-label="Duplicar recibo"
+        >
+          {loadingDuplicateId === r.id_receipt ? (
+            <Spinner />
+          ) : (
+            <>
+              <IconDocumentDuplicate className={iconClass} />
+              {variant === "full" && "Duplicar"}
+            </>
+          )}
+        </button>
         {canDelete && (
           <button
             className={`${btnClass} ${toneDelete}`}
@@ -2226,11 +2477,6 @@ export default function ReceiptsPage() {
             ) : (
               <div className="space-y-3">
                 {displayRows.map((r) => {
-                  const servicesCount = r.serviceIds?.length ?? 0;
-                  const clientsCount = r.clientIds?.length ?? 0;
-                  const cur = String(
-                    r._displayCurrency || r.amount_currency,
-                  ).toUpperCase();
                   const status = String(
                     r.verification_status || "PENDING",
                   ).toUpperCase();
@@ -2261,25 +2507,6 @@ export default function ReceiptsPage() {
                           <span className="text-sm opacity-70">
                             N° {getReceiptDisplayNumber(r)}
                           </span>
-                          <button
-                            className={BADGE}
-                            onClick={() => {
-                              if (
-                                typeof navigator !== "undefined" &&
-                                navigator.clipboard
-                              ) {
-                                navigator.clipboard
-                                  .writeText(getReceiptDisplayNumber(r))
-                                  .then(
-                                    () => toast.success("N° de recibo copiado"),
-                                    () => toast.error("No se pudo copiar"),
-                                  );
-                              }
-                            }}
-                            title="Copiar N° recibo"
-                          >
-                            Copiar
-                          </button>
                           <span className={BADGE}>{r._dateLabel}</span>
                           <span className={`${BADGE} ${statusClass}`}>
                             {statusLabel}
@@ -2287,7 +2514,6 @@ export default function ReceiptsPage() {
                           <span className={`${BADGE} ${associationClass}`}>
                             {associationLabel}
                           </span>
-                          <span className={BADGE}>{cur}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="flex flex-col items-end text-right">
@@ -2312,7 +2538,6 @@ export default function ReceiptsPage() {
                               </div>
                             )}
                           </div>
-                          {renderReceiptActions(r, "full")}
                         </div>
                       </div>
 
@@ -2370,26 +2595,12 @@ export default function ReceiptsPage() {
                             <b>Costo medio:</b> {r._feeLabel}
                           </span>
                         )}
-
-                        {r._clientTotalLabel !== "—" && (
-                          <span className={CHIP}>
-                            <b>Cobrado al pax:</b> {r._clientTotalLabel}
-                          </span>
-                        )}
-
-                        <span className={CHIP}>
-                          <b>Servicios:</b> {servicesCount}
-                        </span>
-
-                        <span className={CHIP}>
-                          <b>Pasajeros:</b> {clientsCount}
-                        </span>
                       </div>
 
                       {serviceDatePreview.length > 0 && (
                         <div className="mt-3 rounded-2xl border border-white/10 bg-white/10 p-3 text-xs text-sky-950/80 dark:text-white/80">
                           <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                            Fechas de servicios
+                            Servicios
                           </div>
                           <div className="mt-2 space-y-1">
                             {serviceDatePreview.map((line, idx) => (
@@ -2405,6 +2616,10 @@ export default function ReceiptsPage() {
                           </div>
                         </div>
                       )}
+
+                      <div className="mt-4 flex justify-end">
+                        {renderReceiptActions(r, "full")}
+                      </div>
                     </article>
                   );
                 })}
@@ -2700,6 +2915,25 @@ function IconPencilSquare(props: IconProps) {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+      />
+    </svg>
+  );
+}
+
+function IconDocumentDuplicate(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      aria-hidden
+      {...props}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M15.75 17.25v1.125A2.625 2.625 0 0 1 13.125 21H6.375A2.625 2.625 0 0 1 3.75 18.375V8.625A2.625 2.625 0 0 1 6.375 6h1.125m6.75-3h3.375A2.625 2.625 0 0 1 20.25 5.625v9.75A2.625 2.625 0 0 1 17.625 18h-6.75A2.625 2.625 0 0 1 8.25 15.375v-9.75A2.625 2.625 0 0 1 10.875 3h3.375Z"
       />
     </svg>
   );
