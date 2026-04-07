@@ -144,18 +144,19 @@ const BTN_SKY =
   "rounded-full border border-sky-200/50 bg-sky-100/70 px-4 py-2 text-sky-950 shadow-sm shadow-sky-900/20 transition hover:scale-[.98] active:scale-95 disabled:opacity-50 dark:border-sky-400/30 dark:bg-sky-900/30 dark:text-sky-100";
 const BTN_ROSE =
   "rounded-full border border-rose-200/50 bg-rose-100/60 px-4 py-2 text-rose-950 shadow-sm shadow-rose-900/20 transition hover:scale-[.98] active:scale-95 disabled:opacity-50 dark:border-rose-400/30 dark:bg-rose-900/30 dark:text-rose-100";
-const PILL_WHITE =
-  "inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/70 px-3 py-1 text-xs text-sky-900 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-white";
 const PILL_SKY =
   "rounded-full border border-sky-200/50 bg-sky-100/70 px-3 py-1 text-xs text-sky-900 shadow-sm transition hover:bg-sky-100/90 dark:border-sky-400/30 dark:bg-sky-900/30 dark:text-sky-100";
-const STACK_AMBER =
-  "rounded-2xl border border-amber-200/50 bg-amber-100/10 p-3 text-amber-950 shadow-sm shadow-amber-900/10 dark:border-amber-400/5 dark:bg-amber-900/10 dark:text-amber-100";
-const STACK_SKY =
-  "rounded-2xl border border-sky-200/50 bg-sky-100/10 p-3 text-sky-950 shadow-sm shadow-sky-900/10 dark:border-sky-400/30 dark:bg-sky-900/10 dark:text-sky-100";
-const STACK_EMERALD =
-  "rounded-2xl border border-emerald-200/50 bg-emerald-100/10 p-3 text-emerald-950 shadow-sm shadow-emerald-900/10 dark:border-emerald-400/30 dark:bg-emerald-900/10 dark:text-emerald-100";
 const MINI_STACK_BASE =
   "inline-flex flex-row items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] leading-tight whitespace-nowrap shadow-sm";
+const COMMISSION_PANEL_CARD =
+  "rounded-2xl border border-white/15 bg-white/5 p-4";
+const COMMISSION_PANEL_TITLE =
+  "mb-1.5 text-[10px] uppercase tracking-wide opacity-60";
+const COMMISSION_PANEL_ROW =
+  "flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5";
+const COMMISSION_PANEL_TILE =
+  "rounded-lg border border-white/10 bg-white/10 px-2 py-1.5";
+const COMMISSION_VAT_TOTAL_RATE = 0.315;
 
 function getTzParts(date: Date, timeZone: string) {
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -318,6 +319,171 @@ const ChartSection: React.FC<ChartSectionProps> = ({ title, data, colors }) => (
   </div>
 );
 
+interface AgencyCommissionSummaryProps {
+  data: EarningsResponse;
+  currencyOrder: string[];
+  nonOperatorExpenseByCurrency: Record<string, number>;
+}
+
+const AgencyCommissionSummary: React.FC<AgencyCommissionSummaryProps> = ({
+  data,
+  currencyOrder,
+  nonOperatorExpenseByCurrency,
+}) => (
+  <div className={`${GLASS} mb-8`}>
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h2 className="text-base font-semibold">Comisiones de la agencia</h2>
+      </div>
+    </div>
+
+    <div className="grid gap-3 xl:grid-cols-2">
+      {currencyOrder.map((cur) => {
+        const stats = data.statsByCurrency?.[cur];
+        const seller = data.totals?.sellerComm?.[cur] || 0;
+        const leader = data.totals?.leaderComm?.[cur] || 0;
+        const agency = data.totals?.agencyShare?.[cur] || 0;
+        const commissionTotal = stats?.commissionTotal ?? seller + leader + agency;
+        const commissionVat =
+          Math.max(commissionTotal, 0) * COMMISSION_VAT_TOTAL_RATE;
+        const nonOperatorExpenseTotal = Number(
+          nonOperatorExpenseByCurrency[cur] || 0,
+        );
+        const netTotal = commissionTotal - nonOperatorExpenseTotal;
+        const saleTotal = stats?.saleTotal ?? 0;
+        const paidTotal = stats?.paidTotal ?? 0;
+        const debtTotal = stats?.debtTotal ?? 0;
+        const payRate = Math.round((stats?.paymentRate ?? 0) * 100);
+
+        return (
+          <div key={cur} className={COMMISSION_PANEL_CARD}>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold">{cur}</p>
+              <span className="rounded-full border border-white/25 bg-white/20 px-2 py-0.5 text-[10px]">
+                Tasa de pago {payRate}%
+              </span>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <p className={COMMISSION_PANEL_TITLE}>Resultado</p>
+                <div className="space-y-1.5">
+                  <div
+                    className={`${COMMISSION_PANEL_ROW} border-emerald-400/20 bg-emerald-500/10`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Comision del rango
+                    </p>
+                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(commissionTotal, cur)}
+                    </p>
+                  </div>
+                  <div
+                    className={`${COMMISSION_PANEL_ROW} border-violet-400/20 bg-violet-500/10`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      IVA de comisiones (informativo)
+                    </p>
+                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(commissionVat, cur)}
+                    </p>
+                  </div>
+                  <div
+                    className={`${COMMISSION_PANEL_ROW} border-rose-400/20 bg-rose-500/10`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Inversion / gastos del mes
+                    </p>
+                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(nonOperatorExpenseTotal, cur)}
+                    </p>
+                  </div>
+                  <div
+                    className={`${COMMISSION_PANEL_ROW} border-emerald-400/20 bg-emerald-500/10`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Ganancia total
+                    </p>
+                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(netTotal, cur)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className={COMMISSION_PANEL_TITLE}>Actividad</p>
+                <div className="grid gap-1.5 sm:grid-cols-3">
+                  <div
+                    className={`${COMMISSION_PANEL_TILE} border-sky-400/20 bg-sky-500/10`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Facturacion
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(saleTotal, cur)}
+                    </p>
+                  </div>
+                  <div
+                    className={`${COMMISSION_PANEL_TILE} border-indigo-400/20 bg-indigo-500/10`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Cobrado
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(paidTotal, cur)}
+                    </p>
+                  </div>
+                  <div
+                    className={`${COMMISSION_PANEL_TILE} border-amber-400/20 bg-amber-500/10`}
+                  >
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Pendiente
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(debtTotal, cur)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className={COMMISSION_PANEL_TITLE}>Distribucion de comision</p>
+                <div className="grid gap-1.5 sm:grid-cols-3">
+                  <div className={COMMISSION_PANEL_TILE}>
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Vendedor
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(seller, cur)}
+                    </p>
+                  </div>
+                  <div className={COMMISSION_PANEL_TILE}>
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Lider
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(leader, cur)}
+                    </p>
+                  </div>
+                  <div className={COMMISSION_PANEL_TILE}>
+                    <p className="text-[10px] uppercase tracking-wide opacity-70">
+                      Agencia
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                      {formatMoney(agency, cur)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
+
 export default function EarningsPage() {
   const { token } = useAuth();
   const { from: defaultFrom, to: defaultTo } = useMemo(
@@ -329,7 +495,7 @@ export default function EarningsPage() {
   const [dateField, setDateField] = useState<"creation" | "departure">(
     "creation",
   );
-  const [minPaidPct, setMinPaidPct] = useState(40);
+  const [minPaidPct, setMinPaidPct] = useState(0);
   const [filters, setFilters] = useState<FiltersState>({
     clientStatus: "Todas",
     operatorStatus: "Todas",
@@ -342,6 +508,8 @@ export default function EarningsPage() {
   const [data, setData] = useState<EarningsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedUsers, setExpandedUsers] = useState<Set<number>>(new Set());
+  const [nonOperatorExpenseByCurrency, setNonOperatorExpenseByCurrency] =
+    useState<Record<string, number>>({});
 
   const [currencyCodes, setCurrencyCodes] = useState<string[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<FinancePaymentMethod[]>(
@@ -392,6 +560,58 @@ export default function EarningsPage() {
     void loadFilters();
   }, [loadFilters]);
 
+  const loadNonOperatorExpenses = useCallback(
+    async (paidFrom: string, paidTo: string): Promise<Record<string, number>> => {
+      if (!token) return {};
+      const totals: Record<string, number> = {};
+      let cursor: number | null = null;
+
+      for (let i = 0; i < 30; i++) {
+        const qs = new URLSearchParams({
+          paidFrom,
+          paidTo,
+          take: "100",
+          excludeOperator: "1",
+        });
+        if (cursor) qs.set("cursor", String(cursor));
+
+        const invResp = await authFetch(
+          `/api/investments?${qs.toString()}`,
+          { cache: "no-store" },
+          token,
+        );
+        if (!invResp.ok) {
+          throw new Error("Error al cargar inversiones/gastos");
+        }
+
+        const payload = (await invResp.json()) as {
+          items?: Array<{
+            amount?: number | string | null;
+            currency?: string | null;
+          }>;
+          nextCursor?: number | null;
+        };
+
+        for (const row of payload.items ?? []) {
+          const cur = String(row.currency || "ARS").trim().toUpperCase();
+          if (!cur) continue;
+          totals[cur] = (totals[cur] || 0) + toSafeNumber(row.amount);
+        }
+
+        const nextCursor =
+          typeof payload.nextCursor === "number" &&
+          Number.isFinite(payload.nextCursor)
+            ? payload.nextCursor
+            : null;
+        if (!nextCursor || nextCursor === cursor) break;
+        cursor = nextCursor;
+      }
+
+      return totals;
+    },
+    [token],
+  );
+
   const loadEarnings = useCallback(async () => {
     if (new Date(from) > new Date(to)) {
       toast.error("El rango 'Desde' no puede ser posterior a 'Hasta'");
@@ -419,14 +639,21 @@ export default function EarningsPage() {
       if (filters.accountId) qs.set("accountId", filters.accountId);
       if (filters.teamId) qs.set("teamId", filters.teamId);
 
-      const res = await authFetch(
-        `/api/earnings?${qs.toString()}`,
-        { cache: "no-store" },
-        token,
-      );
+      const [res, nonOperator] = await Promise.all([
+        authFetch(
+          `/api/earnings?${qs.toString()}`,
+          { cache: "no-store" },
+          token,
+        ),
+        loadNonOperatorExpenses(from, to).catch((err) => {
+          console.error("[earnings] investments summary:", err);
+          return {} as Record<string, number>;
+        }),
+      ]);
       if (!res.ok) throw new Error("Error al cargar ganancias");
       const json: EarningsResponse = await res.json();
       setData(json);
+      setNonOperatorExpenseByCurrency(nonOperator);
       setExpandedUsers(new Set());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error desconocido";
@@ -434,7 +661,7 @@ export default function EarningsPage() {
     } finally {
       setLoading(false);
     }
-  }, [from, to, token, dateField, minPaidPct, filters]);
+  }, [from, to, token, dateField, minPaidPct, filters, loadNonOperatorExpenses]);
 
   const didRunInitial = useRef(false);
   useEffect(() => {
@@ -640,7 +867,7 @@ export default function EarningsPage() {
       teamId: "",
     });
     setDateField("creation");
-    setMinPaidPct(40);
+    setMinPaidPct(0);
     setShowAdvanced(false);
     setExpandedUsers(new Set());
     const range = monthRangeInTz(new Date(), DEFAULT_TZ);
@@ -684,7 +911,6 @@ export default function EarningsPage() {
                 Detalle por usuario
               </button>
             </div>
-            <span className={PILL_WHITE}>Zona Horaria: Buenos Aires</span>
           </div>
         </div>
 
@@ -995,65 +1221,11 @@ export default function EarningsPage() {
         </form>
 
         {data && currencyOrder.length > 0 && (
-          <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2">
-            {currencyOrder.map((cur) => {
-              const stats = data.statsByCurrency?.[cur];
-              const totals = data.totals;
-              const seller = totals?.sellerComm?.[cur] || 0;
-              const leader = totals?.leaderComm?.[cur] || 0;
-              const agency = totals?.agencyShare?.[cur] || 0;
-              const commissionTotal =
-                stats?.commissionTotal ?? seller + leader + agency;
-              const paidTotal = stats?.paidTotal ?? 0;
-              const debtTotal = stats?.debtTotal ?? 0;
-              const payRate = stats?.paymentRate ?? 0;
-
-              return (
-                <div key={cur} className={GLASS}>
-                  <div className="mb-4 flex items-center justify-between">
-                    <h3 className="text-lg font-semibold">{cur}</h3>
-                    <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
-                      Tasa pago {Math.round(payRate * 100)}%
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <div className={STACK_EMERALD}>
-                      <p className="text-xs uppercase opacity-70">Ganancia</p>
-                      <p className="text-lg font-semibold">
-                        {formatMoney(commissionTotal, cur)}
-                      </p>
-                    </div>
-                    <div className={STACK_SKY}>
-                      <p className="text-xs uppercase opacity-70">Cobrado</p>
-                      <p className="text-lg font-semibold">
-                        {formatMoney(paidTotal, cur)}
-                      </p>
-                    </div>
-                    <div className={STACK_AMBER}>
-                      <p className="text-xs uppercase opacity-70">Pendiente</p>
-                      <p className="text-lg font-semibold">
-                        {formatMoney(debtTotal, cur)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
-                    <div>
-                      <p className="uppercase opacity-60">Vendedor</p>
-                      <p className="font-medium">{formatMoney(seller, cur)}</p>
-                    </div>
-                    <div>
-                      <p className="uppercase opacity-60">Lider</p>
-                      <p className="font-medium">{formatMoney(leader, cur)}</p>
-                    </div>
-                    <div>
-                      <p className="uppercase opacity-60">Agencia</p>
-                      <p className="font-medium">{formatMoney(agency, cur)}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <AgencyCommissionSummary
+            data={data}
+            currencyOrder={currencyOrder}
+            nonOperatorExpenseByCurrency={nonOperatorExpenseByCurrency}
+          />
         )}
 
         {viewMode === "charts" && (
