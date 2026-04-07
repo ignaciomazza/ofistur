@@ -156,6 +156,8 @@ const COMMISSION_PANEL_ROW =
   "flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5";
 const COMMISSION_PANEL_TILE =
   "rounded-lg border border-white/10 bg-white/10 px-2 py-1.5";
+const PILL_EMERALD =
+  "inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-900 dark:text-emerald-200";
 const COMMISSION_VAT_TOTAL_RATE = 0.315;
 
 function getTzParts(date: Date, timeZone: string) {
@@ -329,160 +331,165 @@ const AgencyCommissionSummary: React.FC<AgencyCommissionSummaryProps> = ({
   data,
   currencyOrder,
   nonOperatorExpenseByCurrency,
-}) => (
-  <div className={`${GLASS} mb-8`}>
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-      <div>
+}) => {
+  const bookingCount = Array.isArray(data.bookingDetails)
+    ? data.bookingDetails.length
+    : 0;
+
+  return (
+    <div className={`${GLASS} mb-8`}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold">Comisiones de la agencia</h2>
+        <span className={PILL_EMERALD}>Reservas {bookingCount}</span>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        {currencyOrder.map((cur) => {
+          const stats = data.statsByCurrency?.[cur];
+          const seller = data.totals?.sellerComm?.[cur] || 0;
+          const leader = data.totals?.leaderComm?.[cur] || 0;
+          const agency = data.totals?.agencyShare?.[cur] || 0;
+          const commissionTotal = stats?.commissionTotal ?? seller + leader + agency;
+          const commissionVat =
+            Math.max(commissionTotal, 0) * COMMISSION_VAT_TOTAL_RATE;
+          const nonOperatorExpenseTotal = Number(
+            nonOperatorExpenseByCurrency[cur] || 0,
+          );
+          const netTotal = commissionTotal - nonOperatorExpenseTotal;
+          const saleTotal = stats?.saleTotal ?? 0;
+          const paidTotal = stats?.paidTotal ?? 0;
+          const debtTotal = stats?.debtTotal ?? 0;
+          const payRate = Math.round((stats?.paymentRate ?? 0) * 100);
+
+          return (
+            <div key={cur} className={COMMISSION_PANEL_CARD}>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold">{cur}</p>
+                <span className="rounded-full border border-white/25 bg-white/20 px-2 py-0.5 text-[10px]">
+                  Tasa de pago {payRate}%
+                </span>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <p className={COMMISSION_PANEL_TITLE}>Resultado</p>
+                  <div className="space-y-1.5">
+                    <div
+                      className={`${COMMISSION_PANEL_ROW} border-emerald-400/20 bg-emerald-500/10`}
+                    >
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Comision del rango
+                      </p>
+                      <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(commissionTotal, cur)}
+                      </p>
+                    </div>
+                    <div
+                      className={`${COMMISSION_PANEL_ROW} border-violet-400/20 bg-violet-500/10`}
+                    >
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        IVA de comisiones (informativo)
+                      </p>
+                      <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(commissionVat, cur)}
+                      </p>
+                    </div>
+                    <div
+                      className={`${COMMISSION_PANEL_ROW} border-rose-400/20 bg-rose-500/10`}
+                    >
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Inversion / gastos del mes
+                      </p>
+                      <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(nonOperatorExpenseTotal, cur)}
+                      </p>
+                    </div>
+                    <div
+                      className={`${COMMISSION_PANEL_ROW} border-emerald-400/20 bg-emerald-500/10`}
+                    >
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Ganancia total
+                      </p>
+                      <p className="text-right text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(netTotal, cur)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className={COMMISSION_PANEL_TITLE}>Actividad</p>
+                  <div className="grid gap-1.5 sm:grid-cols-3">
+                    <div
+                      className={`${COMMISSION_PANEL_TILE} border-sky-400/20 bg-sky-500/10`}
+                    >
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Facturacion
+                      </p>
+                      <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(saleTotal, cur)}
+                      </p>
+                    </div>
+                    <div
+                      className={`${COMMISSION_PANEL_TILE} border-indigo-400/20 bg-indigo-500/10`}
+                    >
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Cobrado
+                      </p>
+                      <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(paidTotal, cur)}
+                      </p>
+                    </div>
+                    <div
+                      className={`${COMMISSION_PANEL_TILE} border-amber-400/20 bg-amber-500/10`}
+                    >
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Pendiente
+                      </p>
+                      <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(debtTotal, cur)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className={COMMISSION_PANEL_TITLE}>Distribucion de comision</p>
+                  <div className="grid gap-1.5 sm:grid-cols-3">
+                    <div className={COMMISSION_PANEL_TILE}>
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Vendedor
+                      </p>
+                      <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(seller, cur)}
+                      </p>
+                    </div>
+                    <div className={COMMISSION_PANEL_TILE}>
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Lider
+                      </p>
+                      <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(leader, cur)}
+                      </p>
+                    </div>
+                    <div className={COMMISSION_PANEL_TILE}>
+                      <p className="text-[10px] uppercase tracking-wide opacity-70">
+                        Agencia
+                      </p>
+                      <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
+                        {formatMoney(agency, cur)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
-
-    <div className="grid gap-3 xl:grid-cols-2">
-      {currencyOrder.map((cur) => {
-        const stats = data.statsByCurrency?.[cur];
-        const seller = data.totals?.sellerComm?.[cur] || 0;
-        const leader = data.totals?.leaderComm?.[cur] || 0;
-        const agency = data.totals?.agencyShare?.[cur] || 0;
-        const commissionTotal = stats?.commissionTotal ?? seller + leader + agency;
-        const commissionVat =
-          Math.max(commissionTotal, 0) * COMMISSION_VAT_TOTAL_RATE;
-        const nonOperatorExpenseTotal = Number(
-          nonOperatorExpenseByCurrency[cur] || 0,
-        );
-        const netTotal = commissionTotal - nonOperatorExpenseTotal;
-        const saleTotal = stats?.saleTotal ?? 0;
-        const paidTotal = stats?.paidTotal ?? 0;
-        const debtTotal = stats?.debtTotal ?? 0;
-        const payRate = Math.round((stats?.paymentRate ?? 0) * 100);
-
-        return (
-          <div key={cur} className={COMMISSION_PANEL_CARD}>
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold">{cur}</p>
-              <span className="rounded-full border border-white/25 bg-white/20 px-2 py-0.5 text-[10px]">
-                Tasa de pago {payRate}%
-              </span>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <p className={COMMISSION_PANEL_TITLE}>Resultado</p>
-                <div className="space-y-1.5">
-                  <div
-                    className={`${COMMISSION_PANEL_ROW} border-emerald-400/20 bg-emerald-500/10`}
-                  >
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Comision del rango
-                    </p>
-                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(commissionTotal, cur)}
-                    </p>
-                  </div>
-                  <div
-                    className={`${COMMISSION_PANEL_ROW} border-violet-400/20 bg-violet-500/10`}
-                  >
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      IVA de comisiones (informativo)
-                    </p>
-                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(commissionVat, cur)}
-                    </p>
-                  </div>
-                  <div
-                    className={`${COMMISSION_PANEL_ROW} border-rose-400/20 bg-rose-500/10`}
-                  >
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Inversion / gastos del mes
-                    </p>
-                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(nonOperatorExpenseTotal, cur)}
-                    </p>
-                  </div>
-                  <div
-                    className={`${COMMISSION_PANEL_ROW} border-emerald-400/20 bg-emerald-500/10`}
-                  >
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Ganancia total
-                    </p>
-                    <p className="text-right text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(netTotal, cur)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <p className={COMMISSION_PANEL_TITLE}>Actividad</p>
-                <div className="grid gap-1.5 sm:grid-cols-3">
-                  <div
-                    className={`${COMMISSION_PANEL_TILE} border-sky-400/20 bg-sky-500/10`}
-                  >
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Facturacion
-                    </p>
-                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(saleTotal, cur)}
-                    </p>
-                  </div>
-                  <div
-                    className={`${COMMISSION_PANEL_TILE} border-indigo-400/20 bg-indigo-500/10`}
-                  >
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Cobrado
-                    </p>
-                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(paidTotal, cur)}
-                    </p>
-                  </div>
-                  <div
-                    className={`${COMMISSION_PANEL_TILE} border-amber-400/20 bg-amber-500/10`}
-                  >
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Pendiente
-                    </p>
-                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(debtTotal, cur)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <p className={COMMISSION_PANEL_TITLE}>Distribucion de comision</p>
-                <div className="grid gap-1.5 sm:grid-cols-3">
-                  <div className={COMMISSION_PANEL_TILE}>
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Vendedor
-                    </p>
-                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(seller, cur)}
-                    </p>
-                  </div>
-                  <div className={COMMISSION_PANEL_TILE}>
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Lider
-                    </p>
-                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(leader, cur)}
-                    </p>
-                  </div>
-                  <div className={COMMISSION_PANEL_TILE}>
-                    <p className="text-[10px] uppercase tracking-wide opacity-70">
-                      Agencia
-                    </p>
-                    <p className="mt-0.5 text-xs font-semibold tabular-nums leading-tight">
-                      {formatMoney(agency, cur)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  </div>
-);
+  );
+};
 
 export default function EarningsPage() {
   const { token } = useAuth();
