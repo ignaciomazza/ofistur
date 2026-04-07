@@ -11,11 +11,13 @@ import { toast, ToastContainer } from "react-toastify";
 import { motion, AnimatePresence } from "framer-motion";
 import { authFetch } from "@/utils/authFetch";
 import useVantaPerformance from "@/hooks/useVantaPerformance";
+import { canUseWebGL } from "@/lib/webgl";
 
 export default function LoginPage() {
   const vantaRef = useRef<HTMLDivElement>(null);
   const vantaEffect = useRef<{ destroy(): void } | null>(null);
   const { mode, monitorFps } = useVantaPerformance();
+  const [webglBlocked, setWebglBlocked] = useState(false);
 
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
@@ -34,13 +36,19 @@ export default function LoginPage() {
   const spinnerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (mode === "off") {
+    if (mode === "off" || webglBlocked) {
       vantaEffect.current?.destroy();
       vantaEffect.current = null;
       return;
     }
 
     if (!vantaRef.current) return;
+    if (!canUseWebGL()) {
+      setWebglBlocked(true);
+      vantaEffect.current?.destroy();
+      vantaEffect.current = null;
+      return;
+    }
 
     const options: VantaOptions = {
       el: vantaRef.current,
@@ -60,15 +68,22 @@ export default function LoginPage() {
     };
 
     vantaEffect.current?.destroy();
-    vantaEffect.current = initVantaFog(options);
-    const stopMonitor = monitorFps();
+    let stopMonitor: (() => void) | undefined;
+    try {
+      vantaEffect.current = initVantaFog(options);
+      stopMonitor = monitorFps();
+    } catch {
+      setWebglBlocked(true);
+      vantaEffect.current = null;
+      return;
+    }
 
     return () => {
       stopMonitor?.();
       vantaEffect.current?.destroy();
       vantaEffect.current = null;
     };
-  }, [mode, monitorFps]);
+  }, [mode, monitorFps, webglBlocked]);
 
   // Limpieza del timeout si el componente se desmonta
   useEffect(() => {

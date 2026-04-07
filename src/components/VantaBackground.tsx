@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import initVantaFog, { VantaOptions } from "vanta/dist/vanta.fog.min";
 import useVantaPerformance from "@/hooks/useVantaPerformance";
+import { canUseWebGL } from "@/lib/webgl";
 
 // Tipado manual del efecto Vanta
 type VantaEffect = { destroy: () => void };
@@ -12,6 +13,7 @@ export default function VantaBackground() {
   const vantaRef = useRef<HTMLDivElement>(null);
   const vantaEffect = useRef<VantaEffect | null>(null);
   const [currentTheme, setCurrentTheme] = useState<"light" | "dark">("light");
+  const [webglBlocked, setWebglBlocked] = useState(false);
   const { mode, monitorFps } = useVantaPerformance();
 
   const getOptions = (
@@ -63,24 +65,37 @@ export default function VantaBackground() {
   }, []);
 
   useEffect(() => {
-    if (mode === "off") {
+    if (mode === "off" || webglBlocked) {
       vantaEffect.current?.destroy();
       vantaEffect.current = null;
       return;
     }
 
     if (!vantaRef.current) return;
+    if (!canUseWebGL()) {
+      setWebglBlocked(true);
+      vantaEffect.current?.destroy();
+      vantaEffect.current = null;
+      return;
+    }
 
     vantaEffect.current?.destroy();
-    vantaEffect.current = initVantaFog(getOptions(currentTheme, mode));
-    const stopMonitor = monitorFps();
+    let stopMonitor: (() => void) | undefined;
+    try {
+      vantaEffect.current = initVantaFog(getOptions(currentTheme, mode));
+      stopMonitor = monitorFps();
+    } catch {
+      setWebglBlocked(true);
+      vantaEffect.current = null;
+      return;
+    }
 
     return () => {
       stopMonitor?.();
       vantaEffect.current?.destroy();
       vantaEffect.current = null;
     };
-  }, [currentTheme, mode, monitorFps]);
+  }, [currentTheme, mode, monitorFps, webglBlocked]);
 
   const fallbackClass =
     currentTheme === "dark"

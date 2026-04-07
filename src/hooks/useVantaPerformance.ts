@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { canUseWebGL } from "@/lib/webgl";
 
 type NetworkInformation = {
   effectiveType?: "slow-2g" | "2g" | "3g" | "4g";
@@ -52,6 +53,10 @@ export default function useVantaPerformance(): VantaPerformance {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!canUseWebGL()) {
+      setMode("off");
+      return;
+    }
 
     const reduceMotion =
       window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
