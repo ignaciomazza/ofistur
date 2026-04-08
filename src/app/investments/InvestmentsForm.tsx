@@ -564,7 +564,7 @@ export default function InvestmentsForm({
                 desc={
                   operatorOnly
                     ? "Descripción y fecha del pago."
-                    : "Categoría, fecha y descripción."
+                    : "Categoría, fecha de pago, mes de imputación y descripción."
                 }
               >
                 {operatorOnly ? (
@@ -603,46 +603,67 @@ export default function InvestmentsForm({
                   </>
                 ) : (
                   <>
-                    <Field id="category" label="Categoría" required>
-                      <select
-                        id="category"
-                        className={`${inputClass} cursor-pointer appearance-none`}
-                        value={form.category}
-                        onChange={(e) =>
-                          setForm((f) => ({
-                            ...f,
-                            category: e.target.value,
-                            user_id: null,
-                            operator_id: null,
-                          }))
-                        }
-                        required
-                        disabled={categoryOptions.length === 0}
-                      >
-                        <option value="" disabled>
-                          {categoryOptions.length
-                            ? "Seleccionar…"
-                            : "Sin categorías habilitadas"}
-                        </option>
-                        {categoryOptions.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
+                    <div className="grid grid-cols-1 gap-4 md:col-span-2 md:grid-cols-3">
+                      <Field id="category" label="Categoría" required>
+                        <select
+                          id="category"
+                          className={`${inputClass} cursor-pointer appearance-none`}
+                          value={form.category}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              category: e.target.value,
+                              user_id: null,
+                              operator_id: null,
+                            }))
+                          }
+                          required
+                          disabled={categoryOptions.length === 0}
+                        >
+                          <option value="" disabled>
+                            {categoryOptions.length
+                              ? "Seleccionar…"
+                              : "Sin categorías habilitadas"}
                           </option>
-                        ))}
-                      </select>
-                    </Field>
+                          {categoryOptions.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
 
-                    <Field id="paid_at" label="Fecha de pago (opcional)">
-                      <input
-                        id="paid_at"
-                        type="date"
-                        className={`${inputClass} cursor-pointer`}
-                        value={form.paid_at}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, paid_at: e.target.value }))
-                        }
-                      />
-                    </Field>
+                      <Field id="paid_at" label="Fecha de pago (opcional)">
+                        <input
+                          id="paid_at"
+                          type="date"
+                          className={`${inputClass} cursor-pointer`}
+                          value={form.paid_at}
+                          onChange={(e) =>
+                            setForm((f) => ({ ...f, paid_at: e.target.value }))
+                          }
+                        />
+                      </Field>
+
+                      <Field
+                        id="imputation_month"
+                        label="Mes de imputación (opcional)"
+                        hint="Mes al que corresponde el gasto."
+                      >
+                        <input
+                          id="imputation_month"
+                          type="month"
+                          className={`${inputClass} cursor-pointer`}
+                          value={form.imputation_month}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              imputation_month: e.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </div>
 
                     <Field
                       id="description"

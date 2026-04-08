@@ -1129,6 +1129,7 @@ model Investment {
   currency                      String
   created_at                    DateTime                      @default(now())
   paid_at                       DateTime?
+  imputation_month              DateTime?
   payment_method                String?
   account                       String?
   payment_fee_amount            Decimal?                      @db.Decimal(18, 2)
@@ -1158,6 +1159,7 @@ model Investment {
   @@index([id_agency, category])
   @@index([created_at])
   @@index([paid_at])
+  @@index([imputation_month])
   @@index([booking_id])
   @@index([recurring_id])
 }

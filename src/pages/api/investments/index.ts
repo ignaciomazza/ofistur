@@ -128,6 +128,37 @@ function toLocalDate(v?: string): Date | undefined {
   return parsed ?? undefined;
 }
 
+function toImputationMonthStart(v?: string): Date | undefined {
+  if (!v) return undefined;
+  const raw = String(v).trim();
+  if (!raw) return undefined;
+
+  const monthMatch = raw.match(/^(\d{4})-(\d{2})$/);
+  if (monthMatch) {
+    const year = Number(monthMatch[1]);
+    const month = Number(monthMatch[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12)
+      return undefined;
+    const monthKey = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+    return startOfDayUtcFromDateKeyInBuenosAires(monthKey) ?? undefined;
+  }
+
+  const parsed = parseDateInputInBuenosAires(raw);
+  if (!parsed) return undefined;
+  const parsedYear = parsed.getUTCFullYear();
+  const parsedMonth = parsed.getUTCMonth() + 1;
+  if (
+    !Number.isFinite(parsedYear) ||
+    !Number.isFinite(parsedMonth) ||
+    parsedMonth < 1 ||
+    parsedMonth > 12
+  ) {
+    return undefined;
+  }
+  const monthKey = `${String(parsedYear).padStart(4, "0")}-${String(parsedMonth).padStart(2, "0")}-01`;
+  return startOfDayUtcFromDateKeyInBuenosAires(monthKey) ?? undefined;
+}
+
 function toDayStart(v?: string): Date | undefined {
   if (!v) return undefined;
   const start = startOfDayUtcFromDateKeyInBuenosAires(v);
@@ -284,14 +315,17 @@ const INVESTMENT_ALLOCATION_LIST_SELECT = {
 type InvestmentSchemaFlags = {
   hasPaymentFeeAmount: boolean;
   hasPaymentLines: boolean;
+  hasImputationMonth: boolean;
 };
 
 async function getInvestmentSchemaFlags(): Promise<InvestmentSchemaFlags> {
-  const [hasPaymentFeeAmount, hasPaymentLines] = await Promise.all([
-    hasSchemaColumn("Investment", "payment_fee_amount"),
-    hasSchemaColumn("InvestmentPayment", "id_investment_payment"),
-  ]);
-  return { hasPaymentFeeAmount, hasPaymentLines };
+  const [hasPaymentFeeAmount, hasPaymentLines, hasImputationMonth] =
+    await Promise.all([
+      hasSchemaColumn("Investment", "payment_fee_amount"),
+      hasSchemaColumn("InvestmentPayment", "id_investment_payment"),
+      hasSchemaColumn("Investment", "imputation_month"),
+    ]);
+  return { hasPaymentFeeAmount, hasPaymentLines, hasImputationMonth };
 }
 
 function buildInvestmentListSelect(
@@ -309,6 +343,7 @@ function buildInvestmentListSelect(
     currency: true,
     created_at: true,
     paid_at: true,
+    ...(flags.hasImputationMonth ? { imputation_month: true } : {}),
     payment_method: true,
     account: true,
     ...(flags.hasPaymentFeeAmount ? { payment_fee_amount: true } : {}),
@@ -1074,6 +1109,13 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       typeof includeAllocationsRaw === "string" &&
       (includeAllocationsRaw === "1" ||
         includeAllocationsRaw.toLowerCase() === "true");
+    const effectivePaidDateRaw = Array.isArray(req.query.effectivePaidDate)
+      ? req.query.effectivePaidDate[0]
+      : req.query.effectivePaidDate;
+    const effectivePaidDate =
+      typeof effectivePaidDateRaw === "string" &&
+      (effectivePaidDateRaw === "1" ||
+        effectivePaidDateRaw.toLowerCase() === "true");
 
     if (operatorOnly && excludeOperator) {
       return res
@@ -1105,6 +1147,8 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         .status(400)
         .json({ error: "La categoría corresponde a operador" });
     }
+
+    const schemaFlags = await getInvestmentSchemaFlags();
 
     const where: Prisma.InvestmentWhereInput = {
       id_agency: auth.id_agency,
@@ -1156,10 +1200,25 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       };
     }
     if (paidFrom || paidTo) {
-      where.paid_at = {
+      const paidDateRange: Prisma.DateTimeFilter = {
         ...(paidFrom ? { gte: paidFrom } : {}),
         ...(paidTo ? { lte: paidTo } : {}),
       };
+      if (effectivePaidDate && schemaFlags.hasImputationMonth) {
+        andFilters.push({
+          OR: [
+            { imputation_month: paidDateRange },
+            {
+              AND: [
+                { imputation_month: null },
+                { paid_at: paidDateRange },
+              ],
+            },
+          ],
+        });
+      } else {
+        where.paid_at = paidDateRange;
+      }
     }
 
     if (q) {
@@ -1208,7 +1267,6 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       }
     }
 
-    const schemaFlags = await getInvestmentSchemaFlags();
     const includeBookingAllocations = Boolean(bookingId);
     const includeAllocations =
       includeBookingAllocations || includeAllocationsParam;
@@ -1354,6 +1412,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         ...(schemaFlags.hasPaymentFeeAmount
           ? {}
           : { payment_fee_amount: null }),
+        ...(schemaFlags.hasImputationMonth ? {} : { imputation_month: null }),
         ...(schemaFlags.hasPaymentLines ? {} : { payments: [] }),
         ...(includeAllocations
           ? { allocations: normalizedAllocations || [] }
@@ -1510,6 +1569,38 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     }
 
     const paid_at = b.paid_at ? toLocalDate(b.paid_at) : undefined;
+    const hasImputationMonthPayload = Object.prototype.hasOwnProperty.call(
+      b,
+      "imputation_month",
+    );
+    const imputationMonthRaw = hasImputationMonthPayload
+      ? b.imputation_month
+      : undefined;
+    const imputation_month =
+      imputationMonthRaw === null || imputationMonthRaw === ""
+        ? null
+        : typeof imputationMonthRaw === "string"
+          ? toImputationMonthStart(imputationMonthRaw)
+          : undefined;
+    if (
+      hasImputationMonthPayload &&
+      imputationMonthRaw !== null &&
+      imputationMonthRaw !== "" &&
+      imputation_month === undefined
+    ) {
+      return res.status(400).json({ error: "Mes de imputación inválido" });
+    }
+    if (hasImputationMonthPayload && !schemaFlags.hasImputationMonth) {
+      return res.status(409).json({
+        error: "La base todavía no soporta mes de imputación. Aplicá migraciones.",
+      });
+    }
+    if (categoryIsOperator && imputation_month) {
+      return res.status(400).json({
+        error: "El mes de imputación no aplica para pagos a operador.",
+      });
+    }
+
     let operator_id = Number.isFinite(Number(b.operator_id))
       ? Number(b.operator_id)
       : undefined;
@@ -1856,6 +1947,11 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           amount,
           currency,
           paid_at: paid_at ?? null,
+          ...(schemaFlags.hasImputationMonth &&
+          !categoryIsOperator &&
+          imputation_month
+            ? { imputation_month }
+            : {}),
           operator_id: operator_id ?? null,
           user_id: user_id ?? null,
           created_by: auth.id_user,

@@ -15,6 +15,7 @@ export type Investment = {
   currency: string;
   created_at: string;
   paid_at?: string | null;
+  imputation_month?: string | null;
   excess_action?: string | null;
   excess_missing_account_action?: string | null;
   user_id?: number | null;
@@ -114,6 +115,7 @@ export type InvestmentFormState = {
   amount: string;
   currency: string;
   paid_at: string;
+  imputation_month: string;
   user_id: number | null;
   operator_id: number | null;
   paid_today: boolean;

@@ -327,6 +327,7 @@ function useDebounced<T>(value: T, delay = 350) {
 }
 
 const todayISO = () => todayDateKeyInBuenosAires();
+const currentMonthKey = () => todayISO().slice(0, 7);
 
 function hasBookingAssociation(item: Investment): boolean {
   if (typeof item.booking_id === "number" && item.booking_id > 0) return true;
@@ -437,6 +438,7 @@ export default function Page() {
     amount: "",
     currency: "",
     paid_at: "",
+    imputation_month: currentMonthKey(),
     user_id: null,
     operator_id: null,
     paid_today: false,
@@ -649,6 +651,7 @@ export default function Page() {
       amount: "",
       currency: "",
       paid_at: "",
+      imputation_month: currentMonthKey(),
       user_id: null,
       operator_id: null,
       paid_today: false,
@@ -790,6 +793,9 @@ export default function Page() {
       amount: String(inv.amount ?? ""),
       currency: fallbackPaymentCurrency,
       paid_at: inv.paid_at ? inv.paid_at.slice(0, 10) : "",
+      imputation_month: inv.imputation_month
+        ? inv.imputation_month.slice(0, 7)
+        : "",
       user_id: inv.user_id ?? null,
       operator_id: inv.operator_id ?? null,
       paid_today: false,
@@ -2235,6 +2241,9 @@ export default function Page() {
       form.paid_today && !form.paid_at
         ? todayDateKeyInBuenosAires()
         : form.paid_at || undefined;
+    const imputation_month = operatorOnly
+      ? undefined
+      : form.imputation_month || (editingId ? null : undefined);
 
     const shouldAssociateServices = operatorOnly && associateServices;
     if (shouldAssociateServices) {
@@ -2278,6 +2287,7 @@ export default function Page() {
       amount: amountNum,
       currency: currencyCode,
       paid_at,
+      imputation_month,
       user_id: form.user_id ?? undefined,
       operator_id: form.operator_id ?? undefined,
       payment_method: paymentMethod,

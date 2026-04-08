@@ -579,6 +579,7 @@ export default function EarningsPage() {
           paidTo,
           take: "100",
           excludeOperator: "1",
+          effectivePaidDate: "1",
         });
         if (cursor) qs.set("cursor", String(cursor));
 

@@ -458,6 +458,7 @@ export default function DashboardShortcuts() {
                 paidFrom: monthFrom,
                 paidTo: monthTo,
                 take: "100",
+                effectivePaidDate: "1",
               });
               if (excludeOperator) invQs.set("excludeOperator", "1");
               if (cursor) invQs.set("cursor", String(cursor));

@@ -14,7 +14,10 @@ import {
 } from "@/utils/permissions";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
-import { parseDateInputInBuenosAires } from "@/lib/buenosAiresDate";
+import {
+  parseDateInputInBuenosAires,
+  startOfDayUtcFromDateKeyInBuenosAires,
+} from "@/lib/buenosAiresDate";
 import {
   decodeInvestmentPdfItemsPayload,
   isEncodedInvestmentPdfItemsPayload,
@@ -123,6 +126,38 @@ function toLocalDate(v?: string): Date | undefined {
   const parsed = parseDateInputInBuenosAires(v);
   return parsed ?? undefined;
 }
+
+function toImputationMonthStart(v?: string): Date | undefined {
+  if (!v) return undefined;
+  const raw = String(v).trim();
+  if (!raw) return undefined;
+
+  const monthMatch = raw.match(/^(\d{4})-(\d{2})$/);
+  if (monthMatch) {
+    const year = Number(monthMatch[1]);
+    const month = Number(monthMatch[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12)
+      return undefined;
+    const monthKey = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+    return startOfDayUtcFromDateKeyInBuenosAires(monthKey) ?? undefined;
+  }
+
+  const parsed = parseDateInputInBuenosAires(raw);
+  if (!parsed) return undefined;
+  const parsedYear = parsed.getUTCFullYear();
+  const parsedMonth = parsed.getUTCMonth() + 1;
+  if (
+    !Number.isFinite(parsedYear) ||
+    !Number.isFinite(parsedMonth) ||
+    parsedMonth < 1 ||
+    parsedMonth > 12
+  ) {
+    return undefined;
+  }
+  const monthKey = `${String(parsedYear).padStart(4, "0")}-${String(parsedMonth).padStart(2, "0")}-01`;
+  return startOfDayUtcFromDateKeyInBuenosAires(monthKey) ?? undefined;
+}
+
 function safeNumber(v: unknown): number | undefined {
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
@@ -260,14 +295,17 @@ const INVESTMENT_PAYMENT_LINE_SELECT = {
 type InvestmentSchemaFlags = {
   hasPaymentFeeAmount: boolean;
   hasPaymentLines: boolean;
+  hasImputationMonth: boolean;
 };
 
 async function getInvestmentSchemaFlags(): Promise<InvestmentSchemaFlags> {
-  const [hasPaymentFeeAmount, hasPaymentLines] = await Promise.all([
-    hasSchemaColumn("Investment", "payment_fee_amount"),
-    hasSchemaColumn("InvestmentPayment", "id_investment_payment"),
-  ]);
-  return { hasPaymentFeeAmount, hasPaymentLines };
+  const [hasPaymentFeeAmount, hasPaymentLines, hasImputationMonth] =
+    await Promise.all([
+      hasSchemaColumn("Investment", "payment_fee_amount"),
+      hasSchemaColumn("InvestmentPayment", "id_investment_payment"),
+      hasSchemaColumn("Investment", "imputation_month"),
+    ]);
+  return { hasPaymentFeeAmount, hasPaymentLines, hasImputationMonth };
 }
 
 function buildInvestmentFullSelect(
@@ -285,6 +323,7 @@ function buildInvestmentFullSelect(
     currency: true,
     created_at: true,
     paid_at: true,
+    ...(flags.hasImputationMonth ? { imputation_month: true } : {}),
     payment_method: true,
     account: true,
     ...(flags.hasPaymentFeeAmount ? { payment_fee_amount: true } : {}),
@@ -798,6 +837,7 @@ function withCompatDefaults(
     counterparty_name: decoded.counterpartyName,
     pdf_items: decoded.items,
     ...(flags.hasPaymentFeeAmount ? {} : { payment_fee_amount: null }),
+    ...(flags.hasImputationMonth ? {} : { imputation_month: null }),
     ...(flags.hasPaymentLines ? {} : { payments: [] }),
   };
 }
@@ -974,6 +1014,29 @@ export default async function handler(
           : b.paid_at !== undefined
             ? toLocalDate(String(b.paid_at))
             : undefined;
+      const hasImputationMonthPayload = Object.prototype.hasOwnProperty.call(
+        b,
+        "imputation_month",
+      );
+      const imputation_month =
+        b.imputation_month === null || b.imputation_month === ""
+          ? null
+          : b.imputation_month !== undefined
+            ? toImputationMonthStart(String(b.imputation_month))
+            : undefined;
+      if (
+        hasImputationMonthPayload &&
+        b.imputation_month !== null &&
+        b.imputation_month !== "" &&
+        imputation_month === undefined
+      ) {
+        return res.status(400).json({ error: "Mes de imputación inválido" });
+      }
+      if (hasImputationMonthPayload && !schemaFlags.hasImputationMonth) {
+        return res.status(409).json({
+          error: "La base todavía no soporta mes de imputación. Aplicá migraciones.",
+        });
+      }
 
       const operator_id =
         b.operator_id === null ? null : safeNumber(b.operator_id);
@@ -1160,6 +1223,15 @@ export default async function handler(
       if (nextCategoryIsOperator && b.operator_id !== undefined && operator_id == null) {
         return res.status(400).json({
           error: "Para categoría Operador, operator_id es obligatorio",
+        });
+      }
+      if (
+        nextCategoryIsOperator &&
+        hasImputationMonthPayload &&
+        imputation_month
+      ) {
+        return res.status(400).json({
+          error: "El mes de imputación no aplica para pagos a operador.",
         });
       }
       if (b.user_id !== undefined && !userCategorySet) {
@@ -1488,6 +1560,13 @@ export default async function handler(
         if (currency !== undefined) data.currency = currency;
         if (amount !== undefined) data.amount = amount;
         if (paid_at !== undefined) data.paid_at = paid_at;
+        if (schemaFlags.hasImputationMonth) {
+          if (nextCategoryIsOperator) {
+            data.imputation_month = null;
+          } else if (imputation_month !== undefined) {
+            data.imputation_month = imputation_month;
+          }
+        }
         if (operator_id !== undefined) data.operator_id = operator_id;
         if (user_id !== undefined) data.user_id = user_id;
         if (booking_id !== undefined) data.booking_id = booking_id;
