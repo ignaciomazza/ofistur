@@ -189,6 +189,7 @@ model User {
   clientPaymentAudits                ClientPaymentAudit[]         @relation("ClientPaymentAuditChangedBy")
   createdTravelGroups                TravelGroup[]                @relation("TravelGroupCreatedBy")
   createdTravelGroupPaymentTemplates TravelGroupPaymentTemplate[] @relation("TravelGroupPaymentTemplateCreatedBy")
+  verifiedTravelGroupReceipts        TravelGroupReceipt[]         @relation("TravelGroupReceiptVerifiedBy")
   loadedBillingFxRates               BillingFxRate[]
   billingEventsCreated               AgencyBillingEvent[]
   billingJobRunsCreated              BillingJobRun[]              @relation("BillingJobRunCreatedBy")
@@ -524,6 +525,10 @@ model TravelGroupReceipt {
   client_ids                     Int[]    @default([])
   service_refs                   Int[]    @default([])
   metadata                       Json?
+  verification_status            String   @default("PENDING")
+  verified_at                    DateTime?
+  verified_by                    Int?
+  verifiedBy                     User?    @relation("TravelGroupReceiptVerifiedBy", fields: [verified_by], references: [id_user], onDelete: SetNull)
   created_at                     DateTime @default(now())
   updated_at                     DateTime @updatedAt
 
@@ -533,6 +538,8 @@ model TravelGroupReceipt {
   @@index([travel_group_passenger_id])
   @@index([client_id])
   @@index([issue_date])
+  @@index([verification_status])
+  @@index([verified_by])
 }
 
 model TravelGroupOperatorDue {

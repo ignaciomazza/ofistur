@@ -11,6 +11,8 @@ type IssueFiscalInput = {
   documentType?: string;
   forceRetry?: boolean;
   actorUserId?: number | null;
+  issuerAgencyId?: number | null;
+  amountArsOverride?: number | null;
 };
 
 type IssueFiscalResult = {
@@ -72,18 +74,30 @@ async function emitMock(chargeId: number, amountArs: number): Promise<EmitResult
   };
 }
 
-async function emitWithAfip(charge: {
-  id_charge: number;
-  id_agency: number;
-  amount_ars_paid: unknown;
-  amount_ars_due: unknown;
+async function emitWithAfip(params: {
+  issuerAgencyId?: number | null;
+  amountArsOverride?: number | null;
+  charge: {
+    id_charge: number;
+    id_agency: number;
+    amount_ars_paid: unknown;
+    amount_ars_due: unknown;
+  };
 }): Promise<EmitResult> {
-  const amountArs = Number(charge.amount_ars_paid ?? charge.amount_ars_due ?? 0);
+  const { charge, issuerAgencyId, amountArsOverride } = params;
+  const amountArs = Number(
+    amountArsOverride ?? charge.amount_ars_paid ?? charge.amount_ars_due ?? 0,
+  );
   if (!Number.isFinite(amountArs) || amountArs <= 0) {
     throw new Error("Monto ARS inválido para emitir comprobante fiscal");
   }
 
-  const afip = await getAfipForAgency(charge.id_agency);
+  const effectiveIssuerAgencyId =
+    Number.isFinite(Number(issuerAgencyId)) && Number(issuerAgencyId) > 0
+      ? Number(issuerAgencyId)
+      : charge.id_agency;
+
+  const afip = await getAfipForAgency(effectiveIssuerAgencyId);
   const ptoVta = parseIntEnv("BILLING_AFIP_PTO_VTA", 1);
   const cbteTipo = parseIntEnv("BILLING_AFIP_CBTE_TIPO", 6); // Factura B
 
@@ -121,6 +135,9 @@ async function emitWithAfip(charge: {
     JSON.stringify({
       request: payload,
       response: created,
+      metadata: {
+        issuer_agency_id: effectiveIssuerAgencyId,
+      },
     }),
   ) as Prisma.InputJsonValue;
 
@@ -197,10 +214,16 @@ export async function issueFiscalForCharge(
   });
 
   try {
-    const amountArs = Number(charge.amount_ars_paid ?? charge.amount_ars_due ?? 0);
+    const amountArs = Number(
+      input.amountArsOverride ?? charge.amount_ars_paid ?? charge.amount_ars_due ?? 0,
+    );
     const emitted = shouldMockFiscalIssue()
       ? await emitMock(charge.id_charge, amountArs)
-      : await emitWithAfip(charge);
+      : await emitWithAfip({
+          charge,
+          issuerAgencyId: input.issuerAgencyId,
+          amountArsOverride: input.amountArsOverride,
+        });
 
     const updated = await prisma.agencyBillingFiscalDocument.update({
       where: { id_fiscal_document: fiscalDoc.id_fiscal_document },

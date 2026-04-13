@@ -30,6 +30,43 @@ const toNumber = (v?: number | string | null) => {
   return 0;
 };
 
+const toFiniteNumber = (v: unknown): number => {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+};
+
+const toInputDate = (value?: string | null) => {
+  if (!value) return "";
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const normalizeIdList = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => Number(item))
+        .filter((id) => Number.isFinite(id) && id > 0)
+        .map((id) => Math.trunc(id)),
+    ),
+  );
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const fmtMoney = (v?: number | string | null, curr?: string | null) => {
   const n = toNumber(v);
   const currency = normCurrency(curr);
@@ -171,6 +208,7 @@ interface ReceiptCardProps {
   role: string;
   onReceiptDeleted?: (id: number) => void;
   onReceiptEdit?: (receipt: Receipt) => void;
+  onReceiptDuplicated?: () => void;
 }
 
 /* ======================== Componente ======================== */
@@ -183,9 +221,11 @@ export default function ReceiptCard({
   role,
   onReceiptDeleted,
   onReceiptEdit,
+  onReceiptDuplicated,
 }: ReceiptCardProps) {
   const [loadingPDF, setLoadingPDF] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
+  const [loadingDuplicate, setLoadingDuplicate] = useState(false);
   const paymentDetail = useMemo(() => {
     const decoded = decodeReceiptPdfItemsPayload(receipt.currency || "");
     return decoded.paymentDetail || "";
@@ -365,6 +405,234 @@ export default function ReceiptCard({
       );
     } finally {
       setLoadingPDF(false);
+    }
+  };
+
+  const duplicateReceipt = async () => {
+    if (!token) {
+      toast.error("Sesión expirada. Volvé a iniciar sesión.");
+      return;
+    }
+    if (loadingDuplicate) return;
+
+    setLoadingDuplicate(true);
+    try {
+      const sourceRes = await authFetch(
+        `/api/receipts/${receipt.public_id ?? receipt.id_receipt}`,
+        { cache: "no-store" },
+        token,
+      );
+      if (!sourceRes.ok) {
+        throw new Error(
+          await responseErrorMessage(
+            sourceRes,
+            "No se pudo leer el recibo a duplicar.",
+          ),
+        );
+      }
+
+      const sourceJson: unknown = await sourceRes.json().catch(() => null);
+      const source =
+        isRecord(sourceJson) && isRecord(sourceJson.receipt)
+          ? sourceJson.receipt
+          : null;
+      if (!source || !Number.isFinite(Number(source.id_receipt))) {
+        throw new Error("No se pudo leer el recibo a duplicar.");
+      }
+
+      const concept = String(source.concept ?? receipt.concept ?? "").trim();
+      const amountString = String(
+        source.amount_string ?? receipt.amount_string ?? "",
+      ).trim();
+      const amountCurrency =
+        String(source.amount_currency ?? receipt.amount_currency ?? "ARS")
+          .trim()
+          .toUpperCase() || "ARS";
+      const amount = toFiniteNumber(source.amount ?? receipt.amount);
+
+      if (!concept) throw new Error("El recibo no tiene concepto para duplicar.");
+      if (!amountString) {
+        throw new Error("El recibo no tiene monto en letras para duplicar.");
+      }
+      if (!Number.isFinite(amount)) {
+        throw new Error("El recibo tiene un monto inválido para duplicar.");
+      }
+
+      type DuplicatePaymentPayload = {
+        amount: number;
+        payment_method_id: number;
+        account_id: number | undefined;
+        payment_currency: string;
+        fee_mode: "FIXED" | "PERCENT" | undefined;
+        fee_value?: number;
+        fee_amount?: number;
+      };
+
+      const sourcePayments = Array.isArray(source.payments)
+        ? source.payments
+        : [];
+      const normalizedPayments = sourcePayments
+        .map((payment): DuplicatePaymentPayload | null => {
+          if (!isRecord(payment)) return null;
+          const paymentAmount = toFiniteNumber(payment.amount);
+          const paymentMethodId = Number(payment.payment_method_id ?? NaN);
+          if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) return null;
+          if (!Number.isFinite(paymentMethodId) || paymentMethodId <= 0)
+            return null;
+
+          const accountId = Number(payment.account_id ?? NaN);
+          const feeValue = toFiniteNumber(payment.fee_value);
+          const feeAmount = toFiniteNumber(payment.fee_amount);
+          const feeModeRaw = String(payment.fee_mode ?? "").trim().toUpperCase();
+
+          return {
+            amount: paymentAmount,
+            payment_method_id: Math.trunc(paymentMethodId),
+            account_id:
+              Number.isFinite(accountId) && accountId > 0
+                ? Math.trunc(accountId)
+                : undefined,
+            payment_currency:
+              String(payment.payment_currency || amountCurrency || "ARS")
+                .trim()
+                .toUpperCase() || "ARS",
+            fee_mode:
+              feeModeRaw === "FIXED" || feeModeRaw === "PERCENT"
+                ? (feeModeRaw as "FIXED" | "PERCENT")
+                : undefined,
+            ...(Number.isFinite(feeValue) ? { fee_value: feeValue } : {}),
+            ...(Number.isFinite(feeAmount) ? { fee_amount: feeAmount } : {}),
+          };
+        })
+        .filter(
+          (
+            payment,
+          ): payment is DuplicatePaymentPayload => payment !== null,
+        );
+
+      const canReusePayments =
+        sourcePayments.length > 0 &&
+        normalizedPayments.length === sourcePayments.length;
+
+      const serviceAllocations = Array.isArray(source.service_allocations)
+        ? source.service_allocations
+            .map((alloc) => {
+              if (!isRecord(alloc)) return null;
+              const serviceId = Number(alloc.service_id ?? NaN);
+              const amountService = toFiniteNumber(alloc.amount_service);
+              if (!Number.isFinite(serviceId) || serviceId <= 0) return null;
+              if (!Number.isFinite(amountService) || amountService <= 0)
+                return null;
+              const serviceCurrency = String(
+                alloc.service_currency ?? "",
+              ).trim();
+              return {
+                service_id: Math.trunc(serviceId),
+                amount_service: amountService,
+                ...(serviceCurrency
+                  ? { service_currency: serviceCurrency }
+                  : {}),
+              };
+            })
+            .filter(
+              (
+                alloc,
+              ): alloc is {
+                service_id: number;
+                amount_service: number;
+                service_currency?: string;
+              } => alloc !== null,
+            )
+        : [];
+
+      const issueDate = toInputDate(
+        typeof source.issue_date === "string"
+          ? source.issue_date
+          : receipt.issue_date,
+      );
+      const payload: Record<string, unknown> = {
+        concept,
+        currency: source.currency ?? receipt.currency ?? amountCurrency,
+        amountString,
+        amountCurrency,
+        amount,
+        ...(issueDate ? { issue_date: issueDate } : {}),
+        serviceIds: normalizeIdList(source.serviceIds ?? receipt.serviceIds),
+        clientIds: normalizeIdList(source.clientIds ?? receipt.clientIds),
+        serviceAllocations,
+        ...(Number.isFinite(toFiniteNumber(source.payment_fee_amount))
+          ? { payment_fee_amount: toFiniteNumber(source.payment_fee_amount) }
+          : {}),
+        ...(source.base_amount != null ? { base_amount: source.base_amount } : {}),
+        ...(source.base_currency ? { base_currency: source.base_currency } : {}),
+        ...(source.counter_amount != null
+          ? { counter_amount: source.counter_amount }
+          : {}),
+        ...(source.counter_currency
+          ? { counter_currency: source.counter_currency }
+          : {}),
+      };
+
+      const bookingId = Number(
+        source.bookingId_booking ?? receipt.bookingId_booking ?? NaN,
+      );
+      if (Number.isFinite(bookingId) && bookingId > 0) {
+        payload.booking = { id_booking: Math.trunc(bookingId) };
+      }
+
+      if (canReusePayments) {
+        payload.payments = normalizedPayments;
+      } else {
+        const receiptLegacy = receipt as unknown as Record<string, unknown>;
+        const paymentMethodId = Number(
+          source.payment_method_id ?? receiptLegacy.payment_method_id ?? NaN,
+        );
+        const accountId = Number(
+          source.account_id ?? receiptLegacy.account_id ?? NaN,
+        );
+        const paymentMethodText = String(
+          source.payment_method ?? receipt.payment_method ?? "",
+        ).trim();
+        const accountText = String(
+          source.account ?? receipt.account ?? "",
+        ).trim();
+
+        if (Number.isFinite(paymentMethodId) && paymentMethodId > 0) {
+          payload.payment_method_id = Math.trunc(paymentMethodId);
+        }
+        if (Number.isFinite(accountId) && accountId > 0) {
+          payload.account_id = Math.trunc(accountId);
+        }
+        if (paymentMethodText) {
+          payload.payment_method = paymentMethodText;
+        }
+        if (accountText) {
+          payload.account = accountText;
+        }
+      }
+
+      const createRes = await authFetch(
+        "/api/receipts",
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+        token,
+      );
+      if (!createRes.ok) {
+        throw new Error(
+          await responseErrorMessage(createRes, "No se pudo duplicar el recibo."),
+        );
+      }
+
+      onReceiptDuplicated?.();
+      toast.success("Recibo duplicado.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "No se pudo duplicar el recibo.",
+      );
+    } finally {
+      setLoadingDuplicate(false);
     }
   };
 
@@ -561,7 +829,7 @@ export default function ReceiptCard({
         {onReceiptEdit && (
           <IconButton
             onClick={() => onReceiptEdit(receipt)}
-            disabled={loadingDelete || loadingPDF}
+            disabled={loadingDelete || loadingPDF || loadingDuplicate}
             label="Editar"
             tone="sky"
             aria-label="Editar recibo"
@@ -584,13 +852,40 @@ export default function ReceiptCard({
           </IconButton>
         )}
 
+        {(onReceiptEdit || onReceiptDuplicated) && (
+          <IconButton
+            onClick={duplicateReceipt}
+            disabled={loadingDelete || loadingPDF || loadingDuplicate}
+            loading={loadingDuplicate}
+            label="Duplicar"
+            tone="emerald"
+            aria-label="Duplicar recibo"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="size-5"
+              viewBox="0 0 24 24"
+              fill="none"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M8.25 7.5H6A2.25 2.25 0 0 0 3.75 9.75V18A2.25 2.25 0 0 0 6 20.25h8.25A2.25 2.25 0 0 0 16.5 18v-2.25M9.75 3.75H18A2.25 2.25 0 0 1 20.25 6v8.25A2.25 2.25 0 0 1 18 16.5H9.75A2.25 2.25 0 0 1 7.5 14.25V6A2.25 2.25 0 0 1 9.75 3.75Z"
+              />
+            </svg>
+          </IconButton>
+        )}
+
         {(role === "administrativo" ||
           role === "desarrollador" ||
           role === "gerente" ||
           role === "lider") && (
           <IconButton
             onClick={deleteReceipt}
-            disabled={loadingDelete || loadingPDF}
+            disabled={loadingDelete || loadingPDF || loadingDuplicate}
             loading={loadingDelete}
             label="Eliminar"
             tone="rose"

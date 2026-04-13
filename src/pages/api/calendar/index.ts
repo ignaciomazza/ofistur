@@ -5,7 +5,7 @@ import { jwtVerify, type JWTPayload } from "jose";
 import { encodePublicId } from "@/lib/publicIds";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { getBookingLeaderScope } from "@/lib/bookingVisibility";
-import { normalizeRole } from "@/utils/permissions";
+import { resolveCalendarDataScope } from "@/utils/permissions";
 import {
   endOfDayUtcFromDateKeyInBuenosAires,
   startOfDayUtcFromDateKeyInBuenosAires,
@@ -255,15 +255,7 @@ export default async function handler(
     }
 
     const { id_agency } = auth;
-    const normalizedRole = normalizeRole(auth.role);
-    const scopeMode: CalendarScopeMode =
-      normalizedRole === "gerente" ||
-      normalizedRole === "administrativo" ||
-      normalizedRole === "desarrollador"
-        ? "all"
-        : normalizedRole === "lider"
-          ? "team"
-          : "own";
+    const scopeMode: CalendarScopeMode = resolveCalendarDataScope(auth.role);
 
     // --------- parámetros ---------
     const {
@@ -325,8 +317,11 @@ export default async function handler(
           baseBookingFilter.id_user = { in: requestedAllowed };
         }
       } else {
-        // Lider: por defecto ve sus propios datos y puede elegir miembros del equipo.
-        baseBookingFilter.id_user = auth.id_user;
+        // Lider: por defecto ve todo su equipo (incluyéndose a sí mismo).
+        baseBookingFilter.id_user =
+          allowedUserIds.length === 1
+            ? allowedUserIds[0]
+            : { in: allowedUserIds };
       }
     }
 
@@ -457,10 +452,8 @@ export default async function handler(
     if (calendarContext === "finance") {
       const selectedKinds = parseFinanceKinds(financeKinds);
       const selectedStatuses = parseFinanceStatuses(financeStatuses);
-      // El calendario financiero opera solo sobre flujos no-grupales.
       const financeBookingFilter: Prisma.BookingWhereInput = {
         ...baseBookingFilter,
-        travel_group_id: null,
       };
       const todayKey = todayDateKeyInBuenosAires();
       const fallbackTodayStart = new Date();

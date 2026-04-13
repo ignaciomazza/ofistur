@@ -115,6 +115,8 @@ const ASSOCIATION_BADGE = {
     "border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-800/40 dark:bg-emerald-900/30 dark:text-emerald-100",
   unlinked:
     "border-rose-200 bg-rose-100 text-rose-900 dark:border-rose-800/40 dark:bg-rose-900/30 dark:text-rose-100",
+  group:
+    "border-indigo-200 bg-indigo-100 text-indigo-900 dark:border-indigo-800/40 dark:bg-indigo-900/30 dark:text-indigo-100",
 };
 
 /* ================= Tipos de API ================= */
@@ -122,6 +124,7 @@ type ReceiptRow = {
   id_receipt: number;
   agency_receipt_id?: number | null;
   public_id?: string | null;
+  source_type?: "STANDARD" | "GROUP";
   receipt_number: string;
   issue_date: string | null;
   /** Importe recibido por la agencia (neto) */
@@ -183,6 +186,11 @@ type ReceiptRow = {
       last_name: string | null;
     } | null;
   } | null;
+  travel_group_id?: number | null;
+  agency_travel_group_id?: number | null;
+  travel_group_name?: string | null;
+  travel_group_passenger_id?: number | null;
+  travel_group_departure_id?: number | null;
 };
 
 type ReceiptDetailRow = ReceiptRow & {
@@ -190,6 +198,12 @@ type ReceiptDetailRow = ReceiptRow & {
 };
 
 type ReceiptsAPI = {
+  items: ReceiptRow[];
+  nextCursor: number | null;
+  error?: string;
+};
+
+type GroupReceiptsAPI = {
   items: ReceiptRow[];
   nextCursor: number | null;
   error?: string;
@@ -480,13 +494,57 @@ export default function ReceiptsPage() {
     };
   }, [editingReceipt?.id_receipt, formVisible, scrollToReceiptForm]);
 
+  const isGroupReceipt = useCallback(
+    (
+      r: Pick<
+        ReceiptRow,
+        "source_type" | "travel_group_id" | "receipt_number"
+      >,
+    ) => {
+      if (r.source_type === "GROUP") return true;
+      if (typeof r.travel_group_id === "number" && r.travel_group_id > 0) {
+        return true;
+      }
+      return String(r.receipt_number || "")
+        .trim()
+        .toUpperCase()
+        .startsWith("GR-");
+    },
+    [],
+  );
+
   const getReceiptDisplayNumber = useCallback(
-    (r: Pick<ReceiptRow, "agency_receipt_id" | "receipt_number">) => {
+    (
+      r: Pick<
+        ReceiptRow,
+        | "id_receipt"
+        | "agency_receipt_id"
+        | "receipt_number"
+        | "source_type"
+        | "travel_group_id"
+      >,
+    ) => {
+      if (isGroupReceipt(r)) {
+        if (
+          typeof r.receipt_number === "string" &&
+          r.receipt_number.trim().toUpperCase().startsWith("GR-")
+        ) {
+          return r.receipt_number;
+        }
+        const base = r.agency_receipt_id ?? r.id_receipt;
+        return `GR-${String(base).padStart(6, "0")}`;
+      }
       if (r.agency_receipt_id != null) {
         return String(r.agency_receipt_id);
       }
       return r.receipt_number;
     },
+    [isGroupReceipt],
+  );
+
+  const receiptRowKey = useCallback(
+    (r: Pick<ReceiptRow, "id_receipt" | "source_type">) =>
+      `${r.source_type || "STANDARD"}-${r.id_receipt}`,
     [],
   );
 
@@ -839,6 +897,7 @@ export default function ReceiptsPage() {
           appliedQS.delete("take");
           setAppliedListQuery(appliedQS.toString());
         }
+
         const res = await authFetch(
           `/api/receipts?${qs.toString()}`,
           { cache: "no-store" },
@@ -846,7 +905,43 @@ export default function ReceiptsPage() {
         );
         const json: ReceiptsAPI = await res.json();
         if (!res.ok) throw new Error(json?.error || "Error al cargar recibos");
-        setData((prev) => (resetList ? json.items : [...prev, ...json.items]));
+
+        const regularItems = (json.items || []).map((item) => ({
+          ...item,
+          source_type: item.source_type || "STANDARD",
+        }));
+
+        let groupItems: ReceiptRow[] = [];
+        if (resetList) {
+          try {
+            const groupQs = new URLSearchParams(qs.toString());
+            groupQs.delete("cursor");
+            groupQs.set("take", "500");
+            const groupRes = await authFetch(
+              `/api/groups/finance/receipts?${groupQs.toString()}`,
+              { cache: "no-store" },
+              token || undefined,
+            );
+            const groupJson: GroupReceiptsAPI = await groupRes.json();
+            if (!groupRes.ok) {
+              throw new Error(
+                groupJson?.error || "No se pudieron cargar recibos grupales.",
+              );
+            }
+            groupItems = (groupJson.items || []).map((item) => ({
+              ...item,
+              source_type: "GROUP",
+            }));
+          } catch (groupError) {
+            console.error("[receipts][groups][list]", groupError);
+          }
+        }
+
+        setData((prev) =>
+          resetList
+            ? [...regularItems, ...groupItems]
+            : [...prev, ...regularItems],
+        );
         setCursor(json.nextCursor ?? null);
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Error al cargar recibos";
@@ -932,6 +1027,9 @@ export default function ReceiptsPage() {
         );
 
         for (const r of pageNorm) {
+          const bookingCsvValue = isGroupReceipt(r)
+            ? `Grupal ${r.agency_travel_group_id ?? r.travel_group_id ?? ""}`.trim()
+            : String(r.booking?.id_booking ?? "");
           const displayCurrency = (r._displayCurrency || "ARS").toUpperCase();
           const fee = toNum(r.payment_fee_amount);
           const feeCurrency = String(
@@ -946,7 +1044,7 @@ export default function ReceiptsPage() {
             toCsvRow([
               { value: r._dateLabel },
               { value: r._displayReceiptNumber },
-              { value: String(r.booking?.id_booking ?? "") },
+              { value: bookingCsvValue },
               { value: r._titularFull },
               { value: r._ownerFull },
               { value: getReceiptPaymentLabel(r) },
@@ -979,6 +1077,81 @@ export default function ReceiptsPage() {
 
         next = json.nextCursor ?? null;
         if (next === null) break;
+      }
+
+      let groupNext: number | null = null;
+      for (let i = 0; i < 100; i++) {
+        const qs = new URLSearchParams(baseFilters.toString());
+        qs.set("take", "500");
+        if (groupNext != null) qs.set("cursor", String(groupNext));
+
+        const res = await authFetch(
+          `/api/groups/finance/receipts?${qs.toString()}`,
+          { cache: "no-store" },
+          token || undefined,
+        );
+        const json: GroupReceiptsAPI = await res.json();
+        if (!res.ok) {
+          throw new Error(
+            json?.error || "Error al exportar recibos grupales en CSV",
+          );
+        }
+
+        const pageNorm: NormalizedReceipt[] = (json.items || []).map((r) =>
+          normalizeReceipt({ ...r, source_type: "GROUP" }),
+        );
+
+        for (const r of pageNorm) {
+          const bookingCsvValue = `Grupal ${
+            r.agency_travel_group_id ?? r.travel_group_id ?? ""
+          }`.trim();
+          const displayCurrency = (r._displayCurrency || "ARS").toUpperCase();
+          const fee = toNum(r.payment_fee_amount);
+          const feeCurrency = String(
+            r.payment_fee_currency || r.amount_currency || displayCurrency,
+          ).toUpperCase();
+          const clientTotal = toNum(r.amount) + fee;
+          const clientTotalCurrency = String(
+            r.amount_currency || feeCurrency || displayCurrency,
+          ).toUpperCase();
+
+          rows.push(
+            toCsvRow([
+              { value: r._dateLabel },
+              { value: r._displayReceiptNumber },
+              { value: bookingCsvValue },
+              { value: r._titularFull },
+              { value: r._ownerFull },
+              { value: getReceiptPaymentLabel(r) },
+              { value: r.account || "" },
+              { value: displayCurrency },
+              { value: formatCsvNumber(r._displayAmount), numeric: true },
+              { value: feeCurrency },
+              { value: formatCsvNumber(fee), numeric: true },
+              { value: clientTotalCurrency },
+              { value: formatCsvNumber(clientTotal), numeric: true },
+              { value: r._convLabel },
+              { value: r.concept || "" },
+              {
+                value: formatCsvNumber(r.serviceIds?.length ?? 0, {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 0,
+                }),
+                numeric: true,
+              },
+              {
+                value: formatCsvNumber(r.clientIds?.length ?? 0, {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 0,
+                }),
+                numeric: true,
+              },
+            ]),
+          );
+        }
+
+        groupNext = json.nextCursor ?? null;
+        if (groupNext === null) break;
       }
 
       const csv = [toCsvHeaderRow(headers), ...rows].join("\r\n");
@@ -1437,8 +1610,21 @@ export default function ReceiptsPage() {
 
     setLoadingPdfId(row.id_receipt);
     try {
+      const isGroup = isGroupReceipt(row);
+      const pdfEndpoint = isGroup
+        ? row.travel_group_id
+          ? `/api/groups/${row.travel_group_id}/finance/receipts/${row.id_receipt}/pdf`
+          : null
+        : `/api/receipts/${row.public_id ?? row.id_receipt}/pdf`;
+
+      if (!pdfEndpoint) {
+        throw new Error(
+          "No se pudo detectar la grupal para descargar este recibo.",
+        );
+      }
+
       const res = await authFetch(
-        `/api/receipts/${row.public_id ?? row.id_receipt}/pdf`,
+        pdfEndpoint,
         { headers: { Accept: "application/pdf" } },
         token,
       );
@@ -1483,7 +1669,16 @@ export default function ReceiptsPage() {
         token,
       );
       if (!res.ok && res.status !== 204) throw new Error();
-      setData((prev) => prev.filter((r) => r.id_receipt !== row.id_receipt));
+      setData((prev) =>
+        prev.filter(
+          (r) =>
+            !(
+              r.id_receipt === row.id_receipt &&
+              (r.source_type || "STANDARD") ===
+                (row.source_type || "STANDARD")
+            ),
+        ),
+      );
       if (editingReceipt?.id_receipt === row.id_receipt) {
         cancelEditReceipt();
       }
@@ -1715,13 +1910,16 @@ export default function ReceiptsPage() {
     r: NormalizedReceipt,
     variant: "full" | "compact" = "full",
   ) => {
+    const isGroup = isGroupReceipt(r);
     const isUnlinked = !r.booking?.id_booking;
     const canAttach =
-      !r.booking?.id_booking ||
-      (Array.isArray(r.serviceIds) && r.serviceIds.length === 0);
-    const canEdit = true;
-    const canDelete = isUnlinked;
+      !isGroup &&
+      (!r.booking?.id_booking ||
+        (Array.isArray(r.serviceIds) && r.serviceIds.length === 0));
+    const canEdit = !isGroup;
+    const canDelete = !isGroup && isUnlinked;
     const canDownload = true;
+    const canDuplicate = !isGroup;
     const btnClass = variant === "compact" ? ACTION_ICON_BTN : ACTION_BTN;
     const iconClass = variant === "compact" ? "size-4" : "size-4";
     const tonePdf =
@@ -1763,26 +1961,28 @@ export default function ReceiptsPage() {
             {variant === "full" && "Editar"}
           </button>
         )}
-        <button
-          className={`${btnClass} ${toneDuplicate}`}
-          onClick={() => duplicateReceipt(r)}
-          disabled={
-            loadingDuplicateId === r.id_receipt ||
-            loadingPdfId === r.id_receipt ||
-            loadingDeleteId === r.id_receipt
-          }
-          title="Duplicar recibo"
-          aria-label="Duplicar recibo"
-        >
-          {loadingDuplicateId === r.id_receipt ? (
-            <Spinner />
-          ) : (
-            <>
-              <IconDocumentDuplicate className={iconClass} />
-              {variant === "full" && "Duplicar"}
-            </>
-          )}
-        </button>
+        {canDuplicate && (
+          <button
+            className={`${btnClass} ${toneDuplicate}`}
+            onClick={() => duplicateReceipt(r)}
+            disabled={
+              loadingDuplicateId === r.id_receipt ||
+              loadingPdfId === r.id_receipt ||
+              loadingDeleteId === r.id_receipt
+            }
+            title="Duplicar recibo"
+            aria-label="Duplicar recibo"
+          >
+            {loadingDuplicateId === r.id_receipt ? (
+              <Spinner />
+            ) : (
+              <>
+                <IconDocumentDuplicate className={iconClass} />
+                {variant === "full" && "Duplicar"}
+              </>
+            )}
+          </button>
+        )}
         {canDelete && (
           <button
             className={`${btnClass} ${toneDelete}`}
@@ -2275,18 +2475,23 @@ export default function ReceiptsPage() {
                         status === "VERIFIED" ? "Verificado" : "Pendiente";
                       const statusClass =
                         STATUS_BADGE[status] ?? STATUS_BADGE.PENDING;
+                      const isGroup = isGroupReceipt(r);
                       const isUnlinked = !r.booking?.id_booking;
-                      const associationLabel = isUnlinked
-                        ? "Sin reserva"
-                        : "Asociado";
-                      const associationClass = isUnlinked
-                        ? ASSOCIATION_BADGE.unlinked
-                        : ASSOCIATION_BADGE.linked;
+                      const associationLabel = isGroup
+                        ? "Grupal"
+                        : isUnlinked
+                          ? "Sin reserva"
+                          : "Asociado";
+                      const associationClass = isGroup
+                        ? ASSOCIATION_BADGE.group
+                        : isUnlinked
+                          ? ASSOCIATION_BADGE.unlinked
+                          : ASSOCIATION_BADGE.linked;
                       const methodLabel = getReceiptPaymentLabel(r) || "—";
 
                       return (
                         <tr
-                          key={r.id_receipt}
+                          key={receiptRowKey(r)}
                           className="border-t border-white/10"
                         >
                           <td className="px-4 py-3 text-xs opacity-70">
@@ -2320,7 +2525,15 @@ export default function ReceiptsPage() {
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            {r.booking?.id_booking ? (
+                            {isGroup ? (
+                              <Link
+                                href={`/groups/${r.travel_group_id}`}
+                                target="_blank"
+                                className="underline decoration-transparent hover:decoration-sky-600"
+                              >
+                                Grupal {r.agency_travel_group_id ?? r.travel_group_id}
+                              </Link>
+                            ) : r.booking?.id_booking ? (
                               <Link
                                 href={`/bookings/services/${r.booking?.public_id ?? r.booking?.id_booking}`}
                                 target="_blank"
@@ -2420,17 +2633,22 @@ export default function ReceiptsPage() {
                           status === "VERIFIED" ? "Verificado" : "Pendiente";
                         const statusClass =
                           STATUS_BADGE[status] ?? STATUS_BADGE.PENDING;
+                        const isGroup = isGroupReceipt(r);
                         const isUnlinked = !r.booking?.id_booking;
-                        const associationLabel = isUnlinked
-                          ? "Sin reserva"
-                          : "Asociado";
-                        const associationClass = isUnlinked
-                          ? ASSOCIATION_BADGE.unlinked
-                          : ASSOCIATION_BADGE.linked;
+                        const associationLabel = isGroup
+                          ? "Grupal"
+                          : isUnlinked
+                            ? "Sin reserva"
+                            : "Asociado";
+                        const associationClass = isGroup
+                          ? ASSOCIATION_BADGE.group
+                          : isUnlinked
+                            ? ASSOCIATION_BADGE.unlinked
+                            : ASSOCIATION_BADGE.linked;
 
                         return (
                           <div
-                            key={r.id_receipt}
+                            key={receiptRowKey(r)}
                             className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/20 p-3 dark:bg-white/10"
                           >
                             <div>
@@ -2484,13 +2702,18 @@ export default function ReceiptsPage() {
                     status === "VERIFIED" ? "Verificado" : "Pendiente";
                   const statusClass =
                     STATUS_BADGE[status] ?? STATUS_BADGE.PENDING;
+                  const isGroup = isGroupReceipt(r);
                   const isUnlinked = !r.booking?.id_booking;
-                  const associationLabel = isUnlinked
-                    ? "Sin reserva"
-                    : "Asociado";
-                  const associationClass = isUnlinked
-                    ? ASSOCIATION_BADGE.unlinked
-                    : ASSOCIATION_BADGE.linked;
+                  const associationLabel = isGroup
+                    ? "Grupal"
+                    : isUnlinked
+                      ? "Sin reserva"
+                      : "Asociado";
+                  const associationClass = isGroup
+                    ? ASSOCIATION_BADGE.group
+                    : isUnlinked
+                      ? ASSOCIATION_BADGE.unlinked
+                      : ASSOCIATION_BADGE.linked;
                   const serviceDateLines = buildServiceDateLines(r);
                   const serviceDatePreview = serviceDateLines.slice(0, 3);
                   const serviceDateExtra =
@@ -2498,7 +2721,7 @@ export default function ReceiptsPage() {
 
                   return (
                     <article
-                      key={r.id_receipt}
+                      key={receiptRowKey(r)}
                       className="rounded-3xl border border-white/10 bg-white/10 p-4 text-sky-950 shadow-md backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-white"
                     >
                       {/* Encabezado */}
@@ -2550,7 +2773,15 @@ export default function ReceiptsPage() {
                       <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
                         <span className={CHIP}>
                           <b>Reserva:</b>
-                          {r.booking?.id_booking ? (
+                          {isGroup ? (
+                            <Link
+                              href={`/groups/${r.travel_group_id}`}
+                              target="_blank"
+                              className="underline decoration-transparent hover:decoration-sky-600"
+                            >
+                              {` Grupal ${r.agency_travel_group_id ?? r.travel_group_id ?? "-"}`}
+                            </Link>
+                          ) : r.booking?.id_booking ? (
                             <Link
                               href={`/bookings/services/${r.booking?.public_id ?? r.booking?.id_booking}`}
                               target="_blank"

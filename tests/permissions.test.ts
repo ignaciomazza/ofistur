@@ -5,6 +5,7 @@ import {
   canAccessBookingComponent,
   canAccessFinanceSection,
   normalizeRole,
+  resolveCalendarDataScope,
   resolveCalendarVisibility,
 } from "@/utils/permissions";
 
@@ -85,5 +86,12 @@ describe("permissions role normalization", () => {
         true,
       ),
     ).toBe("own");
+  });
+
+  it("resolves calendar data scope by role", () => {
+    expect(resolveCalendarDataScope("marketing")).toBe("all");
+    expect(resolveCalendarDataScope("gerente")).toBe("all");
+    expect(resolveCalendarDataScope("lider")).toBe("team");
+    expect(resolveCalendarDataScope("vendedor")).toBe("own");
   });
 });

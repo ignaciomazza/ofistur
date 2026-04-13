@@ -1451,6 +1451,7 @@ export default function Page() {
       for (let i = 0; i < 300; i += 1) {
         const qs = new URLSearchParams(baseFilters.toString());
         qs.set("take", "200");
+        if (operatorOnly) qs.set("includeAllocations", "1");
         if (next != null) qs.set("cursor", String(next));
 
         const res = await authFetch(
@@ -1490,8 +1491,27 @@ export default function Page() {
           const createdByName = item.createdBy
             ? `${item.createdBy.first_name} ${item.createdBy.last_name}`.trim()
             : "";
+          const directBookingNumber =
+            item.booking?.agency_booking_id ?? item.booking_id ?? null;
+          const allocationBookingNumbers = Array.isArray(item.allocations)
+            ? Array.from(
+                new Set(
+                  item.allocations
+                    .map((alloc) => alloc.booking_agency_id ?? alloc.booking_id)
+                    .filter(
+                      (value): value is number =>
+                        typeof value === "number" &&
+                        Number.isFinite(value) &&
+                        value > 0,
+                    ),
+                ),
+              )
+            : [];
           const bookingNumber =
-            item.booking?.agency_booking_id ?? item.booking_id ?? "";
+            directBookingNumber ??
+            (allocationBookingNumbers.length > 0
+              ? allocationBookingNumbers.join(" | ")
+              : "");
           const amountValue = formatCsvNumber(item.amount ?? 0);
 
           const paymentLabel =
@@ -1542,6 +1562,7 @@ export default function Page() {
     associationFilter,
     operadorMode,
     operatorFilter,
+    operatorOnly,
     isOperatorCategory,
   ]);
 

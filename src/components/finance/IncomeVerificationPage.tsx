@@ -43,6 +43,7 @@ type ReceiptPaymentLine = {
 type ReceiptIncome = {
   id_receipt: number;
   agency_receipt_id?: number | null;
+  source_type?: "STANDARD" | "GROUP";
   receipt_number: string;
   issue_date: string | null;
   amount: number;
@@ -73,6 +74,11 @@ type ReceiptIncome = {
       last_name: string | null;
     } | null;
   } | null;
+  clientIds?: number[] | null;
+  clientLabels?: string[] | null;
+  travel_group_id?: number | null;
+  agency_travel_group_id?: number | null;
+  travel_group_name?: string | null;
 };
 
 type OtherIncomePayment = {
@@ -98,7 +104,7 @@ type OtherIncomeItem = {
 };
 
 type VerificationItem = {
-  kind: VerificationKind;
+  kind: VerificationKind | "group_receipts";
   id: number;
   displayNumber: string;
   title: string;
@@ -122,6 +128,8 @@ type VerificationItem = {
 };
 
 type ReceiptsResponse = { items: ReceiptIncome[]; nextCursor: number | null };
+
+type GroupReceiptsResponse = { items: ReceiptIncome[]; nextCursor: number | null };
 
 type OtherIncomesResponse = {
   items: OtherIncomeItem[];
@@ -169,6 +177,25 @@ const fmtDate = (iso?: string | null) => {
 };
 
 const getReceiptDisplayNumber = (receipt: ReceiptIncome) => {
+  const isGroup =
+    receipt.source_type === "GROUP" ||
+    (typeof receipt.travel_group_id === "number" && receipt.travel_group_id > 0) ||
+    String(receipt.receipt_number || "")
+      .trim()
+      .toUpperCase()
+      .startsWith("GR-");
+
+  if (isGroup) {
+    if (
+      typeof receipt.receipt_number === "string" &&
+      receipt.receipt_number.trim().toUpperCase().startsWith("GR-")
+    ) {
+      return receipt.receipt_number;
+    }
+    const base = receipt.agency_receipt_id ?? receipt.id_receipt;
+    return `GR-${String(base).padStart(6, "0")}`;
+  }
+
   if (receipt.agency_receipt_id != null) {
     return String(receipt.agency_receipt_id);
   }
@@ -192,7 +219,7 @@ export default function IncomeVerificationPage({
   >("PENDING");
   const [methodFilter, setMethodFilter] = useState("ALL");
   const [accountFilter, setAccountFilter] = useState("ALL");
-  const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const [finance, setFinance] = useState<FinancePickBundle | null>(null);
   const [verificationRule, setVerificationRule] =
@@ -345,13 +372,34 @@ export default function IncomeVerificationPage({
 
   const mapReceipts = useCallback((data: ReceiptIncome[]): VerificationItem[] => {
     return data.map((receipt) => {
-      const clientName = receipt.booking?.titular
+      const isGroup =
+        receipt.source_type === "GROUP" ||
+        (typeof receipt.travel_group_id === "number" &&
+          receipt.travel_group_id > 0) ||
+        String(receipt.receipt_number || "")
+          .trim()
+          .toUpperCase()
+          .startsWith("GR-");
+
+      const clientNameFromBooking = receipt.booking?.titular
         ? `${receipt.booking.titular.first_name || ""} ${receipt.booking.titular.last_name || ""}`.trim()
         : "";
-      const bookingLabel = receipt.booking?.id_booking
-        ? `Reserva N° ${receipt.booking.agency_booking_id ?? receipt.booking.id_booking}`
+      const clientNameFromLabels = Array.isArray(receipt.clientLabels)
+        ? receipt.clientLabels
+            .map((label) => String(label || "").trim())
+            .filter(Boolean)
+            .join(", ")
         : "";
-      const meta = [bookingLabel, clientName].filter(Boolean).join(" · ");
+      const clientName = clientNameFromBooking || clientNameFromLabels;
+
+      const bookingLabel = isGroup
+        ? `Grupal N° ${receipt.agency_travel_group_id ?? receipt.travel_group_id ?? "-"}`
+        : receipt.booking?.id_booking
+          ? `Reserva N° ${receipt.booking.agency_booking_id ?? receipt.booking.id_booking}`
+          : "";
+      const meta = [bookingLabel, receipt.travel_group_name || "", clientName]
+        .filter(Boolean)
+        .join(" · ");
 
       const verifiedBy =
         receipt.verifiedBy?.first_name || receipt.verifiedBy?.last_name
@@ -380,7 +428,7 @@ export default function IncomeVerificationPage({
       }
 
       return {
-        kind: "receipts",
+        kind: isGroup ? "group_receipts" : "receipts",
         id: receipt.id_receipt,
         displayNumber: getReceiptDisplayNumber(receipt),
         title: receipt.concept || "Recibo",
@@ -475,7 +523,35 @@ export default function IncomeVerificationPage({
         if (activeType === "receipts") {
           const payload = (await res.json()) as ReceiptsResponse;
           const normalized = mapReceipts(payload.items || []);
-          setItems((prev) => (reset ? normalized : [...prev, ...normalized]));
+
+          let merged = normalized;
+          if (reset) {
+            try {
+              const groupQs = new URLSearchParams(qs.toString());
+              groupQs.delete("cursor");
+              groupQs.set("take", "300");
+              const groupRes = await authFetch(
+                `/api/groups/finance/receipts?${groupQs.toString()}`,
+                { cache: "no-store" },
+                token,
+              );
+              if (groupRes.ok) {
+                const groupPayload =
+                  (await groupRes.json()) as GroupReceiptsResponse;
+                const mappedGroups = mapReceipts(groupPayload.items || []);
+                merged = [...normalized, ...mappedGroups].sort((a, b) => {
+                  const aTime = a.issue_date ? new Date(a.issue_date).getTime() : 0;
+                  const bTime = b.issue_date ? new Date(b.issue_date).getTime() : 0;
+                  if (aTime !== bTime) return bTime - aTime;
+                  return b.id - a.id;
+                });
+              }
+            } catch (groupError) {
+              console.error("[income-verification][groups][list]", groupError);
+            }
+          }
+
+          setItems((prev) => (reset ? merged : [...prev, ...normalized]));
           setCursor(payload.nextCursor ?? null);
         } else {
           const payload = (await res.json()) as OtherIncomesResponse;
@@ -520,14 +596,20 @@ export default function IncomeVerificationPage({
     setAccountFilter("ALL");
   };
 
-  const updateStatus = async (id: number, nextStatus: "PENDING" | "VERIFIED") => {
+  const updateStatus = async (
+    target: VerificationItem,
+    nextStatus: "PENDING" | "VERIFIED",
+  ) => {
     if (!token) return;
-    setUpdatingId(id);
+    const actionKey = `${target.kind}-${target.id}`;
+    setUpdatingId(actionKey);
     try {
       const endpoint =
-        activeType === "receipts"
-          ? `/api/receipts/${id}/verify`
-          : `/api/other-incomes/${id}/verify`;
+        target.kind === "group_receipts"
+          ? `/api/groups/finance/receipts/${target.id}/verify`
+          : target.kind === "receipts"
+            ? `/api/receipts/${target.id}/verify`
+            : `/api/other-incomes/${target.id}/verify`;
       const res = await authFetch(
         endpoint,
         {
@@ -555,7 +637,7 @@ export default function IncomeVerificationPage({
       const updated = payload?.receipt ?? payload?.item;
       setItems((prev) =>
         prev.map((item) =>
-          item.id === id
+          item.id === target.id && item.kind === target.kind
             ? {
                 ...item,
                 verification_status: updated?.verification_status ?? nextStatus,
@@ -742,6 +824,7 @@ export default function IncomeVerificationPage({
 
               const feeAmount = toNumber(item.payment_fee_amount);
               const clientTotal = toNumber(item.amount) + feeAmount;
+              const itemActionKey = `${item.kind}-${item.id}`;
 
               const paymentsLabel = (item.payments || []).map((p) => {
                 const method =
@@ -781,21 +864,21 @@ export default function IncomeVerificationPage({
                       </span>
                       {status === "VERIFIED" ? (
                         <button
-                          disabled={updatingId === item.id}
-                          onClick={() => updateStatus(item.id, "PENDING")}
+                          disabled={updatingId === itemActionKey}
+                          onClick={() => updateStatus(item, "PENDING")}
                           className="h-8 rounded-full border border-white/20 bg-white/10 px-3 text-[11px] font-semibold shadow-sm transition-transform hover:scale-[0.99] disabled:opacity-50"
                         >
-                          {updatingId === item.id
+                          {updatingId === itemActionKey
                             ? "Actualizando..."
                             : "Marcar pendiente"}
                         </button>
                       ) : (
                         <button
-                          disabled={updatingId === item.id}
-                          onClick={() => updateStatus(item.id, "VERIFIED")}
+                          disabled={updatingId === itemActionKey}
+                          onClick={() => updateStatus(item, "VERIFIED")}
                           className="h-8 rounded-full bg-emerald-100 px-3 text-[11px] font-semibold text-emerald-950 shadow-sm transition-transform hover:scale-[0.99] disabled:opacity-50"
                         >
-                          {updatingId === item.id
+                          {updatingId === itemActionKey
                             ? "Verificando..."
                             : "Verificar ingreso"}
                         </button>

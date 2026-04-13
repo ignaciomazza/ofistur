@@ -15,6 +15,7 @@ import { formatDateInBuenosAires } from "@/lib/buenosAiresDate";
 import {
   canManageResourceSection,
   normalizeRole,
+  resolveCalendarDataScope,
   normalizeResourceSectionRules,
   type ResourceSectionAccessRule,
 } from "@/utils/permissions";
@@ -174,10 +175,6 @@ export default function CalendarPage() {
     () => role ?? profile?.role ?? null,
     [profile?.role, role],
   );
-  const normalizedRole = useMemo(
-    () => normalizeRole(effectiveRole),
-    [effectiveRole],
-  );
 
   const canManageCalendarNotes = useMemo(
     () =>
@@ -190,19 +187,10 @@ export default function CalendarPage() {
     [effectiveRole, resourceHasCustomRule, resourceRule],
   );
 
-  const calendarScopeMode = useMemo<CalendarScopeMode>(() => {
-    if (
-      normalizedRole === "gerente" ||
-      normalizedRole === "administrativo" ||
-      normalizedRole === "desarrollador"
-    ) {
-      return "all";
-    }
-    if (normalizedRole === "lider") {
-      return "team";
-    }
-    return "own";
-  }, [normalizedRole]);
+  const calendarScopeMode = useMemo<CalendarScopeMode>(
+    () => resolveCalendarDataScope(effectiveRole),
+    [effectiveRole],
+  );
 
   const availableContexts = useMemo(
     () => [
@@ -395,7 +383,7 @@ export default function CalendarPage() {
       setSelectedVendor(match.id_user);
       return;
     }
-    if (profile && (calendarScopeMode === "own" || calendarScopeMode === "team")) {
+    if (profile && calendarScopeMode === "own") {
       setSelectedVendor(profile.id_user);
       return;
     }
@@ -409,10 +397,6 @@ export default function CalendarPage() {
       setSelectedVendor(profile.id_user);
       setVendorInput(ownLabel);
       return;
-    }
-    if (calendarScopeMode === "team" && !vendorInput.trim()) {
-      setSelectedVendor(profile.id_user);
-      setVendorInput(ownLabel);
     }
   }, [calendarScopeMode, profile, vendorInput]);
 
@@ -1422,7 +1406,11 @@ export default function CalendarPage() {
                     list="vendors-list"
                     value={vendorInput}
                     onChange={(e) => setVendorInput(e.target.value)}
-                    placeholder="Buscar vendedor..."
+                    placeholder={
+                      calendarScopeMode === "team"
+                        ? "Buscar vendedor... (vacío = equipo)"
+                        : "Buscar vendedor..."
+                    }
                     className="mt-1 w-full appearance-none rounded-2xl border border-sky-200/70 bg-white/20 px-3 py-2 text-sm outline-none transition focus:border-sky-300/80 focus:ring-2 focus:ring-sky-200/40 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-white/30 dark:focus:ring-white/10"
                   />
                   <datalist id="vendors-list">

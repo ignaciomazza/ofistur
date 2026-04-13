@@ -152,6 +152,72 @@ const ChargeSchema = z
   })
   .strict();
 
+type FiscalDocLike = {
+  id_fiscal_document: number;
+  document_type: string;
+  status: string;
+  afip_pto_vta: number | null;
+  afip_cbte_tipo: number | null;
+  afip_number: string | null;
+  afip_cae: string | null;
+  issued_at: Date | null;
+  error_message: string | null;
+  retry_count: number;
+};
+
+function serializeCharge(
+  item: {
+    id_charge: number;
+    id_agency: number;
+    agency_billing_charge_id: number;
+    period_start: Date | null;
+    period_end: Date | null;
+    due_date: Date | null;
+    status: string;
+    charge_kind: string;
+    label: string | null;
+    base_amount_usd: unknown;
+    adjustments_total_usd: unknown;
+    total_usd: unknown;
+    paid_amount: unknown;
+    paid_currency: string | null;
+    fx_rate: unknown;
+    paid_at: Date | null;
+    account: string | null;
+    payment_method: string | null;
+    notes: string | null;
+    fiscalDocuments?: FiscalDocLike[];
+  },
+) {
+  const rest = { ...item };
+  delete (rest as { fiscalDocuments?: FiscalDocLike[] }).fiscalDocuments;
+  const fiscal = Array.isArray(item.fiscalDocuments)
+    ? item.fiscalDocuments[0]
+    : null;
+  return {
+    ...rest,
+    base_amount_usd: Number(item.base_amount_usd),
+    adjustments_total_usd: Number(item.adjustments_total_usd),
+    total_usd: Number(item.total_usd),
+    paid_amount: item.paid_amount != null ? Number(item.paid_amount) : null,
+    fx_rate: item.fx_rate != null ? Number(item.fx_rate) : null,
+    fiscal_document: fiscal
+      ? {
+          id_fiscal_document: fiscal.id_fiscal_document,
+          document_type: fiscal.document_type,
+          status: fiscal.status,
+          afip_pto_vta: fiscal.afip_pto_vta,
+          afip_cbte_tipo: fiscal.afip_cbte_tipo,
+          afip_number: fiscal.afip_number,
+          afip_cae: fiscal.afip_cae,
+          issued_at: fiscal.issued_at,
+          error_message: fiscal.error_message,
+          retry_count: fiscal.retry_count,
+        }
+      : null,
+  };
+}
+
 async function handleGET(req: NextApiRequest, res: NextApiResponse) {
   await requireDeveloper(req);
   const id_agency = parseAgencyId(req.query.id);
@@ -174,16 +240,27 @@ async function handleGET(req: NextApiRequest, res: NextApiResponse) {
     orderBy: { id_charge: "desc" },
     ...(cursorId ? { cursor: { id_charge: cursorId }, skip: 1 } : undefined),
     take: limit + 1,
+    include: {
+      fiscalDocuments: {
+        select: {
+          id_fiscal_document: true,
+          document_type: true,
+          status: true,
+          afip_pto_vta: true,
+          afip_cbte_tipo: true,
+          afip_number: true,
+          afip_cae: true,
+          issued_at: true,
+          error_message: true,
+          retry_count: true,
+        },
+        orderBy: [{ updated_at: "desc" }, { id_fiscal_document: "desc" }],
+        take: 1,
+      },
+    },
   });
 
-  const normalized = list.map((item) => ({
-    ...item,
-    base_amount_usd: Number(item.base_amount_usd),
-    adjustments_total_usd: Number(item.adjustments_total_usd),
-    total_usd: Number(item.total_usd),
-    paid_amount: item.paid_amount != null ? Number(item.paid_amount) : null,
-    fx_rate: item.fx_rate != null ? Number(item.fx_rate) : null,
-  }));
+  const normalized = list.map(serializeCharge);
 
   let nextCursor: number | null = null;
   let items = normalized;
@@ -238,15 +315,31 @@ async function handlePOST(req: NextApiRequest, res: NextApiResponse) {
     });
   });
 
-  return res.status(201).json({
-    ...created,
-    base_amount_usd: Number(created.base_amount_usd),
-    adjustments_total_usd: Number(created.adjustments_total_usd),
-    total_usd: Number(created.total_usd),
-    paid_amount:
-      created.paid_amount != null ? Number(created.paid_amount) : null,
-    fx_rate: created.fx_rate != null ? Number(created.fx_rate) : null,
+  const withFiscal = await prisma.agencyBillingCharge.findUnique({
+    where: { id_charge: created.id_charge },
+    include: {
+      fiscalDocuments: {
+        select: {
+          id_fiscal_document: true,
+          document_type: true,
+          status: true,
+          afip_pto_vta: true,
+          afip_cbte_tipo: true,
+          afip_number: true,
+          afip_cae: true,
+          issued_at: true,
+          error_message: true,
+          retry_count: true,
+        },
+        orderBy: [{ updated_at: "desc" }, { id_fiscal_document: "desc" }],
+        take: 1,
+      },
+    },
   });
+
+  return res.status(201).json(
+    withFiscal ? serializeCharge(withFiscal) : serializeCharge(created),
+  );
 }
 
 export default async function handler(

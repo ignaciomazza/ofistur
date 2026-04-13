@@ -186,6 +186,13 @@ function addMoneyMaps(target: MoneyMap, source: MoneyMap): void {
   });
 }
 
+function addScaledMoneyMap(target: MoneyMap, source: MoneyMap, factor: number): void {
+  if (!Number.isFinite(factor) || factor <= 0) return;
+  Object.entries(source).forEach(([currency, amount]) => {
+    addMoney(target, currency, amount * factor);
+  });
+}
+
 function subtractMoneyMaps(a: MoneyMap, b: MoneyMap): MoneyMap {
   const out: MoneyMap = {};
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
@@ -594,6 +601,17 @@ function sortRecentBookings(
     .slice(0, 3);
 }
 
+function normalizeReceiptClientIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  );
+}
+
 async function buildRowsForClients(
   id_agency: number,
   clients: ClientLite[],
@@ -654,6 +672,7 @@ async function buildRowsForClients(
           base_amount: true,
           base_currency: true,
           payment_fee_amount: true,
+          clientIds: true,
         },
       },
     },
@@ -667,8 +686,6 @@ async function buildRowsForClients(
 
   bookings.forEach((booking) => {
     const sale = computeSaleByCurrency(booking);
-    const received = computeReceiptsByCurrency(booking.Receipt);
-    const debt = subtractMoneyMaps(sale, received);
 
     const creationKey = toDateKeyInBuenosAiresLegacySafe(booking.creation_date);
     const departureKey = toDateKeyInBuenosAiresLegacySafe(booking.departure_date);
@@ -689,19 +706,64 @@ async function buildRowsForClients(
       participants.push({ id_client: clientRef.id_client, role: "ACOMPANANTE" });
     });
 
+    const participantIds = participants.map((participant) => participant.id_client);
+    const participantIdSet = new Set(participantIds);
+
+    const saleByParticipant = new Map<number, MoneyMap>();
+    const receivedByParticipant = new Map<number, MoneyMap>();
+    participantIds.forEach((id) => {
+      saleByParticipant.set(id, {});
+      receivedByParticipant.set(id, {});
+    });
+
+    if (participantIdSet.has(booking.titular_id)) {
+      const titularSale = saleByParticipant.get(booking.titular_id);
+      if (titularSale) addMoneyMaps(titularSale, sale);
+    }
+
+    booking.Receipt.forEach((receipt) => {
+      const receiptAmounts = computeReceiptsByCurrency([receipt]);
+      const explicitTargets = normalizeReceiptClientIds(receipt.clientIds).filter(
+        (id) => participantIdSet.has(id),
+      );
+      const targetIds =
+        explicitTargets.length > 0
+          ? explicitTargets
+          : participantIdSet.has(booking.titular_id)
+            ? [booking.titular_id]
+            : [];
+      if (targetIds.length === 0) return;
+
+      const share = 1 / targetIds.length;
+      targetIds.forEach((targetId) => {
+        const current = receivedByParticipant.get(targetId);
+        if (!current) return;
+        addScaledMoneyMap(current, receiptAmounts, share);
+      });
+    });
+
     participants.forEach((participant) => {
       if (!shouldIncludeRole(roleFilter, participant.role)) return;
 
       const summary = summaryByClientId.get(participant.id_client);
       if (!summary) return;
 
+      const saleForParticipant =
+        saleByParticipant.get(participant.id_client) ?? {};
+      const receivedForParticipant =
+        receivedByParticipant.get(participant.id_client) ?? {};
+      const debtForParticipant = subtractMoneyMaps(
+        saleForParticipant,
+        receivedForParticipant,
+      );
+
       summary.bookings_total += 1;
       if (participant.role === "TITULAR") summary.bookings_as_titular += 1;
       else summary.bookings_as_companion += 1;
 
-      addMoneyMaps(summary.sale_amounts, sale);
-      addMoneyMaps(summary.received_amounts, received);
-      addMoneyMaps(summary.debt_amounts, debt);
+      addMoneyMaps(summary.sale_amounts, saleForParticipant);
+      addMoneyMaps(summary.received_amounts, receivedForParticipant);
+      addMoneyMaps(summary.debt_amounts, debtForParticipant);
 
       if (
         creationKey &&
@@ -726,9 +788,9 @@ async function buildRowsForClients(
         creation_date: creationKey,
         departure_date: departureKey,
         return_date: returnKey,
-        sale_amounts: sale,
-        received_amounts: received,
-        debt_amounts: debt,
+        sale_amounts: { ...saleForParticipant },
+        received_amounts: { ...receivedForParticipant },
+        debt_amounts: { ...debtForParticipant },
       });
     });
   });

@@ -37,14 +37,6 @@ type SortKey =
   | "titular_desc"
   | "companion_desc"
   | "name_asc";
-const SORT_LABELS: Record<SortKey, string> = {
-  last_booking_desc: "Última reserva",
-  next_trip_asc: "Próximo viaje",
-  bookings_desc: "Más reservas",
-  titular_desc: "Más titular",
-  companion_desc: "Más acompañante",
-  name_asc: "Nombre (A-Z)",
-};
 
 const BASE_FIELD_FILTER_OPTIONS: FieldFilterOption[] = [
   {
@@ -369,6 +361,22 @@ function HeroChevronDownIcon({ className }: IconProps) {
   );
 }
 
+function HeroXMarkIcon({ className }: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      className={className}
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
 const EMPTY_KPIS: PanelKpis = {
   clients: 0,
   with_activity_clients: 0,
@@ -583,7 +591,8 @@ export default function ClientsPanelPage() {
     const map = new Map<number, string>();
     ownerOptions.forEach((owner) => {
       const label = `${owner.first_name || ""} ${owner.last_name || ""}`.trim();
-      map.set(owner.id_user, label || `N° ${owner.id_user}`);
+      if (!label) return;
+      map.set(owner.id_user, label);
     });
     return map;
   }, [ownerOptions]);
@@ -974,7 +983,7 @@ export default function ClientsPanelPage() {
       labels.push(`Tipo: ${label}`);
     }
     if (canSelectOwner && ownerId > 0) {
-      labels.push(`Vendedor: ${ownerLabelMap.get(ownerId) || `N° ${ownerId}`}`);
+      labels.push(`Vendedor: ${ownerLabelMap.get(ownerId) || "Seleccionado"}`);
     }
     normalizedCustomFieldFilters.forEach((filter) => {
       const fieldLabel =
@@ -1033,19 +1042,12 @@ export default function ClientsPanelPage() {
                 Pasajeros visibles
               </p>
               <p className="mt-1 text-xl font-semibold">{kpis.clients}</p>
-              <p className="mt-1 text-xs opacity-70">
-                Con actividad: {kpis.with_activity_clients}
-              </p>
             </article>
             <article className={KPI_CARD}>
               <p className="text-[11px] uppercase tracking-[0.2em] opacity-60">
                 Reservas
               </p>
               <p className="mt-1 text-xl font-semibold">{kpis.bookings_total}</p>
-              <p className="mt-1 text-xs opacity-70">
-                Titular: {kpis.bookings_as_titular} · Acompañante:{" "}
-                {kpis.bookings_as_companion}
-              </p>
             </article>
             <article className={KPI_CARD}>
               <p className="text-[11px] uppercase tracking-[0.2em] opacity-60">
@@ -1074,10 +1076,6 @@ export default function ClientsPanelPage() {
                 {formatMoneyMap(kpis.debt_amounts)}
               </p>
             </article>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <span className={CHIP}>Orden: {SORT_LABELS[sortKey]}</span>
-            <span className={CHIP}>Registros cargados: {rows.length}</span>
           </div>
         </header>
 
@@ -1131,7 +1129,7 @@ export default function ClientsPanelPage() {
             <div className="flex items-end gap-2">
               <button
                 type="button"
-                className={`gap-2 ${BTN} ${
+                className={`${BTN} ${
                   hasPendingFilterChanges
                     ? "border-amber-300/70 bg-amber-100/20 text-amber-900 dark:text-amber-200"
                     : ""
@@ -1139,7 +1137,6 @@ export default function ClientsPanelPage() {
                 onClick={() => void fetchReset()}
                 disabled={loading || isDateRangeInvalid}
               >
-                <HeroMagnifyingGlassIcon className="size-4" />
                 {hasPendingFilterChanges ? "Aplicar cambios" : "Aplicar"}
               </button>
               <button
@@ -1168,10 +1165,10 @@ export default function ClientsPanelPage() {
               </button>
             </div>
 
-            <div className="flex items-end">
+            <div className="flex items-end justify-end">
               <button
                 type="button"
-                className={`${BTN} w-full`}
+                className={`${BTN} size-10 rounded-2xl p-0`}
                 onClick={() => {
                   clearFilters();
                   void fetchReset({
@@ -1187,8 +1184,10 @@ export default function ClientsPanelPage() {
                   });
                 }}
                 disabled={loading}
+                title="Limpiar filtros"
+                aria-label="Limpiar filtros"
               >
-                Limpiar filtros
+                <HeroXMarkIcon className="size-4" />
               </button>
             </div>
           </div>
@@ -1246,7 +1245,7 @@ export default function ClientsPanelPage() {
                       {ownerOptions.map((owner) => (
                         <option key={owner.id_user} value={owner.id_user}>
                           {`${owner.first_name || ""} ${owner.last_name || ""}`.trim() ||
-                            `N° ${owner.id_user}`}
+                            "Sin nombre"}
                         </option>
                       ))}
                     </select>
@@ -1527,13 +1526,6 @@ export default function ClientsPanelPage() {
             </div>
           ) : (
             <>
-              <div className="mb-2 flex items-center justify-between gap-2 text-xs opacity-80">
-                <span>Pasajeros listados: {sortedRows.length}</span>
-                <span>
-                  Actividad: {kpis.with_activity_clients} con reservas en el criterio
-                  actual
-                </span>
-              </div>
               <div className="overflow-x-auto rounded-2xl border border-white/15">
                 <table className="w-full min-w-[1540px] border-separate border-spacing-0 text-sm">
                   <thead className="text-[11px] uppercase tracking-[0.13em]">
@@ -1584,9 +1576,9 @@ export default function ClientsPanelPage() {
                         ) || row.client.profile_key || "Pax";
                       const ownerLabel = row.client.user
                         ? `${row.client.user.first_name || ""} ${row.client.user.last_name || ""}`.trim() ||
-                          `N° ${row.client.user.id_user}`
+                          "Sin vendedor asignado"
                         : ownerLabelMap.get(row.client.id_user) ||
-                          `N° ${row.client.id_user}`;
+                          "Sin vendedor asignado";
                       const debtTone = getBalanceTone(bookingSummary.debt_amounts);
                       const debtStatus =
                         debtTone === "debt"
@@ -1639,7 +1631,6 @@ export default function ClientsPanelPage() {
                           </td>
                           <td className="p-3 align-top">
                             <p className="font-medium">{ownerLabel}</p>
-                            <p className="text-xs opacity-65">ID {row.client.id_user}</p>
                           </td>
                           <td className="p-3 text-center align-top">
                             <span className="inline-flex min-w-8 items-center justify-center rounded-full border border-sky-300/60 bg-sky-100/60 px-2 py-0.5 text-xs font-semibold text-sky-900 dark:border-white/20 dark:bg-white/10 dark:text-white">

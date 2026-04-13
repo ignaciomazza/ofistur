@@ -161,7 +161,7 @@ export default function GroupReceiptCard({
   const contextId = resolveGroupFinanceContextId(context);
   const [loadingPDF, setLoadingPDF] = useState(false);
   const [loadingDelete, setLoadingDelete] = useState(false);
-  const canDownload = !groupId;
+  const canDownload = true;
 
   const getClientName = useCallback(
     (id: number): string => {
@@ -302,8 +302,11 @@ export default function GroupReceiptCard({
 
     setLoadingPDF(true);
     try {
+      const endpoint = groupId
+        ? `/api/groups/${encodeURIComponent(groupId)}/finance/receipts/${receipt.id_receipt}/pdf`
+        : `/api/receipts/${receipt.public_id ?? receipt.id_receipt}/pdf`;
       const res = await authFetch(
-        `/api/receipts/${receipt.public_id ?? receipt.id_receipt}/pdf`,
+        endpoint,
         { headers: { Accept: "application/pdf" } },
         token,
       );

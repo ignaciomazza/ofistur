@@ -126,7 +126,7 @@ interface ServicesContainerProps {
   receipts: Receipt[];
   creditNotes: CreditNoteWithItems[];
   onReceiptDeleted?: (id: number) => void;
-  onReceiptCreated?: (r: Receipt) => void;
+  onReceiptCreated?: (r?: Receipt) => void;
   onCreditNoteCreated?: () => void;
   onInvoiceUpdated?: (invoice: Invoice) => void;
   invoiceFormData: InvoiceFormData;
@@ -2884,6 +2884,11 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                       onReceiptDeleted={onReceiptDeleted}
                       onReceiptEdit={
                         canUseReceiptsForm ? startEditReceipt : undefined
+                      }
+                      onReceiptDuplicated={
+                        canUseReceiptsForm && onReceiptCreated
+                          ? () => onReceiptCreated()
+                          : undefined
                       }
                     />
                   )}

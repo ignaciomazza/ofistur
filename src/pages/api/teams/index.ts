@@ -34,17 +34,9 @@ export default async function handler(
       const where = {
         id_agency: auth.id_agency,
         ...(!canManage
-          ? auth.role === "lider"
-            ? {
-                user_teams: {
-                  some: {
-                    user: { id_user: auth.id_user, role: "lider" },
-                  },
-                },
-              }
-            : {
-                user_teams: { some: { id_user: auth.id_user } },
-              }
+          ? {
+              user_teams: { some: { id_user: auth.id_user } },
+            }
           : {}),
       };
 

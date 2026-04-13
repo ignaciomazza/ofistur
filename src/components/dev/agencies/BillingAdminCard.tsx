@@ -44,6 +44,7 @@ type Adjustment = {
 
 type Charge = {
   id_charge: number;
+  agency_billing_charge_id?: number;
   period_start?: string | null;
   period_end?: string | null;
   status: string;
@@ -59,6 +60,18 @@ type Charge = {
   account?: string | null;
   payment_method?: string | null;
   notes?: string | null;
+  fiscal_document?: {
+    id_fiscal_document: number;
+    document_type: string;
+    status: string;
+    afip_pto_vta?: number | null;
+    afip_cbte_tipo?: number | null;
+    afip_number?: string | null;
+    afip_cae?: string | null;
+    issued_at?: string | null;
+    error_message?: string | null;
+    retry_count?: number;
+  } | null;
 };
 
 type StatsPayload = {
@@ -239,6 +252,62 @@ function formatPaidAmount(value: number, currency?: string | null) {
   return formatMoney(amount, code);
 }
 
+function normalizeFiscalStatus(status?: string | null) {
+  return String(status || "PENDING")
+    .trim()
+    .toUpperCase();
+}
+
+function fiscalStatusLabel(status?: string | null) {
+  const normalized = normalizeFiscalStatus(status);
+  if (normalized === "ISSUED") return "Emitida";
+  if (normalized === "FAILED") return "Fallida";
+  if (normalized === "PENDING") return "Pendiente";
+  return normalized || "Pendiente";
+}
+
+function fiscalStatusBadgeClass(status?: string | null) {
+  const normalized = normalizeFiscalStatus(status);
+  if (normalized === "ISSUED") {
+    return "border-emerald-300/40 bg-emerald-100/20 text-emerald-900 dark:text-emerald-200";
+  }
+  if (normalized === "FAILED") {
+    return "border-rose-300/40 bg-rose-100/20 text-rose-900 dark:text-rose-200";
+  }
+  return "border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200";
+}
+
+function formatFiscalVoucherNumber(
+  ptoVta?: number | null,
+  afipNumber?: string | null,
+) {
+  const raw = String(afipNumber || "").trim();
+  if (!raw) return "—";
+  const digits = raw.replace(/\D/g, "");
+  const numberPart = digits ? digits : raw;
+  const voucherPart = /^\d+$/.test(numberPart)
+    ? numberPart.padStart(8, "0")
+    : numberPart;
+  const pto = Number(ptoVta);
+  if (!Number.isFinite(pto) || pto <= 0) return voucherPart;
+  return `${String(pto).padStart(5, "0")}-${voucherPart}`;
+}
+
+function fileNameFromContentDisposition(
+  value: string | null | undefined,
+  fallback: string,
+) {
+  const source = String(value || "");
+  const match = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(source);
+  if (!match?.[1]) return fallback;
+  try {
+    const decoded = decodeURIComponent(match[1].replace(/"/g, "").trim());
+    return decoded || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function activeAdjustments(adjustments: Adjustment[], date: Date) {
   return adjustments.filter((adj) => {
     if (!adj.active) return false;
@@ -350,6 +419,12 @@ export default function BillingAdminCard({ agencyId }: Props) {
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [workspace, setWorkspace] = useState<BillingWorkspace>("overview");
+  const [issuingFiscalChargeId, setIssuingFiscalChargeId] = useState<
+    number | null
+  >(null);
+  const [downloadingReceiptChargeId, setDownloadingReceiptChargeId] = useState<
+    number | null
+  >(null);
 
   const billingOwnerId = groupInfo?.owner?.id_agency ?? agencyId;
   const isBillingOwner = billingOwnerId === agencyId;
@@ -1171,6 +1246,76 @@ export default function BillingAdminCard({ agencyId }: Props) {
     } catch (e) {
       console.error(e);
       toast.error(e instanceof Error ? e.message : "Error eliminando cobro");
+    }
+  }
+
+  async function downloadChargeReceipt(charge: Charge) {
+    if (!token) return;
+    setDownloadingReceiptChargeId(charge.id_charge);
+    try {
+      const res = await authFetch(
+        `/api/dev/agencies/${agencyId}/billing/charges/${charge.id_charge}/receipt`,
+        {},
+        token,
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "No se pudo generar el recibo.");
+      }
+
+      const blob = await res.blob();
+      const fallbackName = `recibo_cobro_${charge.agency_billing_charge_id ?? charge.id_charge}.pdf`;
+      const fileName = fileNameFromContentDisposition(
+        res.headers.get("content-disposition"),
+        fallbackName,
+      );
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      toast.error(e instanceof Error ? e.message : "Error descargando recibo");
+    } finally {
+      setDownloadingReceiptChargeId(null);
+    }
+  }
+
+  async function issueChargeFiscal(charge: Charge) {
+    if (!token) return;
+    setIssuingFiscalChargeId(charge.id_charge);
+    try {
+      const res = await authFetch(
+        `/api/dev/agencies/${agencyId}/billing/charges/${charge.id_charge}/issue-fiscal`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+        token,
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          payload?.error ||
+            payload?.message ||
+            "No se pudo emitir la factura AFIP.",
+        );
+      }
+      toast.success(payload?.message || "Factura AFIP emitida.");
+      await fetchCharges(false);
+      await fetchStats();
+    } catch (e) {
+      console.error(e);
+      toast.error(
+        e instanceof Error ? e.message : "Error emitiendo factura AFIP",
+      );
+    } finally {
+      setIssuingFiscalChargeId(null);
     }
   }
 
@@ -2215,7 +2360,69 @@ export default function BillingAdminCard({ agencyId }: Props) {
                           : ""}
                       </div>
                     )}
-                    <div className="flex justify-end gap-2">
+                    <div className="rounded-lg border border-white/10 bg-white/25 p-2 text-[11px] dark:bg-white/5">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-sky-950/60 dark:text-white/60">
+                          Factura AFIP
+                        </span>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[10px] ${fiscalStatusBadgeClass(
+                            charge.fiscal_document?.status,
+                          )}`}
+                        >
+                          {fiscalStatusLabel(charge.fiscal_document?.status)}
+                        </span>
+                      </div>
+                      {charge.fiscal_document?.afip_number ? (
+                        <p className="text-sky-950/70 dark:text-white/70">
+                          Nro:{" "}
+                          {formatFiscalVoucherNumber(
+                            charge.fiscal_document.afip_pto_vta,
+                            charge.fiscal_document.afip_number,
+                          )}
+                        </p>
+                      ) : (
+                        <p className="text-sky-950/60 dark:text-white/60">
+                          Sin comprobante emitido.
+                        </p>
+                      )}
+                      {charge.fiscal_document?.afip_cae && (
+                        <p className="text-sky-950/60 dark:text-white/60">
+                          CAE: {charge.fiscal_document.afip_cae}
+                        </p>
+                      )}
+                      {charge.fiscal_document?.issued_at && (
+                        <p className="text-sky-950/60 dark:text-white/60">
+                          Fecha: {formatDate(charge.fiscal_document.issued_at)}
+                        </p>
+                      )}
+                      {charge.fiscal_document?.error_message && (
+                        <p className="text-rose-700 dark:text-rose-300">
+                          {charge.fiscal_document.error_message}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => downloadChargeReceipt(charge)}
+                        disabled={downloadingReceiptChargeId === charge.id_charge}
+                        className="rounded-full bg-white/0 px-3 py-1 text-xs text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:text-white dark:ring-white/10"
+                      >
+                        {downloadingReceiptChargeId === charge.id_charge
+                          ? "Generando recibo..."
+                          : "Recibo PDF"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => issueChargeFiscal(charge)}
+                        disabled={issuingFiscalChargeId === charge.id_charge}
+                        className="rounded-full bg-emerald-600/90 px-3 py-1 text-xs text-emerald-50 shadow-sm shadow-emerald-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60"
+                      >
+                        {issuingFiscalChargeId === charge.id_charge
+                          ? "Facturando..."
+                          : "Emitir factura"}
+                      </button>
                       <button
                         type="button"
                         onClick={() => startEditCharge(charge)}
@@ -2512,7 +2719,69 @@ export default function BillingAdminCard({ agencyId }: Props) {
                           : ""}
                       </div>
                     )}
-                    <div className="flex justify-end gap-2">
+                    <div className="rounded-lg border border-white/10 bg-white/25 p-2 text-[11px] dark:bg-white/5">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-sky-950/60 dark:text-white/60">
+                          Factura AFIP
+                        </span>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[10px] ${fiscalStatusBadgeClass(
+                            charge.fiscal_document?.status,
+                          )}`}
+                        >
+                          {fiscalStatusLabel(charge.fiscal_document?.status)}
+                        </span>
+                      </div>
+                      {charge.fiscal_document?.afip_number ? (
+                        <p className="text-sky-950/70 dark:text-white/70">
+                          Nro:{" "}
+                          {formatFiscalVoucherNumber(
+                            charge.fiscal_document.afip_pto_vta,
+                            charge.fiscal_document.afip_number,
+                          )}
+                        </p>
+                      ) : (
+                        <p className="text-sky-950/60 dark:text-white/60">
+                          Sin comprobante emitido.
+                        </p>
+                      )}
+                      {charge.fiscal_document?.afip_cae && (
+                        <p className="text-sky-950/60 dark:text-white/60">
+                          CAE: {charge.fiscal_document.afip_cae}
+                        </p>
+                      )}
+                      {charge.fiscal_document?.issued_at && (
+                        <p className="text-sky-950/60 dark:text-white/60">
+                          Fecha: {formatDate(charge.fiscal_document.issued_at)}
+                        </p>
+                      )}
+                      {charge.fiscal_document?.error_message && (
+                        <p className="text-rose-700 dark:text-rose-300">
+                          {charge.fiscal_document.error_message}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => downloadChargeReceipt(charge)}
+                        disabled={downloadingReceiptChargeId === charge.id_charge}
+                        className="rounded-full bg-white/0 px-3 py-1 text-xs text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:text-white dark:ring-white/10"
+                      >
+                        {downloadingReceiptChargeId === charge.id_charge
+                          ? "Generando recibo..."
+                          : "Recibo PDF"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => issueChargeFiscal(charge)}
+                        disabled={issuingFiscalChargeId === charge.id_charge}
+                        className="rounded-full bg-emerald-600/90 px-3 py-1 text-xs text-emerald-50 shadow-sm shadow-emerald-950/20 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60"
+                      >
+                        {issuingFiscalChargeId === charge.id_charge
+                          ? "Facturando..."
+                          : "Emitir factura"}
+                      </button>
                       <button
                         type="button"
                         onClick={() => startEditExtraCharge(charge)}

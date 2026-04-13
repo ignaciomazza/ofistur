@@ -185,6 +185,7 @@ export const RESOURCE_SECTIONS = [
 export type ResourceSectionKey = (typeof RESOURCE_SECTIONS)[number]["key"];
 
 export type CalendarVisibilityMode = "all" | "own";
+export type CalendarDataScopeMode = "all" | "team" | "own";
 
 export type ResourceSectionAccessRule = {
   id_user: number;
@@ -433,4 +434,20 @@ export function resolveCalendarVisibility(
   }
   const normalized = normalizeRole(role);
   return normalized === "vendedor" ? "own" : "all";
+}
+
+export function resolveCalendarDataScope(
+  role: string | null | undefined,
+): CalendarDataScopeMode {
+  const normalized = normalizeRole(role);
+  if (
+    normalized === "gerente" ||
+    normalized === "administrativo" ||
+    normalized === "desarrollador" ||
+    normalized === "marketing"
+  ) {
+    return "all";
+  }
+  if (normalized === "lider") return "team";
+  return "own";
 }

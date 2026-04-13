@@ -79,7 +79,7 @@ export async function getBookingLeaderScope(
   return getScopeByWhere(
     {
       id_agency: authAgencyId,
-      user_teams: { some: { user: { id_user: authUserId, role: "lider" } } },
+      user_teams: { some: { id_user: authUserId } },
     },
     authUserId,
   );

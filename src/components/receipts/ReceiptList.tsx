@@ -13,6 +13,7 @@ interface ReceiptListProps {
   role: string;
   onReceiptDeleted?: (id: number) => void;
   onReceiptEdit?: (receipt: Receipt) => void;
+  onReceiptDuplicated?: () => void;
 }
 
 export default function ReceiptList({
@@ -23,6 +24,7 @@ export default function ReceiptList({
   role,
   onReceiptDeleted,
   onReceiptEdit,
+  onReceiptDuplicated,
 }: ReceiptListProps) {
   if (!receipts || receipts.length === 0) {
     return (
@@ -46,6 +48,7 @@ export default function ReceiptList({
             role={role}
             onReceiptDeleted={onReceiptDeleted}
             onReceiptEdit={onReceiptEdit}
+            onReceiptDuplicated={onReceiptDuplicated}
           />
         ))}
     </div>

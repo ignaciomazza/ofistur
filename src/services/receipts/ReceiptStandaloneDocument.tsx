@@ -162,25 +162,40 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc",
   },
   headerRow: { width: "100%", overflow: "hidden" },
-  headerRightRow: { width: "100%", marginTop: 6 },
   headerLeft: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 10,
     width: "100%",
     minWidth: 0,
+  },
+  logoWrap: {
+    width: 160,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerLeftText: {
     flexGrow: 1,
     flexShrink: 1,
     minWidth: 0,
-    maxWidth: 320,
+    maxWidth: 390,
   },
-  agencyName: { fontSize: 12, fontWeight: "bold", color: "#0f172a" },
-  agencyMeta: { fontSize: 9, color: "#64748b" },
-  logo: { height: 28, width: 120, objectFit: "contain", marginBottom: 4 },
-  title: { fontSize: 14, fontWeight: "bold", textTransform: "uppercase" },
-  subtitle: { fontSize: 9, marginBottom: 6, color: "#64748b" },
+  agencyMeta: { fontSize: 9, color: "#64748b", marginTop: 8 },
+  logo: { height: 40, width: 156, objectFit: "contain" },
+  title: {
+    fontSize: 14,
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    marginBottom: 10,
+  },
+  metaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  subtitle: { fontSize: 9.5, color: "#64748b" },
+  dateText: { fontSize: 9, color: "#64748b", textAlign: "right" },
   sectionTitle: {
     fontSize: 11,
     fontWeight: "bold",
@@ -288,6 +303,12 @@ export default function ReceiptStandaloneDocument(
   const agencyLegalSafe = softWrapLongWords(agency.legalName, {
     breakChar: " ",
   });
+  const agencySummary = softWrapLongWords(
+    `${agencyNameSafe || "-"} - ${agencyLegalSafe || "-"} - CUIT ${
+      agency.taxId || "-"
+    } - ${agency.address || "-"}`,
+    { breakChar: " " },
+  );
 
   const displayCurrency = amountCurrency || "ARS";
   const fee =
@@ -315,26 +336,25 @@ export default function ReceiptStandaloneDocument(
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <View style={styles.headerLeft}>
-              {agency.logoBase64 && agency.logoMime && (
-                // eslint-disable-next-line jsx-a11y/alt-text
-                <Image
-                  style={styles.logo}
-                  src={`data:${agency.logoMime};base64,${agency.logoBase64}`}
-                />
-              )}
+              <View style={styles.logoWrap}>
+                {agency.logoBase64 && agency.logoMime && (
+                  // eslint-disable-next-line jsx-a11y/alt-text
+                  <Image
+                    style={styles.logo}
+                    src={`data:${agency.logoMime};base64,${agency.logoBase64}`}
+                  />
+                )}
+              </View>
               <View style={styles.headerLeftText}>
-                <Text style={styles.agencyName}>{agencyNameSafe || "-"}</Text>
-                <Text style={styles.agencyMeta}>{agencyLegalSafe || "-"}</Text>
-                <Text style={styles.agencyMeta}>CUIT {agency.taxId || "-"}</Text>
-                <Text style={styles.agencyMeta}>{agency.address || "-"}</Text>
+                <Text style={styles.title}>Comprobante de Pago</Text>
+                <View style={styles.metaRow}>
+                  <Text style={styles.subtitle}>Recibo Nro {receiptNumber}</Text>
+                  <Text style={styles.dateText}>{fmtDate(issueDate)}</Text>
+                </View>
               </View>
             </View>
           </View>
-          <View style={styles.headerRightRow}>
-            <Text style={styles.title}>Comprobante de Pago</Text>
-            <Text style={styles.subtitle}>Recibo Nro {receiptNumber}</Text>
-            <Text style={styles.subtitle}>Fecha: {fmtDate(issueDate)}</Text>
-          </View>
+          <Text style={styles.agencyMeta}>{agencySummary}</Text>
         </View>
 
         <Text style={styles.sectionTitle}>Datos</Text>

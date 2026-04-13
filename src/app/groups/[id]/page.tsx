@@ -5450,8 +5450,12 @@ export default function GroupDetailPage() {
                         initialCounterCurrency={
                           editingCollectReceipt?.counter_currency ?? null
                         }
-                        initialClientIds={[Number(selectedCollectClientId)]}
-                        lockClientSelection={true}
+                        initialClientIds={
+                          selectedCollectClientId
+                            ? [Number(selectedCollectClientId)]
+                            : []
+                        }
+                        lockClientSelection={Boolean(selectedCollectClientId)}
                         lockedClientLabel={
                           selectedCollectPassenger.client
                             ? `${selectedCollectPassenger.client.first_name} ${selectedCollectPassenger.client.last_name}`.trim()
@@ -5465,7 +5469,9 @@ export default function GroupDetailPage() {
                             ...payload,
                             passengerId:
                               selectedCollectPassenger.id_travel_group_passenger,
-                            clientIds: [Number(selectedCollectClientId)],
+                            clientIds: selectedCollectClientId
+                              ? [Number(selectedCollectClientId)]
+                              : payload.clientIds,
                           };
 
                           if (editingCollectReceipt?.id_receipt) {
