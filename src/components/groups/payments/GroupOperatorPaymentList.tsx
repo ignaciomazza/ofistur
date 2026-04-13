@@ -248,7 +248,6 @@ export default function GroupOperatorPaymentList({
                   token={token}
                   groupId={groupId}
                   role={role}
-                  allowDownload={!groupId}
                   onEdit={onPaymentEdit}
                   onDeleted={(id) => {
                     setItems((prev) =>

@@ -188,8 +188,11 @@ function GroupOperatorPaymentCard({
     }
     setLoadingPDF(true);
     try {
+      const endpoint = groupId
+        ? `/api/groups/${encodeURIComponent(groupId)}/finance/operator-payments/${item.id_investment}/pdf`
+        : `/api/investments/${item.id_investment}/pdf`;
       const res = await authFetch(
-        `/api/investments/${item.id_investment}/pdf`,
+        endpoint,
         { headers: { Accept: "application/pdf" } },
         token,
       );
