@@ -14,6 +14,11 @@ import {
   requireGroupFinanceContext,
 } from "@/lib/groups/financeShared";
 import { decodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
+import {
+  asPayloadObject,
+  parseGroupOperatorPaymentAllocations,
+} from "@/lib/groups/operatorPaymentsValidation";
+import { computeOperatorPaymentBreakdown } from "@/lib/operatorPayments/serviceBreakdown";
 
 type GroupOperatorPaymentPdfRow = {
   id_travel_group_operator_payment: number;
@@ -34,6 +39,7 @@ type GroupOperatorPaymentPdfRow = {
   counter_amount: Prisma.Decimal | number | string | null;
   counter_currency: string | null;
   service_refs: number[] | null;
+  payload: Prisma.JsonValue | null;
   created_by: number | null;
   created_at: Date;
   booking_id: number | null;
@@ -150,6 +156,7 @@ export default async function handler(
         p."counter_amount",
         p."counter_currency",
         p."service_refs",
+        p."payload",
         p."created_by",
         p."created_at",
         tp."booking_id",
@@ -363,6 +370,132 @@ export default async function handler(
     })
     .filter((item): item is NonNullable<typeof item> => item !== null);
 
+  const serviceBreakdownRows = (() => {
+    if (servicesForPdf.length === 0) return Promise.resolve([] as NonNullable<OperatorPaymentPdfData["service_breakdown"]>);
+
+    const serviceInputs = servicesForPdf.map((service) => {
+      const labelParts = [`N° ${service.serviceNumber ?? service.id}`];
+      if (service.type) labelParts.push(String(service.type));
+      if (service.destination) labelParts.push(String(service.destination));
+      return {
+        service_id: service.id,
+        service_label: labelParts.join(" · "),
+        service_currency: normalizeCurrency(service.currency || payment.currency),
+        service_cost: service.cost != null ? toNumber(service.cost) : null,
+      };
+    });
+
+    const targetServiceIds = servicesForPdf.map((service) => service.id);
+
+    const run = async () => {
+      const history = await prisma.travelGroupOperatorPayment.findMany({
+        where: {
+          id_agency: ctx.auth.id_agency,
+          travel_group_id: ctx.group.id_travel_group,
+          service_refs: { hasSome: targetServiceIds },
+        },
+        select: {
+          id_travel_group_operator_payment: true,
+          agency_travel_group_operator_payment_id: true,
+          amount: true,
+          currency: true,
+          paid_at: true,
+          created_at: true,
+          base_amount: true,
+          base_currency: true,
+          counter_amount: true,
+          counter_currency: true,
+          service_refs: true,
+          payload: true,
+        },
+      });
+
+      const payments = history.map((row) => {
+        const payload = asPayloadObject(row.payload);
+        const allocations = parseGroupOperatorPaymentAllocations(payload.allocations)
+          .filter((allocation) => targetServiceIds.includes(allocation.service_id))
+          .map((allocation) => ({
+            service_id: allocation.service_id,
+            service_currency: normalizeCurrency(
+              allocation.service_currency || payment.currency,
+            ),
+            amount_service: toNumber(allocation.amount_service),
+          }));
+
+        return {
+          payment_id: row.id_travel_group_operator_payment,
+          payment_display_id:
+            row.agency_travel_group_operator_payment_id ??
+            row.id_travel_group_operator_payment,
+          amount: toNumber(row.amount),
+          currency: normalizeCurrency(row.currency),
+          paid_at: row.paid_at ?? null,
+          created_at: row.created_at,
+          base_amount: row.base_amount == null ? null : toNumber(row.base_amount),
+          base_currency: row.base_currency,
+          counter_amount:
+            row.counter_amount == null ? null : toNumber(row.counter_amount),
+          counter_currency: row.counter_currency,
+          service_ids: Array.isArray(row.service_refs) ? row.service_refs : [],
+          allocations,
+        };
+      });
+
+      if (
+        !payments.some(
+          (row) =>
+            row.payment_id === payment.id_travel_group_operator_payment,
+        )
+      ) {
+        const currentPayload = asPayloadObject(payment.payload);
+        const currentAllocations = parseGroupOperatorPaymentAllocations(
+          currentPayload.allocations,
+        )
+          .filter((allocation) => targetServiceIds.includes(allocation.service_id))
+          .map((allocation) => ({
+            service_id: allocation.service_id,
+            service_currency: normalizeCurrency(
+              allocation.service_currency || payment.currency,
+            ),
+            amount_service: toNumber(allocation.amount_service),
+          }));
+
+        payments.push({
+          payment_id: payment.id_travel_group_operator_payment,
+          payment_display_id:
+            payment.agency_travel_group_operator_payment_id ??
+            payment.id_travel_group_operator_payment,
+          amount: toNumber(payment.amount),
+          currency: normalizeCurrency(payment.currency),
+          paid_at: payment.paid_at ?? null,
+          created_at: payment.created_at,
+          base_amount:
+            payment.base_amount == null ? null : toNumber(payment.base_amount),
+          base_currency: payment.base_currency,
+          counter_amount:
+            payment.counter_amount == null
+              ? null
+              : toNumber(payment.counter_amount),
+          counter_currency: payment.counter_currency,
+          service_ids: Array.isArray(payment.service_refs) ? payment.service_refs : [],
+          allocations: currentAllocations,
+        });
+      }
+
+      const breakdown = computeOperatorPaymentBreakdown({
+        services: serviceInputs,
+        payments,
+      });
+
+      return (
+        breakdown.byPaymentId.get(payment.id_travel_group_operator_payment)
+          ?.service_rows ?? []
+      );
+    };
+
+    return run();
+  })();
+
   if (bookingNumbers.size === 0) {
     const fallbackBookingNumber = payment.booking_agency_id ?? payment.booking_id;
     if (fallbackBookingNumber && fallbackBookingNumber > 0) {
@@ -410,6 +543,7 @@ export default async function handler(
     },
     bookingNumbers: Array.from(bookingNumbers),
     services: servicesForPdf,
+    service_breakdown: await serviceBreakdownRows,
     agency: {
       name: agency?.name ?? "Agencia",
       legalName: agency?.legal_name ?? agency?.name ?? "-",

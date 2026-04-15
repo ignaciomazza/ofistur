@@ -252,6 +252,16 @@ async function canAccessFinanceModule(
   return canAccessFinanceSection(authUser.role, grants, "payment_plans");
 }
 
+async function canAccessBalancesModule(
+  authUser: Required<DecodedUser>,
+): Promise<boolean> {
+  const grants = await getFinanceSectionGrants(
+    authUser.id_agency,
+    authUser.id_user,
+  );
+  return canAccessFinanceSection(authUser.role, grants, "balances");
+}
+
 async function canAccessBookingScope(
   authUser: Required<DecodedUser>,
   booking: { id_user: number; id_agency: number },
@@ -285,7 +295,24 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       return res.status(401).json({ error: "No autenticado" });
     }
 
-    await ensureCanUseModule(authUser);
+    const context = String(
+      Array.isArray(req.query.context) ? req.query.context[0] : req.query.context || "",
+    )
+      .trim()
+      .toLowerCase();
+    const balancesContext = context === "balances";
+
+    if (balancesContext) {
+      const [balancesAccess, paymentPlansAccess] = await Promise.all([
+        ensurePlanFeatureAccess(authUser.id_agency, "balances"),
+        ensurePlanFeatureAccess(authUser.id_agency, "payment_plans"),
+      ]);
+      if (!balancesAccess.allowed && !paymentPlansAccess.allowed) {
+        return res.status(403).json({ error: "Plan insuficiente" });
+      }
+    } else {
+      await ensureCanUseModule(authUser);
+    }
 
     const bookingId = Number(
       Array.isArray(req.query.bookingId)
@@ -333,9 +360,12 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
     if (Number.isFinite(bookingId) && bookingId > 0) {
       const booking = await ensureBookingInAgency(bookingId, authUser.id_agency);
       const canFinance = await canAccessFinanceModule(authUser);
+      const canBalances = balancesContext
+        ? await canAccessBalancesModule(authUser)
+        : false;
       const canBooking = await canAccessBookingScope(authUser, booking);
 
-      if (!canFinance && !canBooking) {
+      if (!canFinance && !canBalances && !canBooking) {
         return res.status(403).json({ error: "Sin permisos" });
       }
 
@@ -351,7 +381,10 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
     }
 
     const canFinance = await canAccessFinanceModule(authUser);
-    if (!canFinance) {
+    const canBalances = balancesContext
+      ? await canAccessBalancesModule(authUser)
+      : false;
+    if (!canFinance && !canBalances) {
       return res.status(403).json({ error: "Sin permisos" });
     }
 
@@ -432,8 +465,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
       };
     }
 
-    const todayStart = new Date();
-    todayStart.setUTCHours(0, 0, 0, 0);
+    const todayStart =
+      startOfDayUtcFromDateKeyInBuenosAires(todayDateKeyInBuenosAires()) ??
+      new Date();
 
     if (statusFilter === "PAGADA" || statusFilter === "CANCELADA" || statusFilter === "PENDIENTE") {
       where.status = statusFilter;

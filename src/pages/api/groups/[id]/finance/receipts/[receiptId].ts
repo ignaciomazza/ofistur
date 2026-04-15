@@ -16,6 +16,11 @@ import {
   encodeInventoryServiceId,
   resolveInventorySaleUnitPrice,
 } from "@/lib/groups/inventoryServiceRefs";
+import {
+  normalizeGroupReceiptStoredPayments,
+  readGroupReceiptPaymentsFromMetadata,
+  withGroupReceiptPaymentsInMetadata,
+} from "@/lib/groups/groupReceiptMetadata";
 
 async function findReceipt(
   agencyId: number,
@@ -27,6 +32,7 @@ async function findReceipt(
       id_travel_group_receipt: number;
       travel_group_passenger_id: number;
       service_refs: number[] | null;
+      metadata: Prisma.JsonValue | null;
       booking_id: number | null;
     }>
   >(Prisma.sql`
@@ -34,6 +40,7 @@ async function findReceipt(
       r."id_travel_group_receipt",
       r."travel_group_passenger_id",
       r."service_refs",
+      r."metadata",
       p."booking_id"
     FROM "TravelGroupReceipt" r
     LEFT JOIN "TravelGroupPassenger" p
@@ -91,6 +98,7 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
     counter_currency?: unknown;
     clientIds?: unknown;
     serviceIds?: unknown;
+    payments?: unknown;
   };
 
   const conceptRaw =
@@ -161,6 +169,33 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
         .map((item) => parseOptionalPositiveInt(item))
         .filter((item): item is number => !!item)
     : [];
+  const hasPayments = Object.prototype.hasOwnProperty.call(body, "payments");
+  if (hasPayments && !Array.isArray(body.payments)) {
+    return groupApiError(res, 400, "payments inválidos.", {
+      code: "GROUP_FINANCE_RECEIPT_PAYMENTS_INVALID",
+    });
+  }
+  const normalizedPayments = normalizeGroupReceiptStoredPayments(
+    Array.isArray(body.payments) ? body.payments : [],
+  );
+  if (
+    hasPayments &&
+    Array.isArray(body.payments) &&
+    body.payments.length > 0 &&
+    normalizedPayments.length === 0
+  ) {
+    return groupApiError(
+      res,
+      400,
+      "payments inválidos: cada línea debe incluir un monto o fee válido.",
+      {
+        code: "GROUP_FINANCE_RECEIPT_PAYMENTS_INVALID_LINES",
+      },
+    );
+  }
+  const effectivePayments = hasPayments
+    ? normalizedPayments
+    : readGroupReceiptPaymentsFromMetadata(existing.metadata);
 
   let finalServiceIds = Array.from(
     new Set(
@@ -253,6 +288,7 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
           payment_fee_amount: true,
           base_amount: true,
           base_currency: true,
+          metadata: true,
         },
       }),
     ]);
@@ -278,13 +314,17 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
     const validation = validateGroupReceiptDebt({
       selectedServiceIds: finalServiceIds,
       services: [...normalizedRegularServices, ...inventoryServices],
-      existingReceipts,
+      existingReceipts: existingReceipts.map((receipt) => ({
+        ...receipt,
+        payments: readGroupReceiptPaymentsFromMetadata(receipt.metadata),
+      })),
       currentReceipt: {
         amount: toAmountNumber(amount),
         amountCurrency,
         paymentFeeAmount: paymentFeeAmount ? toAmountNumber(paymentFeeAmount) : 0,
         baseAmount: baseAmount ? toAmountNumber(baseAmount) : null,
         baseCurrency,
+        payments: effectivePayments,
       },
     });
     if (!validation.ok) {
@@ -294,6 +334,10 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
     }
     finalServiceIds = validation.normalizedServiceIds;
   }
+  const nextMetadata = withGroupReceiptPaymentsInMetadata(
+    existing.metadata,
+    effectivePayments,
+  );
 
   await prisma.$executeRaw(Prisma.sql`
     UPDATE "TravelGroupReceipt"
@@ -312,6 +356,7 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
         "counter_currency" = ${counterCurrency},
         "client_ids" = ${clientIds},
         "service_refs" = ${finalServiceIds},
+        "metadata" = ${nextMetadata}::jsonb,
         "updated_at" = NOW()
     WHERE "id_travel_group_receipt" = ${receiptId}
       AND "id_agency" = ${ctx.auth.id_agency}

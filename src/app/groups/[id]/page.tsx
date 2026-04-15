@@ -137,6 +137,13 @@ type PassengerItem = {
   pending_payment: {
     amount: string;
     count: number;
+    source?: "services_minus_receipts" | "installments_fallback";
+    breakdown?: Array<{
+      currency: string;
+      services: number;
+      receipts: number;
+      pending: number;
+    }>;
   };
 };
 
@@ -351,6 +358,51 @@ function formatPendingInstallmentAmount(
     maximumFractionDigits: 2,
   }).format(amount);
   return `${currencySymbol} ${formatted}`;
+}
+
+function formatPendingBreakdown(
+  breakdown:
+    | Array<{ currency: string; pending: number }>
+    | null
+    | undefined,
+): string {
+  if (!Array.isArray(breakdown) || breakdown.length === 0) return "";
+  const parts = breakdown
+    .filter((row) => Number(row.pending) > 0.01)
+    .map((row) => formatMoney(Number(row.pending), row.currency || "ARS"));
+  return parts.join(" + ");
+}
+
+function getPassengerPendingDisplay(
+  pending: PassengerItem["pending_payment"] | null | undefined,
+): {
+  label: string;
+  summary: string;
+  source: "services_minus_receipts" | "installments_fallback";
+} {
+  const source =
+    pending?.source === "services_minus_receipts"
+      ? "services_minus_receipts"
+      : "installments_fallback";
+  if (source === "services_minus_receipts") {
+    const breakdown = formatPendingBreakdown(
+      pending?.breakdown as Array<{ currency: string; pending: number }> | undefined,
+    );
+    const amount =
+      breakdown || formatPendingInstallmentAmount(pending?.amount ?? "0");
+    return {
+      label: "Saldo pendiente",
+      summary: amount || "$ 0,00",
+      source,
+    };
+  }
+  return {
+    label: "Cuotas pendientes",
+    summary: `${pending?.count ?? 0} · ${formatPendingInstallmentAmount(
+      pending?.amount ?? "0",
+    )}`,
+    source,
+  };
 }
 
 function toDateInputValue(value: string | null | undefined): string {
@@ -5608,6 +5660,7 @@ export default function GroupDetailPage() {
                     <GroupOperatorPaymentList
                       token={token}
                       groupId={groupId}
+                      availableServices={paymentsContextServices}
                       role={financeRole}
                       scopeKey={selectedPaymentsScope.key}
                       reloadKey={financeOperatorPaymentsReloadKey}
@@ -5992,7 +6045,7 @@ export default function GroupDetailPage() {
                       {!isSingleDepartureMode ? (
                         <th className="p-2">Salida</th>
                       ) : null}
-                      <th className="p-2">Cuotas pendientes</th>
+                      <th className="p-2">Pendiente</th>
                       <th className="p-2">Acción</th>
                     </tr>
                   </thead>
@@ -6028,10 +6081,7 @@ export default function GroupDetailPage() {
                             </td>
                           ) : null}
                           <td className="p-2 text-xs text-slate-700 dark:text-slate-300">
-                            {item.pending_payment.count} ·{" "}
-                            {formatPendingInstallmentAmount(
-                              item.pending_payment.amount,
-                            )}
+                            {getPassengerPendingDisplay(item.pending_payment).summary}
                           </td>
                           <td className="p-2">
                             <div className="flex flex-wrap gap-2">
@@ -6184,13 +6234,8 @@ export default function GroupDetailPage() {
                           </span>
                         ) : null}
                         <span className="rounded-full border border-sky-300/70 bg-white px-2 py-0.5 text-slate-700 dark:border-sky-600/30 dark:bg-sky-950/10 dark:text-slate-300">
-                          Pendientes: {item.pending_payment.count}
-                        </span>
-                        <span className="rounded-full border border-sky-300/70 bg-white px-2 py-0.5 text-slate-700 dark:border-sky-600/30 dark:bg-sky-950/10 dark:text-slate-300">
-                          Monto:{" "}
-                          {formatPendingInstallmentAmount(
-                            item.pending_payment.amount,
-                          )}
+                          {getPassengerPendingDisplay(item.pending_payment).label}:{" "}
+                          {getPassengerPendingDisplay(item.pending_payment).summary}
                         </span>
                       </div>
                     </article>
@@ -6289,10 +6334,8 @@ export default function GroupDetailPage() {
                           : `Salida: ${item.travelGroupDeparture?.name || "-"}`}
                       </p>
                       <p className="mt-2 text-xs text-slate-700 dark:text-slate-300">
-                        Pendientes: {item.pending_payment.count} ·{" "}
-                        {formatPendingInstallmentAmount(
-                          item.pending_payment.amount,
-                        )}
+                        {getPassengerPendingDisplay(item.pending_payment).label}:{" "}
+                        {getPassengerPendingDisplay(item.pending_payment).summary}
                       </p>
                     </article>
                   );

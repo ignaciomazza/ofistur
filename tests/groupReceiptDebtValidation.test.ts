@@ -76,5 +76,40 @@ describe("group receipt debt validation", () => {
     if (!result.ok) return;
     expect(result.normalizedServiceIds).toEqual([1]);
   });
-});
 
+  it("uses payment lines/fees by currency to avoid false ARS overpay", () => {
+    const result = validateGroupReceiptDebt({
+      selectedServiceIds: [1],
+      services: [
+        {
+          ...serviceUsd,
+          sale_price: 110,
+        },
+      ],
+      existingReceipts: [
+        {
+          service_refs: [1],
+          amount: 100,
+          amount_currency: "USD",
+          payment_fee_amount: 10,
+          base_amount: null,
+          base_currency: null,
+          payments: [
+            { amount: 100, payment_currency: "USD", fee_amount: 0 },
+            { amount: 0, payment_currency: "ARS", fee_amount: 10 },
+          ],
+        },
+      ],
+      currentReceipt: {
+        amount: 10,
+        amountCurrency: "USD",
+        paymentFeeAmount: 0,
+        baseAmount: null,
+        baseCurrency: null,
+        payments: [{ amount: 10, payment_currency: "USD", fee_amount: 0 }],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+});

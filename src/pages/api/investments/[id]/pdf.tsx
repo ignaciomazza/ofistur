@@ -19,6 +19,7 @@ import {
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
 import { decodeInvestmentPdfItemsPayload } from "@/utils/investments/pdfItemsPayload";
+import { computeOperatorPaymentBreakdown } from "@/lib/operatorPayments/serviceBreakdown";
 
 const prisma = new PrismaClient();
 
@@ -359,12 +360,25 @@ export default async function handler(
     console.error("⚠️ Error obteniendo logo de agencia:", e);
   }
 
-  const serviceIds = Array.isArray(investment.serviceIds)
-    ? investment.serviceIds
-    : [];
-  const services = serviceIds.length
+  const currentAllocations = await prisma.investmentServiceAllocation.findMany({
+    where: { investment_id: investment.id_investment },
+    select: {
+      service_id: true,
+      service_currency: true,
+      amount_service: true,
+    },
+  });
+
+  const serviceIds = Array.isArray(investment.serviceIds) ? investment.serviceIds : [];
+  const targetServiceIds = Array.from(
+    new Set([
+      ...serviceIds,
+      ...currentAllocations.map((allocation) => allocation.service_id),
+    ]),
+  );
+  const services = targetServiceIds.length
     ? await prisma.service.findMany({
-        where: { id_service: { in: serviceIds }, id_agency: authAgencyId },
+        where: { id_service: { in: targetServiceIds }, id_agency: authAgencyId },
         select: {
           id_service: true,
           agency_service_id: true,
@@ -377,6 +391,17 @@ export default async function handler(
         },
       })
     : [];
+  const serviceLabelById = new Map<number, string>(
+    services.map((service) => {
+      const parts = [`N° ${service.agency_service_id ?? service.id_service}`];
+      if (service.type) parts.push(service.type);
+      if (service.destination) parts.push(service.destination);
+      return [service.id_service, parts.join(" · ")] as const;
+    }),
+  );
+  const serviceCurrencyById = new Map<number, string>(
+    services.map((service) => [service.id_service, String(service.currency || "ARS").toUpperCase()] as const),
+  );
   const pdfItemsPayload = decodeInvestmentPdfItemsPayload(
     investment.counterparty_name,
   );
@@ -399,6 +424,179 @@ export default async function handler(
           cost: s.cost_price != null ? toNum(s.cost_price, 0) : null,
           currency: s.currency,
         }));
+  let serviceBreakdownRows: OperatorPaymentPdfData["service_breakdown"] = [];
+  if (categoryIsOperator && services.length > 0) {
+    const normalizeHistoryPayment = (row: {
+      id_investment: number;
+      agency_investment_id: number | null;
+      category: string;
+      amount: unknown;
+      currency: string;
+      paid_at: Date | null;
+      created_at: Date;
+      base_amount: unknown;
+      base_currency: string | null;
+      counter_amount: unknown;
+      counter_currency: string | null;
+      serviceIds: number[];
+    }) => ({
+      payment_id: row.id_investment,
+      payment_display_id: row.agency_investment_id ?? row.id_investment,
+      amount: toNum(row.amount, 0),
+      currency: String(row.currency || "ARS").toUpperCase(),
+      paid_at: row.paid_at ?? null,
+      created_at: row.created_at,
+      base_amount: row.base_amount == null ? null : toNum(row.base_amount, 0),
+      base_currency: row.base_currency,
+      counter_amount:
+        row.counter_amount == null ? null : toNum(row.counter_amount, 0),
+      counter_currency: row.counter_currency,
+      service_ids: Array.isArray(row.serviceIds) ? row.serviceIds : [],
+      allocations: [] as Array<{
+        service_id: number;
+        service_currency: string;
+        amount_service: number;
+      }>,
+    });
+
+    const paymentMap = new Map<
+      number,
+      ReturnType<typeof normalizeHistoryPayment>
+    >();
+
+    const upsertPayment = (
+      row: Parameters<typeof normalizeHistoryPayment>[0],
+    ) => {
+      if (!isOperatorCategoryName(row.category, operatorCategorySet)) return null;
+      const existing = paymentMap.get(row.id_investment);
+      if (existing) return existing;
+      const normalized = normalizeHistoryPayment(row);
+      paymentMap.set(row.id_investment, normalized);
+      return normalized;
+    };
+
+    const pushAllocation = (
+      paymentId: number,
+      allocation: {
+        service_id: number;
+        service_currency: string;
+        amount_service: number;
+      },
+    ) => {
+      const target = paymentMap.get(paymentId);
+      if (!target) return;
+      target.allocations.push(allocation);
+    };
+
+    const allocationHistory = await prisma.investmentServiceAllocation.findMany({
+      where: {
+        service_id: { in: targetServiceIds },
+        investment: { id_agency: authAgencyId },
+      },
+      select: {
+        investment_id: true,
+        service_id: true,
+        service_currency: true,
+        amount_service: true,
+        investment: {
+          select: {
+            id_investment: true,
+            agency_investment_id: true,
+            category: true,
+            amount: true,
+            currency: true,
+            paid_at: true,
+            created_at: true,
+            base_amount: true,
+            base_currency: true,
+            counter_amount: true,
+            counter_currency: true,
+            serviceIds: true,
+          },
+        },
+      },
+    });
+
+    allocationHistory.forEach((row) => {
+      if (!row.investment) return;
+      const payment = upsertPayment(row.investment);
+      if (!payment) return;
+      pushAllocation(row.investment_id, {
+        service_id: row.service_id,
+        service_currency: String(
+          row.service_currency || serviceCurrencyById.get(row.service_id) || "ARS",
+        ).toUpperCase(),
+        amount_service: toNum(row.amount_service, 0),
+      });
+    });
+
+    const paymentsByServiceIds = await prisma.investment.findMany({
+      where: {
+        id_agency: authAgencyId,
+        serviceIds: { hasSome: targetServiceIds },
+      },
+      select: {
+        id_investment: true,
+        agency_investment_id: true,
+        category: true,
+        amount: true,
+        currency: true,
+        paid_at: true,
+        created_at: true,
+        base_amount: true,
+        base_currency: true,
+        counter_amount: true,
+        counter_currency: true,
+        serviceIds: true,
+      },
+    });
+    paymentsByServiceIds.forEach((row) => {
+      upsertPayment(row);
+    });
+
+    if (!paymentMap.has(investment.id_investment)) {
+      const current = upsertPayment({
+        id_investment: investment.id_investment,
+        agency_investment_id: investment.agency_investment_id ?? null,
+        category: investment.category,
+        amount: investment.amount,
+        currency: investment.currency,
+        paid_at: investment.paid_at ?? null,
+        created_at: investment.created_at,
+        base_amount: investment.base_amount,
+        base_currency: investment.base_currency,
+        counter_amount: investment.counter_amount,
+        counter_currency: investment.counter_currency,
+        serviceIds: Array.isArray(investment.serviceIds) ? investment.serviceIds : [],
+      });
+      if (current && currentAllocations.length > 0) {
+        currentAllocations.forEach((allocation) => {
+          pushAllocation(investment.id_investment, {
+            service_id: allocation.service_id,
+            service_currency: String(
+              allocation.service_currency || serviceCurrencyById.get(allocation.service_id) || "ARS",
+            ).toUpperCase(),
+            amount_service: toNum(allocation.amount_service, 0),
+          });
+        });
+      }
+    }
+
+    const breakdown = computeOperatorPaymentBreakdown({
+      services: services.map((service) => ({
+        service_id: service.id_service,
+        service_label:
+          serviceLabelById.get(service.id_service) ||
+          `N° ${service.agency_service_id ?? service.id_service}`,
+        service_currency: service.currency || "ARS",
+        service_cost: service.cost_price != null ? toNum(service.cost_price, 0) : null,
+      })),
+      payments: Array.from(paymentMap.values()),
+    });
+
+    serviceBreakdownRows =
+      breakdown.byPaymentId.get(investment.id_investment)?.service_rows ?? [];
+  }
 
   const bookingNumbers = Array.from(
     new Set(
@@ -491,6 +689,7 @@ export default async function handler(
     },
     bookingNumbers,
     services: servicesForPdf,
+    service_breakdown: serviceBreakdownRows,
     agency: {
       name: agency?.name ?? "Agencia",
       legalName: agency?.legal_name ?? agency?.name ?? "-",

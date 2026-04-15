@@ -29,6 +29,11 @@ export type InvestmentItem = {
   context_id?: number | null;
   booking_id?: number | null;
   serviceIds?: number[] | null;
+  allocations?: Array<{
+    service_id?: number | string | null;
+    service_currency?: string | null;
+    amount_service?: number | string | null;
+  }> | null;
   context?: { id_context: number; agency_context_id?: number | null } | null;
   booking?: { id_booking: number; agency_booking_id?: number | null } | null;
   operator?: OperatorLite | null;
@@ -50,6 +55,7 @@ type Props = {
   groupId?: string;
   role?: string;
   allowDownload?: boolean;
+  serviceDetailLines?: string[];
   onEdit?: (item: InvestmentItem) => void;
   onDeleted?: (id: number) => void;
 };
@@ -147,6 +153,7 @@ function GroupOperatorPaymentCard({
   groupId,
   role,
   allowDownload = true,
+  serviceDetailLines = [],
   onEdit,
   onDeleted,
 }: Props) {
@@ -328,6 +335,30 @@ function GroupOperatorPaymentCard({
     </div>
   );
 
+  const serviceDetailCard =
+    serviceDetailLines.length > 0 ? (
+      <section className={metaItemClass}>
+        <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          Detalle por servicio
+        </p>
+        <div className="mt-1 space-y-1">
+          {serviceDetailLines.slice(0, 3).map((line) => (
+            <p
+              key={line}
+              className="text-[11px] leading-snug text-slate-700 dark:text-slate-200"
+            >
+              {line}
+            </p>
+          ))}
+          {serviceDetailLines.length > 3 ? (
+            <p className="text-[10px] text-slate-500 dark:text-slate-400">
+              +{serviceDetailLines.length - 3} más
+            </p>
+          ) : null}
+        </div>
+      </section>
+    ) : null;
+
   return (
     <article className="h-fit space-y-5 overflow-hidden rounded-2xl border border-sky-300/80 bg-white p-4 text-slate-900 shadow-sm shadow-slate-900/10 backdrop-blur-sm dark:border-sky-600/30 dark:bg-sky-950/10 dark:text-slate-100">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -362,6 +393,7 @@ function GroupOperatorPaymentCard({
       </section>
 
       <section className="flex flex-col gap-2">
+        {serviceDetailCard}
         <div className={metaItemClass}>
           <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
             Concepto

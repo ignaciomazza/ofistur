@@ -29,6 +29,9 @@ const normalizeServiceRefList = (
   return uniquePositiveIds(values);
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const addToCurrency = (
   target: Record<string, number>,
   currencyRaw: unknown,
@@ -56,6 +59,7 @@ export type GroupReceiptDebtReceipt = {
   payment_fee_amount: unknown;
   base_amount: unknown;
   base_currency: string | null;
+  payments?: unknown;
 };
 
 export type GroupReceiptDebtCurrent = {
@@ -64,7 +68,94 @@ export type GroupReceiptDebtCurrent = {
   paymentFeeAmount: number;
   baseAmount: number | null;
   baseCurrency: string | null;
+  payments?: unknown;
 };
+
+export type GroupReceiptDebtPaymentLine = {
+  amount: number;
+  payment_currency: string;
+  fee_amount: number;
+};
+
+function parsePaymentLine(raw: unknown): GroupReceiptDebtPaymentLine | null {
+  if (!isRecord(raw)) return null;
+  const amount = Math.max(0, toSafeNumber(raw.amount));
+  const feeAmount = Math.max(0, toSafeNumber(raw.fee_amount));
+  const paymentCurrency = normalizeCurrencyCode(
+    raw.payment_currency ?? raw.paymentCurrency ?? "ARS",
+  );
+  if (amount <= 0 && feeAmount <= 0) return null;
+  return {
+    amount: round2(amount),
+    payment_currency: paymentCurrency,
+    fee_amount: round2(feeAmount),
+  };
+}
+
+export function normalizeGroupReceiptPaymentLines(
+  raw: unknown,
+): GroupReceiptDebtPaymentLine[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GroupReceiptDebtPaymentLine[] = [];
+  for (const item of raw) {
+    const parsed = parsePaymentLine(item);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+export function addGroupReceiptToPaidByCurrency(
+  target: Record<string, number>,
+  receipt: GroupReceiptDebtReceipt,
+) {
+  const amountCurrency = normalizeCurrencyCode(receipt.amount_currency || "ARS");
+  const amountValue = Math.max(0, toSafeNumber(receipt.amount));
+  const feeValue = Math.max(0, toSafeNumber(receipt.payment_fee_amount));
+  const baseValue = Math.max(0, toSafeNumber(receipt.base_amount));
+  const baseCurrency = receipt.base_currency
+    ? normalizeCurrencyCode(receipt.base_currency)
+    : null;
+  const paymentLines = normalizeGroupReceiptPaymentLines(receipt.payments);
+
+  if (baseCurrency && baseValue > DEBT_TOLERANCE) {
+    const lineFeeTotal = paymentLines.reduce(
+      (sum, line) => sum + Math.max(0, line.fee_amount),
+      0,
+    );
+    const feeRemainder = round2(feeValue - lineFeeTotal);
+    const feeInBase =
+      (paymentLines.length > 0
+        ? paymentLines.reduce((sum, line) => {
+            if (line.payment_currency !== baseCurrency) return sum;
+            return sum + Math.max(0, line.fee_amount);
+          }, 0)
+        : amountCurrency === baseCurrency
+          ? feeValue
+          : 0) +
+      (Math.abs(feeRemainder) > DEBT_TOLERANCE &&
+      amountCurrency === baseCurrency
+        ? feeRemainder
+        : 0);
+    addToCurrency(target, baseCurrency, round2(baseValue + feeInBase));
+    return;
+  }
+
+  if (paymentLines.length > 0) {
+    let lineFeeTotal = 0;
+    for (const line of paymentLines) {
+      lineFeeTotal += Math.max(0, line.fee_amount);
+      const credited = round2(Math.max(0, line.amount) + Math.max(0, line.fee_amount));
+      addToCurrency(target, line.payment_currency, credited);
+    }
+    const feeRemainder = round2(feeValue - lineFeeTotal);
+    if (Math.abs(feeRemainder) > DEBT_TOLERANCE) {
+      addToCurrency(target, amountCurrency, feeRemainder);
+    }
+    return;
+  }
+
+  addToCurrency(target, amountCurrency, round2(amountValue + feeValue));
+}
 
 export type GroupReceiptDebtValidationResult =
   | {
@@ -102,27 +193,6 @@ function buildSalesByCurrency(args: {
   return out;
 }
 
-function addReceiptToPaidByCurrency(
-  target: Record<string, number>,
-  receipt: GroupReceiptDebtReceipt,
-) {
-  const amountCurrency = normalizeCurrencyCode(receipt.amount_currency || "ARS");
-  const amountValue = toSafeNumber(receipt.amount);
-  const feeValue = toSafeNumber(receipt.payment_fee_amount);
-  const baseValue = toSafeNumber(receipt.base_amount);
-  const baseCurrency = receipt.base_currency
-    ? normalizeCurrencyCode(receipt.base_currency)
-    : null;
-
-  if (baseCurrency && Math.abs(baseValue) > DEBT_TOLERANCE) {
-    const feeInBase = baseCurrency === amountCurrency ? feeValue : 0;
-    addToCurrency(target, baseCurrency, baseValue + feeInBase);
-    return;
-  }
-
-  addToCurrency(target, amountCurrency, amountValue + feeValue);
-}
-
 function buildCurrentPaidByCurrency(
   current: GroupReceiptDebtCurrent,
 ): Record<string, number> {
@@ -134,8 +204,9 @@ function buildCurrentPaidByCurrency(
     payment_fee_amount: current.paymentFeeAmount,
     base_amount: current.baseAmount,
     base_currency: current.baseCurrency,
+    payments: current.payments,
   };
-  addReceiptToPaidByCurrency(out, payloadAsReceipt);
+  addGroupReceiptToPaidByCurrency(out, payloadAsReceipt);
   return out;
 }
 
@@ -250,7 +321,7 @@ export function validateGroupReceiptDebt(args: {
     const appliesToSelection =
       refs.length === 0 || refs.some((serviceId) => selectedSet.has(serviceId));
     if (!appliesToSelection) continue;
-    addReceiptToPaidByCurrency(paidByCurrency, receipt);
+    addGroupReceiptToPaidByCurrency(paidByCurrency, receipt);
   }
 
   const remainingBeforeCurrent: Record<string, number> = {};
@@ -284,11 +355,17 @@ export function validateGroupReceiptDebt(args: {
 
   const overpaidCurrencies: string[] = [];
   for (const currency of allCurrencies) {
+    const remainingBefore = round2(remainingBeforeCurrent[currency] || 0);
+    const currentPaid = round2(currentPaidByCurrency[currency] || 0);
     const remainingAfterCurrent = round2(
-      (remainingBeforeCurrent[currency] || 0) -
-        (currentPaidByCurrency[currency] || 0),
+      remainingBefore - currentPaid,
     );
-    if (remainingAfterCurrent < -DEBT_TOLERANCE) {
+    const currentCreatesOrWorsensOverpay =
+      currentPaid > DEBT_TOLERANCE || remainingBefore >= -DEBT_TOLERANCE;
+    if (
+      remainingAfterCurrent < -DEBT_TOLERANCE &&
+      currentCreatesOrWorsensOverpay
+    ) {
       overpaidCurrencies.push(currency);
     }
   }

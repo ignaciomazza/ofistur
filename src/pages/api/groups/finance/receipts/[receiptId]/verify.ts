@@ -12,6 +12,11 @@ import {
 } from "@/utils/receiptVerification";
 import { ensurePlanFeatureAccess } from "@/lib/planAccess.server";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
+import {
+  readGroupReceiptPaymentsFromMetadata,
+  resolveGroupReceiptVerificationState,
+  withGroupReceiptVerificationInMetadata,
+} from "@/lib/groups/groupReceiptMetadata";
 
 const normText = (value: unknown): string =>
   String(value || "")
@@ -39,6 +44,7 @@ type ExistingGroupReceipt = {
   id_travel_group_receipt: number;
   payment_method: string | null;
   account: string | null;
+  metadata: Prisma.JsonValue | null;
 };
 
 type UpdatedGroupReceipt = {
@@ -46,6 +52,7 @@ type UpdatedGroupReceipt = {
   verification_status: string | null;
   verified_at: Date | null;
   verified_by: number | null;
+  metadata: Prisma.JsonValue | null;
 };
 
 export default async function handler(
@@ -85,13 +92,8 @@ export default async function handler(
     hasSchemaColumn("TravelGroupReceipt", "verified_at"),
     hasSchemaColumn("TravelGroupReceipt", "verified_by"),
   ]);
-
-  if (!(hasVerificationStatus && hasVerifiedAt && hasVerifiedBy)) {
-    return res.status(409).json({
-      error:
-        "La base todavía no tiene habilitada la verificación para recibos de grupales.",
-    });
-  }
+  const hasVerificationColumns =
+    hasVerificationStatus && hasVerifiedAt && hasVerifiedBy;
 
   const receiptIdRaw = Array.isArray(req.query.receiptId)
     ? req.query.receiptId[0]
@@ -112,7 +114,8 @@ export default async function handler(
     SELECT
       r."id_travel_group_receipt",
       r."payment_method",
-      r."account"
+      r."account",
+      r."metadata"
     FROM "TravelGroupReceipt" r
     WHERE r."id_travel_group_receipt" = ${receiptId}
       AND r."id_agency" = ${auth.id_agency}
@@ -151,7 +154,18 @@ export default async function handler(
   const receiptForRule = {
     payment_method_id: methodIdByName.get(normText(receipt.payment_method)) ?? null,
     account_id: accountIdByName.get(normText(receipt.account)) ?? null,
-    payments: [] as Array<{ payment_method_id: number | null; account_id: number | null }>,
+    payments: readGroupReceiptPaymentsFromMetadata(receipt.metadata).map(
+      (line) => ({
+        payment_method_id:
+          line.payment_method_id ??
+          methodIdByName.get(normText(line.payment_method)) ??
+          null,
+        account_id:
+          line.account_id ??
+          accountIdByName.get(normText(line.account)) ??
+          null,
+      }),
+    ),
   };
 
   const config = await prisma.financeConfig.findFirst({
@@ -170,32 +184,64 @@ export default async function handler(
     }
   }
 
-  const [updated] = await prisma.$queryRaw<UpdatedGroupReceipt[]>(Prisma.sql`
-    UPDATE "TravelGroupReceipt"
-    SET
-      "verification_status" = ${status},
-      "verified_at" = ${status === "VERIFIED" ? new Date() : null},
-      "verified_by" = ${status === "VERIFIED" ? auth.id_user : null},
-      "updated_at" = NOW()
-    WHERE "id_travel_group_receipt" = ${receipt.id_travel_group_receipt}
-      AND "id_agency" = ${auth.id_agency}
-    RETURNING
-      "id_travel_group_receipt",
-      "verification_status",
-      "verified_at",
-      "verified_by"
-  `);
+  const now = new Date();
+  const nextMetadata = withGroupReceiptVerificationInMetadata({
+    metadata: receipt.metadata,
+    status,
+    verifiedAt: status === "VERIFIED" ? now : null,
+    verifiedBy: status === "VERIFIED" ? auth.id_user : null,
+  });
+
+  let updated: UpdatedGroupReceipt | null = null;
+  if (hasVerificationColumns) {
+    updated = await prisma.travelGroupReceipt.update({
+      where: { id_travel_group_receipt: receipt.id_travel_group_receipt },
+      data: {
+        verification_status: status,
+        verified_at: status === "VERIFIED" ? now : null,
+        verified_by: status === "VERIFIED" ? auth.id_user : null,
+        metadata: nextMetadata as Prisma.InputJsonValue,
+      },
+      select: {
+        id_travel_group_receipt: true,
+        verification_status: true,
+        verified_at: true,
+        verified_by: true,
+        metadata: true,
+      },
+    });
+  } else {
+    updated = await prisma.travelGroupReceipt.update({
+      where: { id_travel_group_receipt: receipt.id_travel_group_receipt },
+      data: {
+        metadata: nextMetadata as Prisma.InputJsonValue,
+      },
+      select: {
+        id_travel_group_receipt: true,
+        metadata: true,
+      },
+    }) as UpdatedGroupReceipt;
+  }
 
   if (!updated) {
     return res.status(404).json({ error: "Recibo no encontrado" });
   }
 
+  const resolvedState = resolveGroupReceiptVerificationState({
+    hasVerificationColumns,
+    columnStatus: updated.verification_status,
+    columnVerifiedAt: updated.verified_at,
+    columnVerifiedBy: updated.verified_by,
+    metadata: updated.metadata,
+  });
+
   return res.status(200).json({
     receipt: {
       id_receipt: updated.id_travel_group_receipt,
-      verification_status: updated.verification_status ?? status,
-      verified_at: updated.verified_at?.toISOString() ?? null,
-      verified_by: updated.verified_by ?? null,
+      verification_status: resolvedState.status,
+      verification_status_source: resolvedState.source,
+      verified_at: resolvedState.verifiedAt?.toISOString() ?? null,
+      verified_by: resolvedState.verifiedBy ?? null,
     },
   });
 }

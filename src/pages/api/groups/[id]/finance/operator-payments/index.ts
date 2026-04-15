@@ -13,6 +13,18 @@ import {
   toAmountNumber,
   toDecimal,
 } from "@/lib/groups/financeShared";
+import { decodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
+import {
+  GROUP_OPERATOR_PAYMENT_TOLERANCE,
+  asPayloadObject,
+  getServiceRefsFromAllocations,
+  hasDuplicatedServices,
+  normalizeGroupOperatorExcessAction,
+  normalizeGroupOperatorMissingAction,
+  normalizeGroupOperatorPaymentLines,
+  parseGroupOperatorPaymentAllocations,
+  sumAssignedAmount,
+} from "@/lib/groups/operatorPaymentsValidation";
 
 type OperatorPaymentRow = {
   id_travel_group_operator_payment: number;
@@ -33,12 +45,15 @@ type OperatorPaymentRow = {
   counter_amount: Prisma.Decimal | number | string | null;
   counter_currency: string | null;
   service_refs: number[] | null;
+  payload: Prisma.JsonValue | null;
   booking_id: number | null;
   operator_name: string | null;
 };
 
 function buildOperatorPaymentItem(row: OperatorPaymentRow) {
   const contextId = row.booking_id ?? null;
+  const payload = asPayloadObject(row.payload);
+  const allocations = parseGroupOperatorPaymentAllocations(payload.allocations);
   return {
     id_investment: row.id_travel_group_operator_payment,
     agency_investment_id: row.agency_travel_group_operator_payment_id,
@@ -67,6 +82,7 @@ function buildOperatorPaymentItem(row: OperatorPaymentRow) {
         }
       : null,
     serviceIds: Array.isArray(row.service_refs) ? row.service_refs : [],
+    allocations,
     payment_method: row.payment_method,
     account: row.account,
     base_amount:
@@ -84,18 +100,8 @@ function buildOperatorPaymentItem(row: OperatorPaymentRow) {
   };
 }
 
-function extractServiceIdsFromPayload(payload: unknown): number[] {
-  if (!payload || typeof payload !== "object") return [];
-  const raw = payload as { allocations?: unknown };
-  if (!Array.isArray(raw.allocations)) return [];
-  const ids = new Set<number>();
-  for (const item of raw.allocations) {
-    if (!item || typeof item !== "object") continue;
-    const serviceId = parseOptionalPositiveInt((item as { service_id?: unknown }).service_id);
-    if (serviceId) ids.add(serviceId);
-  }
-  return Array.from(ids);
-}
+const round2 = (value: number): number =>
+  Math.round((value + Number.EPSILON) * 100) / 100;
 
 async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   const ctx = await requireGroupFinanceContext(req, res);
@@ -149,6 +155,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         p."counter_amount",
         p."counter_currency",
         p."service_refs",
+        p."payload",
         tp."booking_id",
         op."name" AS "operator_name"
       FROM "TravelGroupOperatorPayment" p
@@ -213,14 +220,10 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     counter_amount?: unknown;
     counter_currency?: unknown;
     allocations?: unknown;
+    payments?: unknown;
+    excess_action?: unknown;
+    excess_missing_account_action?: unknown;
   };
-
-  const amount = toDecimal(Number(body.amount)).toDecimalPlaces(2);
-  if (amount.lte(0)) {
-    return groupApiError(res, 400, "El monto del pago debe ser mayor a cero.", {
-      code: "GROUP_FINANCE_AMOUNT_INVALID",
-    });
-  }
 
   const category =
     typeof body.category === "string" && body.category.trim()
@@ -230,17 +233,76 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     typeof body.description === "string" && body.description.trim()
       ? body.description.trim().slice(0, 500)
       : "Pago a operador";
-  const currency = normalizeCurrencyCode(body.currency);
+  const currencyFallback = normalizeCurrencyCode(body.currency);
+  const hasPaymentsPayload = Object.prototype.hasOwnProperty.call(body, "payments");
+  if (hasPaymentsPayload && !Array.isArray(body.payments)) {
+    return groupApiError(res, 400, "payments inválidos.", {
+      code: "GROUP_FINANCE_OPERATOR_PAYMENT_PAYMENTS_INVALID",
+    });
+  }
+  const normalizedPayments = normalizeGroupOperatorPaymentLines(
+    Array.isArray(body.payments) ? body.payments : [],
+    currencyFallback,
+  );
+  if (
+    hasPaymentsPayload &&
+    Array.isArray(body.payments) &&
+    body.payments.length > 0 &&
+    normalizedPayments.length === 0
+  ) {
+    return groupApiError(
+      res,
+      400,
+      "payments inválidos: cada línea debe incluir amount > 0 y payment_method.",
+      {
+        code: "GROUP_FINANCE_OPERATOR_PAYMENT_PAYMENTS_INVALID_LINES",
+      },
+    );
+  }
+
+  const paymentCurrencies = Array.from(
+    new Set(normalizedPayments.map((line) => line.payment_currency).filter(Boolean)),
+  );
+  if (paymentCurrencies.length > 1) {
+    return groupApiError(
+      res,
+      400,
+      "Todas las líneas de pago deben tener la misma moneda.",
+      {
+        code: "GROUP_FINANCE_OPERATOR_PAYMENT_PAYMENTS_MIXED_CURRENCY",
+      },
+    );
+  }
+
+  const paymentsAmount = normalizedPayments.length
+    ? round2(normalizedPayments.reduce((sum, line) => sum + line.amount, 0))
+    : null;
+  const paymentFeeAmount = normalizedPayments.length
+    ? round2(
+        normalizedPayments.reduce((sum, line) => sum + (line.fee_amount || 0), 0),
+      )
+    : 0;
+  const amountNumber = paymentsAmount ?? Number(body.amount);
+  if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+    return groupApiError(res, 400, "El monto del pago debe ser mayor a cero.", {
+      code: "GROUP_FINANCE_AMOUNT_INVALID",
+    });
+  }
+  const amount = toDecimal(amountNumber).toDecimalPlaces(2);
+  const currency = paymentCurrencies[0] ?? currencyFallback;
+
   const paidAt = parseDateInput(body.paid_at) ?? new Date();
   const passengerId = parseOptionalPositiveInt(body.passengerId);
   const departureIdRaw = parseOptionalPositiveInt(body.departureId);
   const operatorId = parseOptionalPositiveInt(body.operator_id);
-  const paymentMethod =
-    typeof body.payment_method === "string" && body.payment_method.trim()
+  const paymentMethod = normalizedPayments.length
+    ? normalizedPayments[0].payment_method
+    : typeof body.payment_method === "string" && body.payment_method.trim()
       ? body.payment_method.trim().slice(0, 120)
       : null;
-  const account =
-    typeof body.account === "string" && body.account.trim()
+  const account = normalizedPayments.length
+    ? (normalizedPayments[0].account ?? null)
+    : typeof body.account === "string" && body.account.trim()
       ? body.account.trim().slice(0, 180)
       : null;
 
@@ -262,6 +324,86 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     typeof body.counter_currency === "string" && body.counter_currency.trim()
       ? normalizeCurrencyCode(body.counter_currency)
       : null;
+  const hasAllocations = Object.prototype.hasOwnProperty.call(body, "allocations");
+  if (hasAllocations && !Array.isArray(body.allocations)) {
+    return groupApiError(res, 400, "allocations inválidas.", {
+      code: "GROUP_FINANCE_ALLOCATIONS_INVALID",
+    });
+  }
+  const allocations = parseGroupOperatorPaymentAllocations(body.allocations);
+  if (hasDuplicatedServices(allocations)) {
+    return groupApiError(
+      res,
+      400,
+      "No podés repetir servicios en las asignaciones.",
+      {
+        code: "GROUP_FINANCE_ALLOCATIONS_DUPLICATED_SERVICE",
+      },
+    );
+  }
+  for (const allocation of allocations) {
+    if (!Number.isFinite(allocation.amount_payment) || allocation.amount_payment < 0) {
+      return groupApiError(res, 400, "Monto asignado inválido.", {
+        code: "GROUP_FINANCE_ALLOCATION_AMOUNT_INVALID",
+      });
+    }
+    if (!Number.isFinite(allocation.amount_service) || allocation.amount_service < 0) {
+      return groupApiError(res, 400, "Monto por servicio inválido.", {
+        code: "GROUP_FINANCE_ALLOCATION_SERVICE_AMOUNT_INVALID",
+      });
+    }
+    if (
+      allocation.fx_rate != null &&
+      (!Number.isFinite(allocation.fx_rate) || allocation.fx_rate <= 0)
+    ) {
+      return groupApiError(res, 400, "Tipo de cambio inválido.", {
+        code: "GROUP_FINANCE_ALLOCATION_FX_INVALID",
+      });
+    }
+    if (
+      allocation.payment_currency &&
+      normalizeCurrencyCode(allocation.payment_currency) !== currency
+    ) {
+      return groupApiError(
+        res,
+        400,
+        "La moneda de asignación debe coincidir con la moneda del pago.",
+        {
+          code: "GROUP_FINANCE_ALLOCATION_PAYMENT_CURRENCY_MISMATCH",
+        },
+      );
+    }
+  }
+  const assignedTotal = sumAssignedAmount(allocations);
+  if (assignedTotal - amountNumber > GROUP_OPERATOR_PAYMENT_TOLERANCE) {
+    return groupApiError(
+      res,
+      400,
+      "El total asignado no puede superar el monto del pago.",
+      {
+        code: "GROUP_FINANCE_ALLOCATIONS_ASSIGNED_EXCEEDS_AMOUNT",
+      },
+    );
+  }
+  const excessAction = Object.prototype.hasOwnProperty.call(body, "excess_action")
+    ? normalizeGroupOperatorExcessAction(body.excess_action)
+    : "carry";
+  if (excessAction === undefined) {
+    return groupApiError(res, 400, "excess_action inválido.", {
+      code: "GROUP_FINANCE_EXCESS_ACTION_INVALID",
+    });
+  }
+  const missingAction = Object.prototype.hasOwnProperty.call(
+    body,
+    "excess_missing_account_action",
+  )
+    ? normalizeGroupOperatorMissingAction(body.excess_missing_account_action)
+    : "carry";
+  if (missingAction === undefined) {
+    return groupApiError(res, 400, "excess_missing_account_action inválido.", {
+      code: "GROUP_FINANCE_EXCESS_MISSING_ACTION_INVALID",
+    });
+  }
 
   let departureId: number | null = departureIdRaw ?? null;
   if (passengerId) {
@@ -284,9 +426,106 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     departureId = passenger.travel_group_departure_id ?? null;
   }
 
-  const serviceRefs = extractServiceIdsFromPayload({ allocations: body.allocations });
+  const serviceRefs = getServiceRefsFromAllocations(allocations);
+  if (serviceRefs.length > 0) {
+    const realServiceIds = serviceRefs.filter((id) => !decodeInventoryServiceId(id));
+    const inventoryIds = Array.from(
+      new Set(
+        serviceRefs
+          .map((id) => decodeInventoryServiceId(id))
+          .filter(
+            (id): id is number =>
+              typeof id === "number" && Number.isFinite(id) && id > 0,
+          ),
+      ),
+    );
+
+    if (realServiceIds.length > 0) {
+      const serviceRows = await prisma.service.findMany({
+        where: {
+          id_agency: ctx.auth.id_agency,
+          id_service: { in: realServiceIds },
+        },
+        select: {
+          id_service: true,
+          id_operator: true,
+        },
+      });
+      const foundIds = new Set(serviceRows.map((row) => row.id_service));
+      const missingServices = realServiceIds.filter((id) => !foundIds.has(id));
+      if (missingServices.length > 0) {
+        return groupApiError(
+          res,
+          400,
+          "Algunos servicios asignados no existen o no pertenecen a la agencia.",
+          {
+            code: "GROUP_FINANCE_ALLOCATION_SERVICE_NOT_FOUND",
+          },
+        );
+      }
+      if (operatorId) {
+        const operatorMismatch = serviceRows.some(
+          (row) =>
+            Number.isFinite(row.id_operator) &&
+            row.id_operator > 0 &&
+            row.id_operator !== operatorId,
+        );
+        if (operatorMismatch) {
+          return groupApiError(
+            res,
+            400,
+            "El operador del pago no coincide con los servicios seleccionados.",
+            {
+              code: "GROUP_FINANCE_ALLOCATION_OPERATOR_MISMATCH",
+            },
+          );
+        }
+      }
+    }
+
+    if (inventoryIds.length > 0) {
+      const inventoryWhere: Prisma.TravelGroupInventoryWhereInput = {
+        id_agency: ctx.auth.id_agency,
+        travel_group_id: ctx.group.id_travel_group,
+        id_travel_group_inventory: { in: inventoryIds },
+        ...(departureId === null
+          ? { travel_group_departure_id: null }
+          : typeof departureId === "number"
+            ? {
+                OR: [
+                  { travel_group_departure_id: null },
+                  { travel_group_departure_id: departureId },
+                ],
+              }
+            : {}),
+      };
+      const inventoryRows = await prisma.travelGroupInventory.findMany({
+        where: inventoryWhere,
+        select: { id_travel_group_inventory: true },
+      });
+      if (inventoryRows.length !== inventoryIds.length) {
+        return groupApiError(
+          res,
+          400,
+          "Hay servicios de inventario fuera del contexto de la grupal/salida.",
+          {
+            code: "GROUP_FINANCE_ALLOCATION_INVENTORY_SCOPE_MISMATCH",
+          },
+        );
+      }
+    }
+  }
+
   const payload = {
-    allocations: Array.isArray(body.allocations) ? body.allocations : [],
+    allocations,
+    payments: normalizedPayments,
+    payment_fee_amount: paymentFeeAmount,
+    excess_action: excessAction ?? null,
+    excess_missing_account_action: missingAction ?? null,
+    base_amount: baseAmount == null ? null : toAmountNumber(baseAmount),
+    base_currency: baseCurrency,
+    counter_amount: counterAmount == null ? null : toAmountNumber(counterAmount),
+    counter_currency: counterCurrency,
     source: "groups-finance",
   };
 

@@ -56,6 +56,18 @@ export type OperatorPaymentPdfData = {
     cost?: number | null;
     currency?: string | null;
   }>;
+  service_breakdown?: Array<{
+    service_id: number;
+    service_label: string;
+    service_currency: string;
+    service_cost: number | null;
+    balance_before: number | null;
+    applied_in_payment: number | null;
+    balance_after: number | null;
+    estimated: boolean;
+    unavailable: boolean;
+    unavailable_reason?: "no_services" | "mixed_currency" | "missing_conversion" | null;
+  }>;
   agency: {
     name: string;
     legalName: string;
@@ -209,6 +221,45 @@ const styles = StyleSheet.create({
     textAlign: "right",
     color: "#475569",
   },
+  breakdownTable: {
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 6,
+    overflow: "hidden",
+    marginBottom: 18,
+    marginTop: 4,
+  },
+  breakdownHeaderRow: {
+    flexDirection: "row",
+    backgroundColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  breakdownRow: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  breakdownCellService: {
+    width: "30%",
+    padding: 6,
+    fontSize: 8.2,
+    color: "#1f2937",
+  },
+  breakdownCellAmount: {
+    width: "14%",
+    padding: 6,
+    fontSize: 8.2,
+    textAlign: "right",
+    color: "#1f2937",
+  },
+  breakdownCellStatus: {
+    width: "14%",
+    padding: 6,
+    fontSize: 8.2,
+    color: "#475569",
+  },
 });
 
 export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
@@ -229,6 +280,7 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
     counter_currency,
     recipient,
     services = [],
+    service_breakdown = [],
     agency,
   } = props;
 
@@ -297,6 +349,41 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
       key: svc.id,
       description: softWrapLongWords(pieces.join(" · "), { breakChar: " " }),
       date: dateLabel || "—",
+    };
+  });
+
+  const serviceBreakdownRows = service_breakdown.map((row) => {
+    const currency = row.service_currency || displayCurrency;
+    const unavailableLabel =
+      row.unavailable_reason === "mixed_currency"
+        ? "sin conversión (multimoneda)"
+        : row.unavailable_reason === "missing_conversion"
+          ? "sin conversión"
+          : "sin detalle";
+
+    return {
+      ...row,
+      costText:
+        row.service_cost == null
+          ? "—"
+          : safeFmtCurrency(row.service_cost, currency),
+      beforeText:
+        row.balance_before == null
+          ? "—"
+          : safeFmtCurrency(row.balance_before, currency),
+      appliedText:
+        row.applied_in_payment == null
+          ? "—"
+          : safeFmtCurrency(row.applied_in_payment, currency),
+      afterText:
+        row.balance_after == null
+          ? "—"
+          : safeFmtCurrency(row.balance_after, currency),
+      statusText: row.unavailable
+        ? `Estimado no disponible (${unavailableLabel})`
+        : row.estimated
+          ? "Estimado"
+          : "Exacto",
     };
   });
 
@@ -380,6 +467,36 @@ export default function OperatorPaymentDocument(props: OperatorPaymentPdfData) {
             </View>
           )}
         </View>
+
+        {serviceBreakdownRows.length > 0 && (
+          <View style={styles.breakdownTable}>
+            <View style={styles.breakdownHeaderRow}>
+              <Text style={styles.breakdownCellService}>Servicio</Text>
+              <Text style={styles.breakdownCellAmount}>Costo</Text>
+              <Text style={styles.breakdownCellAmount}>Saldo previo</Text>
+              <Text style={styles.breakdownCellAmount}>Aplicado</Text>
+              <Text style={styles.breakdownCellAmount}>Saldo posterior</Text>
+              <Text style={styles.breakdownCellStatus}>Detalle</Text>
+            </View>
+            {serviceBreakdownRows.map((row, index) => (
+              <View
+                key={`${row.service_id}-${index}`}
+                style={index % 2 ? [styles.breakdownRow, styles.rowAlt] : styles.breakdownRow}
+              >
+                <Text style={styles.breakdownCellService}>
+                  {softWrapLongWords(row.service_label, { breakChar: " " })}
+                </Text>
+                <Text style={styles.breakdownCellAmount}>{row.costText}</Text>
+                <Text style={styles.breakdownCellAmount}>{row.beforeText}</Text>
+                <Text style={styles.breakdownCellAmount}>{row.appliedText}</Text>
+                <Text style={styles.breakdownCellAmount}>{row.afterText}</Text>
+                <Text style={styles.breakdownCellStatus}>
+                  {softWrapLongWords(row.statusText, { breakChar: " " })}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         <View style={styles.amountBox}>
           <Text style={styles.amountLabel}>Monto total</Text>

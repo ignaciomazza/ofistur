@@ -7,6 +7,9 @@ import {
   requireAuth,
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
+import { addGroupReceiptToPaidByCurrency } from "@/lib/groups/groupReceiptDebtValidation";
+import { readGroupReceiptPaymentsFromMetadata } from "@/lib/groups/groupReceiptMetadata";
+import { computePassengerPendingValue } from "@/lib/groups/passengerPending";
 
 function pickParam(value: string | string[] | undefined): string | null {
   if (!value) return null;
@@ -180,19 +183,126 @@ export default async function handler(
       }
     }
 
+    const bookingIds = Array.from(
+      new Set(
+        passengers
+          .map((item) => Number((item as { booking_id?: unknown }).booking_id ?? 0))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.trunc(value)),
+      ),
+    );
+    const bookingPassengerCount = new Map<number, number>();
+    for (const bookingId of passengers
+      .map((item) => Number((item as { booking_id?: unknown }).booking_id ?? 0))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.trunc(value))) {
+      bookingPassengerCount.set(
+        bookingId,
+        (bookingPassengerCount.get(bookingId) ?? 0) + 1,
+      );
+    }
+
+    const serviceTotalsByBookingId = new Map<number, Record<string, number>>();
+    if (bookingIds.length > 0) {
+      const serviceRows = await prisma.service.findMany({
+        where: {
+          id_agency: auth.id_agency,
+          booking_id: { in: bookingIds },
+        },
+        select: {
+          booking_id: true,
+          currency: true,
+          sale_price: true,
+          card_interest: true,
+          taxableCardInterest: true,
+          vatOnCardInterest: true,
+        },
+      });
+
+      for (const row of serviceRows) {
+        const bookingId = Number(row.booking_id || 0);
+        if (!Number.isFinite(bookingId) || bookingId <= 0) continue;
+        const currency = String(row.currency || "ARS").trim().toUpperCase() || "ARS";
+        const sale = Number(row.sale_price || 0);
+        const splitInterest =
+          Number(row.taxableCardInterest || 0) + Number(row.vatOnCardInterest || 0);
+        const interest = splitInterest > 0 ? splitInterest : Number(row.card_interest || 0);
+        const total = Math.max(0, sale + Math.max(0, interest));
+        if (total <= 0) continue;
+
+        const current = serviceTotalsByBookingId.get(bookingId) || {};
+        current[currency] = Math.round(((current[currency] || 0) + total) * 100) / 100;
+        serviceTotalsByBookingId.set(bookingId, current);
+      }
+    }
+
+    const receiptsByPassengerId = new Map<number, Record<string, number>>();
+    if (passengerScopeIds.length > 0) {
+      const receiptRows = await prisma.travelGroupReceipt.findMany({
+        where: {
+          id_agency: auth.id_agency,
+          travel_group_id: group.id_travel_group,
+          travel_group_passenger_id: { in: passengerScopeIds },
+        },
+        select: {
+          travel_group_passenger_id: true,
+          amount: true,
+          amount_currency: true,
+          payment_fee_amount: true,
+          base_amount: true,
+          base_currency: true,
+          metadata: true,
+        },
+      });
+
+      for (const receipt of receiptRows) {
+        const passengerId = receipt.travel_group_passenger_id;
+        const current = receiptsByPassengerId.get(passengerId) || {};
+        addGroupReceiptToPaidByCurrency(current, {
+          service_refs: null,
+          amount: receipt.amount,
+          amount_currency: receipt.amount_currency,
+          payment_fee_amount: receipt.payment_fee_amount,
+          base_amount: receipt.base_amount,
+          base_currency: receipt.base_currency,
+          payments: readGroupReceiptPaymentsFromMetadata(receipt.metadata),
+        });
+        receiptsByPassengerId.set(passengerId, current);
+      }
+    }
+
     return res.status(200).json({
       group,
-      items: passengers.map((item) => ({
-        ...item,
-        departure_public_id: item.travelGroupDeparture
-          ? getDeparturePublicId(item.travelGroupDeparture)
-          : null,
-        pending_payment:
-          pendingByPassengerId.get(item.id_travel_group_passenger) ?? {
-            amount: "0",
-            count: 0,
-          },
-      })),
+      items: passengers.map((item) => {
+        const bookingId = Number((item as { booking_id?: unknown }).booking_id ?? 0);
+        const normalizedBookingId =
+          Number.isFinite(bookingId) && bookingId > 0
+            ? Math.trunc(bookingId)
+            : 0;
+        const isUnambiguousBooking =
+          normalizedBookingId > 0 &&
+          (bookingPassengerCount.get(normalizedBookingId) ?? 0) === 1;
+        const servicesByCurrency = isUnambiguousBooking
+          ? serviceTotalsByBookingId.get(normalizedBookingId) ?? null
+          : null;
+
+        return {
+          ...item,
+          departure_public_id: item.travelGroupDeparture
+            ? getDeparturePublicId(item.travelGroupDeparture)
+            : null,
+          pending_payment: computePassengerPendingValue({
+            servicesByCurrency,
+            receiptsByCurrency:
+              receiptsByPassengerId.get(item.id_travel_group_passenger) ?? null,
+            installmentsFallback:
+              pendingByPassengerId.get(item.id_travel_group_passenger) ?? {
+                amount: "0",
+                count: 0,
+              },
+          }),
+        };
+      }),
     });
   } catch (error) {
     console.error("[groups][passengers][GET]", error);

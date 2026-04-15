@@ -8,12 +8,15 @@ import { authFetch } from "@/utils/authFetch";
 import GroupOperatorPaymentCard, {
   InvestmentItem,
 } from "@/components/groups/payments/GroupOperatorPaymentCard";
+import { Service } from "@/types";
+import { computeOperatorPaymentBreakdown } from "@/lib/operatorPayments/serviceBreakdown";
 
 type Props = {
   token: string | null;
   groupId?: string;
   scopeKey?: string;
   groupPassengerId?: number | null;
+  availableServices?: Service[];
   contextId?: number; // listar pagos asociados a este contexto
   operatorId?: number; // opcional: filtrar por operador
   role?: string;
@@ -38,11 +41,23 @@ const getApiErrorMessage = (
   return error || message || details || fallback;
 };
 
+const toPositiveInt = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.trunc(parsed);
+};
+
+const toNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 export default function GroupOperatorPaymentList({
   token,
   groupId,
   scopeKey,
   groupPassengerId,
+  availableServices = [],
   contextId,
   operatorId,
   role,
@@ -225,6 +240,94 @@ export default function GroupOperatorPaymentList({
     }
   }, [token, nextCursor, loadingMore, queryString, contextId, groupId]);
 
+  const serviceDetailLinesByPayment = useMemo(() => {
+    if (items.length === 0 || availableServices.length === 0) return {};
+
+    const serviceInputs = availableServices.map((service) => ({
+      service_id: service.id_service,
+      service_label: `N° ${service.agency_service_id ?? service.id_service}`,
+      service_currency: service.currency || "ARS",
+      service_cost: Number(service.cost_price || 0),
+    }));
+
+    const payments = items.map((item) => ({
+      payment_id: item.id_investment,
+      payment_display_id: item.agency_investment_id ?? item.id_investment,
+      amount: toNumber(item.amount),
+      currency: String(item.currency || "ARS").toUpperCase(),
+      paid_at: item.paid_at || null,
+      created_at: item.created_at || null,
+      base_amount:
+        item.base_amount == null ? null : toNumber(item.base_amount),
+      base_currency: item.base_currency || null,
+      counter_amount:
+        item.counter_amount == null ? null : toNumber(item.counter_amount),
+      counter_currency: item.counter_currency || null,
+      service_ids: Array.isArray(item.serviceIds)
+        ? item.serviceIds
+            .map((serviceId) => toPositiveInt(serviceId))
+            .filter((serviceId): serviceId is number => serviceId != null)
+        : [],
+      allocations: Array.isArray(item.allocations)
+        ? item.allocations
+            .map((allocation) => {
+              if (!allocation || typeof allocation !== "object") return null;
+              const serviceId = toPositiveInt(allocation.service_id);
+              if (!serviceId) return null;
+              return {
+                service_id: serviceId,
+                service_currency: String(
+                  allocation.service_currency || "ARS",
+                ).toUpperCase(),
+                amount_service: toNumber(allocation.amount_service),
+              };
+            })
+            .filter(
+              (
+                allocation,
+              ): allocation is {
+                service_id: number;
+                service_currency: string;
+                amount_service: number;
+              } => allocation !== null,
+            )
+        : [],
+    }));
+
+    const breakdown = computeOperatorPaymentBreakdown({
+      services: serviceInputs,
+      payments,
+    });
+
+    return breakdown.payments.reduce<Record<number, string[]>>((acc, payment) => {
+      const lines = payment.service_rows.map((row) => {
+        const prefix = row.service_label;
+        if (row.unavailable) {
+          return `${prefix} · detalle estimado no disponible`;
+        }
+        const applied = row.applied_in_payment ?? 0;
+        const appliedText = new Intl.NumberFormat("es-AR", {
+          style: "currency",
+          currency: row.service_currency || "ARS",
+          minimumFractionDigits: 2,
+        }).format(applied);
+        const balanceText =
+          row.balance_after != null
+            ? new Intl.NumberFormat("es-AR", {
+                style: "currency",
+                currency: row.service_currency || "ARS",
+                minimumFractionDigits: 2,
+              }).format(row.balance_after)
+            : "saldo n/d";
+        return `${prefix} · aplicado ${appliedText} · saldo ${balanceText}${row.estimated ? " · estimado" : ""}`;
+      });
+      if (lines.length > 0) {
+        acc[payment.payment_id] = lines;
+      }
+      return acc;
+    }, {});
+  }, [items, availableServices]);
+
   return (
     <div className={`space-y-6 ${className ?? ""}`}>
       <div className="space-y-6">
@@ -248,6 +351,9 @@ export default function GroupOperatorPaymentList({
                   token={token}
                   groupId={groupId}
                   role={role}
+                  serviceDetailLines={
+                    serviceDetailLinesByPayment[it.id_investment] ?? []
+                  }
                   onEdit={onPaymentEdit}
                   onDeleted={(id) => {
                     setItems((prev) =>

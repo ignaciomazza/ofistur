@@ -9,6 +9,7 @@ import Spinner from "@/components/Spinner";
 import { authFetch } from "@/utils/authFetch";
 import { loadFinancePicks } from "@/utils/loadFinancePicks";
 import { parseAmountInput } from "@/utils/receipts/receiptForm";
+import { shouldConfirmFullExcessWithServices } from "@/utils/investments/allocations";
 import ServiceAllocationsEditor, {
   type AllocationSummary,
   type AllocationPayload,
@@ -1744,6 +1745,20 @@ export default function OperatorPaymentForm({
         toast.error("El total asignado supera el monto del pago.");
         return;
       }
+      if (
+        shouldConfirmFullExcessWithServices({
+          hasServices: selectedServices.length > 0,
+          paymentAmount: editorPaymentAmount,
+          assignedTotal: allocationSummary.assignedTotal,
+          excess: allocationSummary.excess,
+          tolerance: EXCESS_TOLERANCE,
+        }) &&
+        !window.confirm(
+          "Hay servicios seleccionados pero sin monto asignado. El pago quedará completo como saldo a favor. ¿Querés continuar?",
+        )
+      ) {
+        return;
+      }
 
       if (
         excessAction === "credit_entry" &&
@@ -1919,6 +1934,20 @@ export default function OperatorPaymentForm({
 
     if (allocationSummary.overAssigned) {
       toast.error("El total asignado supera el monto del pago.");
+      return;
+    }
+    if (
+      shouldConfirmFullExcessWithServices({
+        hasServices: selectedServices.length > 0,
+        paymentAmount: amountNum,
+        assignedTotal: allocationSummary.assignedTotal,
+        excess: allocationSummary.excess,
+        tolerance: EXCESS_TOLERANCE,
+      }) &&
+      !window.confirm(
+        "Hay servicios seleccionados pero sin monto asignado. El pago quedará completo como saldo a favor. ¿Querés continuar?",
+      )
+    ) {
       return;
     }
     const conv = validateConversion();

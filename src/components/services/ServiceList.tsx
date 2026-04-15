@@ -12,6 +12,7 @@ import {
 import { formatDateOnlyInBuenosAires } from "@/lib/buenosAiresDate";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
+import { computeOperatorPaymentBreakdown } from "@/lib/operatorPayments/serviceBreakdown";
 
 interface Totals {
   sale_price: number;
@@ -85,12 +86,6 @@ const KEYS_TO_SUM: readonly NumericKeys[] = [
 const toPositiveInt = (value: unknown): number | null => {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
-};
-
-const truncate = (value: string, max: number): string => {
-  const text = String(value || "").trim();
-  if (text.length <= max) return text;
-  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 };
 
 interface ServiceListProps {
@@ -239,7 +234,30 @@ export default function ServiceList({
 
     void (async () => {
       try {
-        const serviceMap = new Map<number, string[]>();
+        const serviceInputs = services.map((service) => ({
+          service_id: service.id_service,
+          service_label: `N° ${service.agency_service_id ?? service.id_service}`,
+          service_currency: service.currency || "ARS",
+          service_cost: Number(service.cost_price || 0),
+        }));
+        const paymentsForBreakdown: Array<{
+          payment_id: number;
+          payment_display_id: string;
+          amount: number;
+          currency: string;
+          paid_at?: string | null;
+          created_at?: string | null;
+          base_amount?: number | null;
+          base_currency?: string | null;
+          counter_amount?: number | null;
+          counter_currency?: string | null;
+          service_ids: number[];
+          allocations: Array<{
+            service_id: number;
+            service_currency: string;
+            amount_service: number;
+          }>;
+        }> = [];
         let cursor: number | null = null;
 
         for (let i = 0; i < 20; i += 1) {
@@ -265,28 +283,18 @@ export default function ServiceList({
           for (const item of items) {
             if (!item || typeof item !== "object") continue;
             const rec = item as Record<string, unknown>;
-            const investmentId = toPositiveInt(
+            const paymentId = toPositiveInt(rec.id_investment);
+            if (paymentId == null) continue;
+            const paymentDisplayId = toPositiveInt(
               rec.agency_investment_id ?? rec.id_investment,
             );
-            if (investmentId == null) continue;
-
-            const rawDescription = String(rec.description || "").trim();
-            const line = `N° ${investmentId} • ${truncate(
-              rawDescription || "Pago a operador",
-              46,
-            )}`;
+            const amount = Number(rec.amount);
+            const baseAmount = Number(rec.base_amount);
+            const counterAmount = Number(rec.counter_amount);
+            const currency = String(rec.currency || "ARS").toUpperCase();
 
             const rawServiceIds: unknown[] = [];
             if (Array.isArray(rec.serviceIds)) rawServiceIds.push(...rec.serviceIds);
-            if (Array.isArray(rec.allocations)) {
-              for (const alloc of rec.allocations) {
-                if (alloc && typeof alloc === "object") {
-                  rawServiceIds.push(
-                    (alloc as { service_id?: unknown }).service_id,
-                  );
-                }
-              }
-            }
 
             const serviceIds = Array.from(
               new Set(
@@ -296,11 +304,72 @@ export default function ServiceList({
               ),
             );
 
-            for (const serviceId of serviceIds) {
-              const existing = serviceMap.get(serviceId) ?? [];
-              if (!existing.includes(line)) existing.push(line);
-              serviceMap.set(serviceId, existing);
-            }
+            const allocations = Array.isArray(rec.allocations)
+              ? rec.allocations
+                  .map((rawAlloc) => {
+                    if (!rawAlloc || typeof rawAlloc !== "object") return null;
+                    const alloc = rawAlloc as Record<string, unknown>;
+                    const serviceId = toPositiveInt(alloc.service_id);
+                    if (serviceId == null) return null;
+                    const amountService = Number(alloc.amount_service);
+                    return {
+                      service_id: serviceId,
+                      service_currency: String(
+                        alloc.service_currency || currency || "ARS",
+                      ).toUpperCase(),
+                      amount_service:
+                        Number.isFinite(amountService) && amountService >= 0
+                          ? amountService
+                          : 0,
+                    };
+                  })
+                  .filter(
+                    (
+                      allocation,
+                    ): allocation is {
+                      service_id: number;
+                      service_currency: string;
+                      amount_service: number;
+                    } => allocation !== null,
+                  )
+              : [];
+
+            paymentsForBreakdown.push({
+              payment_id: paymentId,
+              payment_display_id: String(
+                paymentDisplayId ?? rec.id_investment ?? paymentId,
+              ),
+              amount: Number.isFinite(amount) ? amount : 0,
+              currency,
+              paid_at:
+                typeof rec.paid_at === "string"
+                  ? rec.paid_at
+                  : rec.paid_at == null
+                    ? null
+                    : undefined,
+              created_at:
+                typeof rec.created_at === "string"
+                  ? rec.created_at
+                  : rec.created_at == null
+                    ? null
+                    : undefined,
+              base_amount:
+                Number.isFinite(baseAmount) && baseAmount > 0 ? baseAmount : null,
+              base_currency:
+                typeof rec.base_currency === "string"
+                  ? rec.base_currency.toUpperCase()
+                  : null,
+              counter_amount:
+                Number.isFinite(counterAmount) && counterAmount > 0
+                  ? counterAmount
+                  : null,
+              counter_currency:
+                typeof rec.counter_currency === "string"
+                  ? rec.counter_currency.toUpperCase()
+                  : null,
+              service_ids: serviceIds,
+              allocations,
+            });
           }
 
           const next = toPositiveInt(json?.nextCursor);
@@ -308,8 +377,54 @@ export default function ServiceList({
           cursor = next;
         }
 
+        const breakdown = computeOperatorPaymentBreakdown({
+          services: serviceInputs,
+          payments: paymentsForBreakdown,
+        });
+        const serviceMap = new Map<
+          number,
+          Array<{ line: string; anchorTs: number; paymentId: number }>
+        >();
+
+        breakdown.payments.forEach((payment) => {
+          const anchorTs = payment.anchor ? payment.anchor.getTime() : Number.MAX_SAFE_INTEGER;
+          payment.service_rows.forEach((row) => {
+            let line = `N° ${payment.payment_display_id}`;
+            if (row.unavailable) {
+              line += " · detalle estimado no disponible";
+            } else {
+              const appliedValue = row.applied_in_payment ?? 0;
+              line += ` · aplicado ${fmtCurrency(appliedValue, row.service_currency)}`;
+              if (row.balance_after != null) {
+                line += ` · saldo ${fmtCurrency(row.balance_after, row.service_currency)}`;
+              } else {
+                line += " · saldo n/d";
+              }
+              if (row.estimated) {
+                line += " · estimado";
+              }
+            }
+            const existing = serviceMap.get(row.service_id) ?? [];
+            existing.push({
+              line,
+              anchorTs,
+              paymentId: payment.payment_id,
+            });
+            serviceMap.set(row.service_id, existing);
+          });
+        });
+
         if (!active) return;
-        setOperatorPaymentsByService(Object.fromEntries(serviceMap.entries()));
+        const sortedEntries = Array.from(serviceMap.entries()).map(
+          ([serviceId, rows]) => {
+            rows.sort((a, b) => {
+              if (a.anchorTs !== b.anchorTs) return b.anchorTs - a.anchorTs;
+              return b.paymentId - a.paymentId;
+            });
+            return [serviceId, rows.map((row) => row.line)] as const;
+          },
+        );
+        setOperatorPaymentsByService(Object.fromEntries(sortedEntries));
       } catch (error) {
         if ((error as { name?: string })?.name === "AbortError") return;
         if (active) setOperatorPaymentsByService({});
@@ -320,7 +435,7 @@ export default function ServiceList({
       active = false;
       ac.abort();
     };
-  }, [token, bookingId, operatorPaymentsReloadKey]);
+  }, [token, bookingId, operatorPaymentsReloadKey, services, fmtCurrency]);
 
   return (
     <div className="space-y-8">

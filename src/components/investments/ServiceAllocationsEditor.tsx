@@ -5,6 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
 import { parseAmountInput } from "@/utils/receipts/receiptForm";
+import {
+  buildCostOnlyDraftNumbers,
+  buildCostProrationDraftNumbers,
+} from "@/utils/investments/allocations";
 
 export type AllocationService = {
   id_service: number;
@@ -96,7 +100,13 @@ export default function ServiceAllocationsEditor({
     "cost" | "equal" | "use_costs" | null
   >(null);
   const lastReset = useRef<number | undefined>(undefined);
+  const hasManualEditsRef = useRef(false);
+  const autoPrefillSignatureRef = useRef<string | null>(null);
   const paymentCur = (paymentCurrency || "").toUpperCase();
+  const serviceIdsKey = useMemo(
+    () => services.map((svc) => svc.id_service).join(","),
+    [services],
+  );
 
   const initialMap = useMemo(() => {
     const map = new Map<number, AllocationPayload>();
@@ -153,6 +163,11 @@ export default function ServiceAllocationsEditor({
       return next;
     });
   }, [services, initialMap, resetKey, paymentCur]);
+
+  useEffect(() => {
+    hasManualEditsRef.current = false;
+    autoPrefillSignatureRef.current = null;
+  }, [serviceIdsKey, resetKey]);
 
   const rows = useMemo(() => {
     return services.map((svc) => {
@@ -233,6 +248,104 @@ export default function ServiceAllocationsEditor({
   }, [rows, paymentAmount, paymentCur]);
 
   useEffect(() => {
+    if (services.length === 0) return;
+    if ((initialAllocations?.length ?? 0) > 0) return;
+    if (hasManualEditsRef.current) return;
+
+    const signature = JSON.stringify({
+      serviceIdsKey,
+      paymentCur,
+      paymentAmount: round2(Number(paymentAmount || 0)),
+      costs: services.map((svc) => Number(svc.cost_price || 0)),
+    });
+    if (autoPrefillSignatureRef.current === signature) return;
+
+    const autoProration = buildCostProrationDraftNumbers({
+      services: services.map((svc) => ({
+        id_service: svc.id_service,
+        currency: svc.currency || "ARS",
+        cost_price: svc.cost_price ?? 0,
+      })),
+      paymentCurrency: paymentCur,
+      paymentAmount: Number(paymentAmount || 0),
+      fxRatesByCurrency: rows.reduce<Record<string, number>>((acc, row) => {
+        if (
+          row.serviceCur !== paymentCur &&
+          row.fxRate != null &&
+          Number(row.fxRate) > 0 &&
+          acc[row.serviceCur] == null
+        ) {
+          acc[row.serviceCur] = Number(row.fxRate);
+        }
+        return acc;
+      }, {}),
+    });
+
+    if (autoProration) {
+      setDrafts((prev) => {
+        const next = { ...prev };
+        services.forEach((svc) => {
+          const draft = autoProration[svc.id_service];
+          if (!draft) return;
+          const serviceCur = (svc.currency || "").toUpperCase();
+          next[svc.id_service] = {
+            amount_service:
+              draft.amountService > 0
+                ? formatMoneyInput(String(draft.amountService), serviceCur || "ARS")
+                : "",
+            counter_amount:
+              serviceCur === paymentCur || draft.counterAmount == null || draft.counterAmount <= 0
+                ? ""
+                : formatMoneyInput(String(draft.counterAmount), paymentCur || "ARS"),
+          };
+        });
+        return next;
+      });
+      setDistributionPreset("cost");
+      autoPrefillSignatureRef.current = signature;
+      return;
+    }
+
+    const uniqueCurrencies = Array.from(
+      new Set(services.map((svc) => (svc.currency || "ARS").toUpperCase())),
+    );
+    if (uniqueCurrencies.length === 1 && uniqueCurrencies[0] !== paymentCur) {
+      const byCost = buildCostOnlyDraftNumbers({
+        services: services.map((svc) => ({
+          id_service: svc.id_service,
+          currency: svc.currency || "ARS",
+          cost_price: svc.cost_price ?? 0,
+        })),
+      });
+      setDrafts((prev) => {
+        const next = { ...prev };
+        services.forEach((svc) => {
+          const draft = byCost[svc.id_service];
+          const serviceCur = (svc.currency || "").toUpperCase();
+          next[svc.id_service] = {
+            amount_service:
+              draft && draft.amountService > 0
+                ? formatMoneyInput(String(draft.amountService), serviceCur || "ARS")
+                : "",
+            counter_amount: prev[svc.id_service]?.counter_amount || "",
+          };
+        });
+        return next;
+      });
+      setDistributionPreset("use_costs");
+    }
+
+    autoPrefillSignatureRef.current = signature;
+  }, [
+    services,
+    serviceIdsKey,
+    initialAllocations,
+    paymentCur,
+    paymentAmount,
+    rows,
+  ]);
+
+  useEffect(() => {
     onSummaryChange(summary);
   }, [summary, onSummaryChange]);
 
@@ -243,6 +356,7 @@ export default function ServiceAllocationsEditor({
   }, [services.length, resetKey]);
 
   const setAmountService = useCallback((id: number, value: string) => {
+    hasManualEditsRef.current = true;
     setDrafts((prev) => ({
       ...prev,
       [id]: {
@@ -253,6 +367,7 @@ export default function ServiceAllocationsEditor({
   }, []);
 
   const setCounterAmount = useCallback((id: number, value: string) => {
+    hasManualEditsRef.current = true;
     setDrafts((prev) => ({
       ...prev,
       [id]: {
@@ -291,6 +406,7 @@ export default function ServiceAllocationsEditor({
     }
 
     let remaining = round2(Number(paymentAmount));
+    hasManualEditsRef.current = true;
     setDrafts((prev) => {
       const next = { ...prev };
       rowsWithFx.forEach((r, idx) => {
@@ -340,6 +456,7 @@ export default function ServiceAllocationsEditor({
     }
     const count = rowsWithFx.length || 1;
     let remaining = round2(Number(paymentAmount));
+    hasManualEditsRef.current = true;
     setDrafts((prev) => {
       const next = { ...prev };
       rowsWithFx.forEach((r, idx) => {
@@ -369,6 +486,7 @@ export default function ServiceAllocationsEditor({
   }, [paymentAmount, rows, paymentCur]);
 
   const applyUseCosts = useCallback(() => {
+    hasManualEditsRef.current = true;
     setDrafts((prev) => {
       const next = { ...prev };
       rows.forEach((r) => {
@@ -390,6 +508,7 @@ export default function ServiceAllocationsEditor({
   }, [rows, paymentCur]);
 
   const clearAll = useCallback(() => {
+    hasManualEditsRef.current = true;
     setDrafts((prev) => {
       const next = { ...prev };
       rows.forEach((r) => {

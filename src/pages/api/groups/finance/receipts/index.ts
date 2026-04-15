@@ -15,6 +15,10 @@ import {
   startOfDayUtcFromDateKeyInBuenosAires,
 } from "@/lib/buenosAiresDate";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
+import {
+  readGroupReceiptPaymentsFromMetadata,
+  resolveGroupReceiptVerificationState,
+} from "@/lib/groups/groupReceiptMetadata";
 
 type GroupReceiptDbRow = {
   id_travel_group_receipt: number;
@@ -40,6 +44,7 @@ type GroupReceiptDbRow = {
   counter_currency: string | null;
   client_ids: number[] | null;
   service_refs: number[] | null;
+  metadata: Prisma.JsonValue | null;
   verification_status: string | null;
   verified_at: Date | null;
   verified_by: number | null;
@@ -193,10 +198,6 @@ export default async function handler(
   ]);
   const hasVerificationColumns =
     hasVerificationStatus && hasVerifiedAt && hasVerifiedBy;
-
-  if (!hasVerificationColumns && verificationStatus === "VERIFIED") {
-    return res.status(200).json({ items: [], nextCursor: null });
-  }
 
   const takeRaw = Array.isArray(req.query.take) ? req.query.take[0] : req.query.take;
   const take = Math.max(1, Math.min(200, Number(takeRaw) || 120));
@@ -423,8 +424,10 @@ export default async function handler(
   if (verificationStatus) {
     if (hasVerificationColumns) {
       filters.push(Prisma.sql`UPPER(COALESCE(r."verification_status", 'PENDING')) = ${verificationStatus}`);
-    } else if (verificationStatus === "VERIFIED") {
-      return res.status(200).json({ items: [], nextCursor: null });
+    } else {
+      filters.push(
+        Prisma.sql`COALESCE(UPPER(r."metadata"->'verification'->>'status'), 'PENDING') = ${verificationStatus}`,
+      );
     }
   }
 
@@ -504,6 +507,7 @@ export default async function handler(
       r."counter_currency",
       r."client_ids",
       r."service_refs",
+      r."metadata",
       c."first_name" AS "primary_client_first_name",
       c."last_name" AS "primary_client_last_name",
       c."agency_client_id" AS "primary_client_agency_id",
@@ -548,7 +552,7 @@ export default async function handler(
 
   const clientsById = new Map(clients.map((client) => [client.id_client, client]));
 
-  const items = pageRows.map((row) => {
+  let items = pageRows.map((row) => {
     const receiptNumberBase =
       row.agency_travel_group_receipt_id ?? row.id_travel_group_receipt;
     const receiptNumber = `GR-${String(receiptNumberBase).padStart(6, "0")}`;
@@ -579,6 +583,34 @@ export default async function handler(
 
     const normalizedMethodId = methodNameToId.get(normText(row.payment_method));
     const normalizedAccountId = accountNameToId.get(normText(row.account));
+    const verificationState = resolveGroupReceiptVerificationState({
+      hasVerificationColumns,
+      columnStatus: row.verification_status,
+      columnVerifiedAt: row.verified_at,
+      columnVerifiedBy: row.verified_by,
+      metadata: row.metadata,
+    });
+    const payments = readGroupReceiptPaymentsFromMetadata(row.metadata).map(
+      (line) => {
+        const paymentMethodText =
+          line.payment_method ||
+          (line.payment_method_id
+            ? methodIdToName.get(line.payment_method_id) ?? null
+            : null);
+        const accountText =
+          line.account ||
+          (line.account_id ? accountIdToName.get(line.account_id) ?? null : null);
+        return {
+          amount: line.amount,
+          payment_currency: line.payment_currency,
+          fee_amount: line.fee_amount,
+          payment_method_id: line.payment_method_id ?? null,
+          account_id: line.account_id ?? null,
+          payment_method_text: paymentMethodText,
+          account_text: accountText,
+        };
+      },
+    );
 
     return {
       id_receipt: row.id_travel_group_receipt,
@@ -603,10 +635,14 @@ export default async function handler(
       counter_amount:
         row.counter_amount == null ? null : toNumber(row.counter_amount),
       counter_currency: row.counter_currency,
-      verification_status: row.verification_status || "PENDING",
-      verified_at: row.verified_at ? row.verified_at.toISOString() : null,
-      verified_by: row.verified_by,
+      verification_status: verificationState.status,
+      verification_status_source: verificationState.source,
+      verified_at: verificationState.verifiedAt
+        ? verificationState.verifiedAt.toISOString()
+        : null,
+      verified_by: verificationState.verifiedBy,
       verifiedBy:
+        verificationState.source === "columns" &&
         row.verified_user_id &&
         (row.verified_first_name || row.verified_last_name)
           ? {
@@ -615,6 +651,7 @@ export default async function handler(
               last_name: row.verified_last_name || "",
             }
           : null,
+      payments,
       serviceIds: Array.isArray(row.service_refs) ? row.service_refs : [],
       clientIds,
       clientLabels,
@@ -627,6 +664,10 @@ export default async function handler(
       travel_group_departure_id: row.travel_group_departure_id,
     };
   });
+
+  if (verificationStatus && !hasVerificationColumns) {
+    items = items.filter((item) => item.verification_status === verificationStatus);
+  }
 
   const nextCursor = hasMore
     ? pageRows[pageRows.length - 1]?.id_travel_group_receipt ?? null

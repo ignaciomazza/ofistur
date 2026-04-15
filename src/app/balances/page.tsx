@@ -23,6 +23,7 @@ import {
   toCsvRow,
 } from "@/utils/csv";
 import ExportSheetButton from "@/components/ui/ExportSheetButton";
+import DetailedBalancesPanel from "@/components/balances/DetailedBalancesPanel";
 
 /* ================= Tipos ================= */
 
@@ -2155,6 +2156,8 @@ export default function BalancesPage() {
             </button>
           </div>
         </div>
+
+        <DetailedBalancesPanel token={token || undefined} />
 
         {/* Modal de columnas */}
         <ColumnPickerModal

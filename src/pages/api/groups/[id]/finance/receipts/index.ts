@@ -19,6 +19,13 @@ import {
   encodeInventoryServiceId,
   resolveInventorySaleUnitPrice,
 } from "@/lib/groups/inventoryServiceRefs";
+import { hasSchemaColumn } from "@/lib/schemaColumns";
+import {
+  normalizeGroupReceiptStoredPayments,
+  readGroupReceiptPaymentsFromMetadata,
+  resolveGroupReceiptVerificationState,
+  withGroupReceiptPaymentsInMetadata,
+} from "@/lib/groups/groupReceiptMetadata";
 
 type ReceiptRow = {
   id_travel_group_receipt: number;
@@ -41,6 +48,10 @@ type ReceiptRow = {
   counter_currency: string | null;
   client_ids: number[] | null;
   service_refs: number[] | null;
+  metadata: Prisma.JsonValue | null;
+  verification_status?: string | null;
+  verified_at?: Date | null;
+  verified_by?: number | null;
   booking_id: number | null;
 };
 
@@ -49,11 +60,22 @@ function toIsoDate(value: Date | string): string {
   return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
 }
 
-function buildReceiptResponse(row: ReceiptRow) {
+function buildReceiptResponse(
+  row: ReceiptRow,
+  hasVerificationColumns: boolean,
+) {
   const numericAgencyId = row.agency_travel_group_receipt_id;
   const fallbackNumber = row.id_travel_group_receipt;
   const receiptNumber = String(numericAgencyId ?? fallbackNumber).padStart(6, "0");
   const contextId = row.booking_id ?? 0;
+  const verificationState = resolveGroupReceiptVerificationState({
+    hasVerificationColumns,
+    columnStatus: row.verification_status,
+    columnVerifiedAt: row.verified_at,
+    columnVerifiedBy: row.verified_by,
+    metadata: row.metadata,
+  });
+  const payments = readGroupReceiptPaymentsFromMetadata(row.metadata);
 
   return {
     id_receipt: row.id_travel_group_receipt,
@@ -75,6 +97,13 @@ function buildReceiptResponse(row: ReceiptRow) {
     counter_amount:
       row.counter_amount == null ? null : toAmountNumber(row.counter_amount),
     counter_currency: row.counter_currency,
+    payments,
+    verification_status: verificationState.status,
+    verification_status_source: verificationState.source,
+    verified_at: verificationState.verifiedAt
+      ? verificationState.verifiedAt.toISOString()
+      : null,
+    verified_by: verificationState.verifiedBy,
     context_id: contextId,
     bookingId_booking: contextId,
     context: contextId
@@ -126,6 +155,27 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   const whereSql = Prisma.join(filters, " AND ");
 
   try {
+    const [hasVerificationStatus, hasVerifiedAt, hasVerifiedBy] =
+      await Promise.all([
+        hasSchemaColumn("TravelGroupReceipt", "verification_status"),
+        hasSchemaColumn("TravelGroupReceipt", "verified_at"),
+        hasSchemaColumn("TravelGroupReceipt", "verified_by"),
+      ]);
+    const hasVerificationColumns =
+      hasVerificationStatus && hasVerifiedAt && hasVerifiedBy;
+
+    const verificationSelectSql = hasVerificationColumns
+      ? Prisma.sql`
+          COALESCE(r."verification_status", 'PENDING') AS "verification_status",
+          r."verified_at",
+          r."verified_by",
+        `
+      : Prisma.sql`
+          NULL::TEXT AS "verification_status",
+          NULL::TIMESTAMP AS "verified_at",
+          NULL::INTEGER AS "verified_by",
+        `;
+
     const rows = await prisma.$queryRaw<ReceiptRow[]>(Prisma.sql`
       SELECT
         r."id_travel_group_receipt",
@@ -148,6 +198,8 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         r."counter_currency",
         r."client_ids",
         r."service_refs",
+        r."metadata",
+        ${verificationSelectSql}
         tp."booking_id"
       FROM "TravelGroupReceipt" r
       LEFT JOIN "TravelGroupPassenger" tp
@@ -158,7 +210,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
 
     return res.status(200).json({
       success: true,
-      receipts: rows.map(buildReceiptResponse),
+      receipts: rows.map((row) => buildReceiptResponse(row, hasVerificationColumns)),
     });
   } catch (error) {
     if (isMissingGroupFinanceTableError(error)) {
@@ -194,6 +246,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     passengerId?: unknown;
     clientIds?: unknown;
     serviceIds?: unknown;
+    payments?: unknown;
     concept?: unknown;
     amount?: unknown;
     amountString?: unknown;
@@ -300,6 +353,30 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         .map((item) => parseOptionalPositiveInt(item))
         .filter((item): item is number => !!item)
     : [];
+  const hasPayments = Object.prototype.hasOwnProperty.call(body, "payments");
+  if (hasPayments && !Array.isArray(body.payments)) {
+    return groupApiError(res, 400, "payments inválidos.", {
+      code: "GROUP_FINANCE_RECEIPT_PAYMENTS_INVALID",
+    });
+  }
+  const normalizedPayments = normalizeGroupReceiptStoredPayments(
+    Array.isArray(body.payments) ? body.payments : [],
+  );
+  if (
+    hasPayments &&
+    Array.isArray(body.payments) &&
+    body.payments.length > 0 &&
+    normalizedPayments.length === 0
+  ) {
+    return groupApiError(
+      res,
+      400,
+      "payments inválidos: cada línea debe incluir un monto o fee válido.",
+      {
+        code: "GROUP_FINANCE_RECEIPT_PAYMENTS_INVALID_LINES",
+      },
+    );
+  }
 
   const finalClientIds =
     clientIds.length > 0
@@ -384,6 +461,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           payment_fee_amount: true,
           base_amount: true,
           base_currency: true,
+          metadata: true,
         },
       }),
     ]);
@@ -409,13 +487,17 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     const validation = validateGroupReceiptDebt({
       selectedServiceIds: finalServiceIds,
       services: [...normalizedRegularServices, ...inventoryServices],
-      existingReceipts,
+      existingReceipts: existingReceipts.map((receipt) => ({
+        ...receipt,
+        payments: readGroupReceiptPaymentsFromMetadata(receipt.metadata),
+      })),
       currentReceipt: {
         amount: toAmountNumber(amount),
         amountCurrency,
         paymentFeeAmount: paymentFeeAmount ? toAmountNumber(paymentFeeAmount) : 0,
         baseAmount: baseAmount ? toAmountNumber(baseAmount) : null,
         baseCurrency,
+        payments: normalizedPayments,
       },
     });
     if (!validation.ok) {
@@ -425,6 +507,15 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     }
     finalServiceIds = validation.normalizedServiceIds;
   }
+
+  const metadata = withGroupReceiptPaymentsInMetadata({}, normalizedPayments);
+  const [hasVerificationStatus, hasVerifiedAt, hasVerifiedBy] = await Promise.all([
+    hasSchemaColumn("TravelGroupReceipt", "verification_status"),
+    hasSchemaColumn("TravelGroupReceipt", "verified_at"),
+    hasSchemaColumn("TravelGroupReceipt", "verified_by"),
+  ]);
+  const hasVerificationColumns =
+    hasVerificationStatus && hasVerifiedAt && hasVerifiedBy;
 
   const created = await prisma.$transaction(async (tx) => {
     const agencyReceiptId = await getNextAgencyCounter(
@@ -455,6 +546,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         "counter_currency",
         "client_ids",
         "service_refs",
+        "metadata",
         "updated_at"
       ) VALUES (
         ${agencyReceiptId},
@@ -478,6 +570,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         ${counterCurrency},
         ${finalClientIds},
         ${finalServiceIds},
+        ${metadata}::jsonb,
         NOW()
       )
       RETURNING
@@ -501,6 +594,12 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         "counter_currency",
         "client_ids",
         "service_refs",
+        "metadata",
+        ${
+          hasVerificationColumns
+            ? Prisma.sql`COALESCE("verification_status", 'PENDING') AS "verification_status", "verified_at", "verified_by",`
+            : Prisma.sql`NULL::TEXT AS "verification_status", NULL::TIMESTAMP AS "verified_at", NULL::INTEGER AS "verified_by",`
+        }
         NULL::INTEGER AS "booking_id"
     `);
     return rows[0];
@@ -508,7 +607,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
 
   return res.status(201).json({
     success: true,
-    receipt: buildReceiptResponse(created),
+    receipt: buildReceiptResponse(created, hasVerificationColumns),
   });
 }
 

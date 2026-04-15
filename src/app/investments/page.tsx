@@ -34,6 +34,11 @@ import {
   encodeInvestmentPdfItemsPayload,
   normalizeInvestmentPdfManualItems,
 } from "@/utils/investments/pdfItemsPayload";
+import {
+  resolveInvestmentEffectiveDate,
+  resolveInvestmentEffectiveMonthKey,
+} from "@/utils/investments/effectiveDate";
+import { shouldConfirmFullExcessWithServices } from "@/utils/investments/allocations";
 import type { PlanKey } from "@/lib/billing/pricing";
 import type {
   Investment,
@@ -1419,7 +1424,9 @@ export default function Page() {
     if (!token) return;
     setExportingCsv(true);
     try {
+      const includeImputationColumn = !operatorOnly;
       const headers = [
+        ...(includeImputationColumn ? ["Mes imputación"] : []),
         "Fecha",
         "Nº",
         "Categoría",
@@ -1513,6 +1520,16 @@ export default function Page() {
               ? allocationBookingNumbers.join(" | ")
               : "");
           const amountValue = formatCsvNumber(item.amount ?? 0);
+          const imputationMonth = includeImputationColumn
+            ? resolveInvestmentEffectiveMonthKey(
+                {
+                  imputation_month: item.imputation_month,
+                  paid_at: item.paid_at,
+                  created_at: item.created_at,
+                },
+                { preferImputationMonth: true },
+              )
+            : "";
 
           const paymentLabel =
             Array.isArray(item.payments) && item.payments.length > 0
@@ -1527,6 +1544,7 @@ export default function Page() {
 
           rows.push(
             toCsvRow([
+              ...(includeImputationColumn ? [{ value: imputationMonth }] : []),
               { value: formatDateInBuenosAires(item.paid_at ?? item.created_at) },
               { value: String(item.agency_investment_id ?? item.id_investment) },
               { value: item.category || "" },
@@ -2276,6 +2294,20 @@ export default function Page() {
         toast.error("El total asignado supera el monto del pago.");
         return;
       }
+      if (
+        shouldConfirmFullExcessWithServices({
+          hasServices: serviceSelection.serviceIds.length > 0,
+          paymentAmount: amountNum,
+          assignedTotal: serviceSelection.assignedTotal,
+          excess: serviceSelection.excess,
+          tolerance: EXCESS_TOLERANCE,
+        }) &&
+        !window.confirm(
+          "Hay servicios seleccionados pero sin monto asignado. El pago quedará completo como saldo a favor. ¿Querés continuar?",
+        )
+      ) {
+        return;
+      }
     }
 
     if (
@@ -2559,8 +2591,20 @@ export default function Page() {
     s ? formatDateInBuenosAires(s) : "-";
 
   const getItemDate = useCallback(
-    (it: Investment) => new Date(it.paid_at ?? it.created_at),
-    [],
+    (it: Investment) => {
+      if (!operatorOnly) {
+        return resolveInvestmentEffectiveDate(
+          {
+            imputation_month: it.imputation_month,
+            paid_at: it.paid_at,
+            created_at: it.created_at,
+          },
+          { preferImputationMonth: true },
+        );
+      }
+      return new Date(it.paid_at ?? it.created_at);
+    },
+    [operatorOnly],
   );
 
   const formatMonthLabel = useCallback((d: Date) => {

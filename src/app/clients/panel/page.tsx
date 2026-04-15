@@ -1607,7 +1607,6 @@ export default function ClientsPanelPage() {
                             </p>
                             <div className="mt-1.5 space-y-1">
                               {bookingSummary.recent_bookings
-                                .slice(0, 2)
                                 .map((booking) => (
                                   <div
                                     key={`${row.client.id_client}-${booking.id_booking}-${booking.role}`}

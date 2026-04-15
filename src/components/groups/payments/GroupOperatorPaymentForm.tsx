@@ -15,8 +15,10 @@ import { authFetch } from "@/utils/authFetch";
 import { loadFinancePicks } from "@/utils/loadFinancePicks";
 import { parseAmountInput } from "@/utils/receipts/receiptForm";
 import { formatMoneyInput, shouldPreferDotDecimal } from "@/utils/moneyInput";
+import { shouldConfirmFullExcessWithServices } from "@/utils/investments/allocations";
 import ServiceAllocationsEditor, {
   type AllocationSummary,
+  type AllocationPayload,
   type ExcessAction,
   type ExcessMissingAccountAction,
 } from "@/components/investments/ServiceAllocationsEditor";
@@ -80,6 +82,57 @@ const toAgencyNumber = (value: number | null | undefined): number | null => {
     return null;
   }
   return Math.trunc(value);
+};
+
+const parseServiceIds = (raw: unknown): number[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((v) => Number(v))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .map((n) => Math.trunc(n));
+};
+
+const parseAllocations = (raw: unknown): AllocationPayload[] => {
+  if (!Array.isArray(raw)) return [];
+  const out: AllocationPayload[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const rec = item as Record<string, unknown>;
+    const serviceId = Number(rec.service_id ?? rec.serviceId ?? rec.id_service);
+    if (!Number.isFinite(serviceId) || serviceId <= 0) continue;
+
+    const bookingIdRaw = Number(rec.booking_id ?? rec.bookingId);
+    const bookingId =
+      Number.isFinite(bookingIdRaw) && bookingIdRaw > 0
+        ? Math.trunc(bookingIdRaw)
+        : undefined;
+    const paymentCurrency = String(
+      rec.payment_currency ?? rec.paymentCurrency ?? "",
+    )
+      .trim()
+      .toUpperCase();
+    const serviceCurrency = String(
+      rec.service_currency ?? rec.serviceCurrency ?? "",
+    )
+      .trim()
+      .toUpperCase();
+    const amountPayment = Number(rec.amount_payment ?? rec.amountPayment ?? 0);
+    const amountService = Number(rec.amount_service ?? rec.amountService ?? 0);
+    const fxRaw = rec.fx_rate ?? rec.fxRate;
+    const fxRate =
+      fxRaw == null || fxRaw === "" ? null : Number.isFinite(Number(fxRaw)) ? Number(fxRaw) : null;
+
+    out.push({
+      service_id: Math.trunc(serviceId),
+      booking_id: bookingId,
+      payment_currency: paymentCurrency || "ARS",
+      service_currency: serviceCurrency || "ARS",
+      amount_payment: Number.isFinite(amountPayment) ? amountPayment : 0,
+      amount_service: Number.isFinite(amountService) ? amountService : 0,
+      fx_rate: fxRate,
+    });
+  }
+  return out;
 };
 
 const formatAgencyNumber = (value: number | null | undefined): string => {
@@ -453,6 +506,7 @@ export default function GroupOperatorPaymentForm({
     });
     setExcessAction("carry");
     setExcessMissingAccountAction("carry");
+    setAttachInitialAllocations([]);
     setAllocationResetKey((k) => k + 1);
   }, [action, selectedPayment?.id_investment]);
 
@@ -747,7 +801,11 @@ export default function GroupOperatorPaymentForm({
   const [excessMissingAccountAction, setExcessMissingAccountAction] =
     useState<ExcessMissingAccountAction>("carry");
   const [allocationResetKey, setAllocationResetKey] = useState(0);
-  const [showAdvancedAllocations, setShowAdvancedAllocations] = useState(false);
+  const [loadingSelectedPaymentDetail, setLoadingSelectedPaymentDetail] =
+    useState(false);
+  const [attachInitialAllocations, setAttachInitialAllocations] = useState<
+    AllocationPayload[]
+  >([]);
   const editingPaymentId = toPositiveInt(editingPayment?.id_investment ?? null);
   const isEditing = editingPaymentId != null;
   const editHydratedRef = useRef<number | null>(null);
@@ -771,9 +829,89 @@ export default function GroupOperatorPaymentForm({
       setExcessAction("carry");
       setExcessMissingAccountAction("carry");
       setAllocationResetKey((k) => k + 1);
-      setShowAdvancedAllocations(false);
+      setAttachInitialAllocations([]);
     }
   }, [selectedServices.length]);
+
+  useEffect(() => {
+    if (action !== "attach" || !selectedPayment || !token) {
+      setLoadingSelectedPaymentDetail(false);
+      setAttachInitialAllocations([]);
+      return;
+    }
+
+    const availableServiceIds = new Set(
+      servicesFromContext.map((service) => service.id_service),
+    );
+    let alive = true;
+    const controller = new AbortController();
+    setLoadingSelectedPaymentDetail(true);
+    setAttachInitialAllocations([]);
+
+    const endpoint = groupId
+      ? `/api/groups/${encodeURIComponent(groupId)}/finance/operator-payments/${selectedPayment.id_investment}`
+      : `/api/investments/${selectedPayment.id_investment}?includeAllocations=1`;
+
+    authFetch(
+      endpoint,
+      { cache: "no-store", signal: controller.signal },
+      token,
+    )
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return (await safeJson<unknown>(res)) ?? null;
+      })
+      .then((raw) => {
+        if (!alive || !raw) return;
+        const root =
+          isRecord(raw) && isRecord((raw as Record<string, unknown>).item)
+            ? ((raw as Record<string, unknown>).item as Record<string, unknown>)
+            : (isRecord(raw) ? (raw as Record<string, unknown>) : null);
+        if (!root) return;
+
+        const serviceIds = parseServiceIds(root.serviceIds);
+        const allocations = parseAllocations(root.allocations);
+        const scopedServiceIds = serviceIds.filter((id) =>
+          availableServiceIds.has(id),
+        );
+        const scopedAllocations = allocations.filter((allocation) =>
+          availableServiceIds.has(allocation.service_id),
+        );
+        if (scopedServiceIds.length > 0) {
+          setSelectedIds(scopedServiceIds);
+        } else if (scopedAllocations.length > 0) {
+          setSelectedIds(scopedAllocations.map((allocation) => allocation.service_id));
+        } else {
+          setSelectedIds([]);
+        }
+        setAttachInitialAllocations(scopedAllocations);
+
+        const excessRaw = String(root.excess_action ?? "").toLowerCase();
+        setExcessAction(excessRaw === "credit_entry" ? "credit_entry" : "carry");
+        const missingRaw = String(
+          root.excess_missing_account_action ?? "",
+        ).toLowerCase();
+        setExcessMissingAccountAction(
+          missingRaw === "block" || missingRaw === "create" || missingRaw === "carry"
+            ? (missingRaw as ExcessMissingAccountAction)
+            : "carry",
+        );
+        setAllocationResetKey((k) => k + 1);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        if ((error as { name?: string }).name === "AbortError") return;
+        setAttachInitialAllocations([]);
+      })
+      .finally(() => {
+        if (alive) setLoadingSelectedPaymentDetail(false);
+      });
+
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [action, selectedPayment, token, servicesFromContext, groupId]);
 
   /* ========= Sugeridos / locks ========= */
   const operatorIdFromSelection = useMemo<number | null>(() => {
@@ -942,7 +1080,7 @@ export default function GroupOperatorPaymentForm({
           )
         : "",
     );
-    setShowAdvancedAllocations(false);
+    setAttachInitialAllocations([]);
     setExcessAction("carry");
     setExcessMissingAccountAction("carry");
     setAllocationResetKey((k) => k + 1);
@@ -1772,6 +1910,20 @@ export default function GroupOperatorPaymentForm({
         toast.error("El total asignado supera el monto del pago.");
         return;
       }
+      if (
+        shouldConfirmFullExcessWithServices({
+          hasServices: selectedServices.length > 0,
+          paymentAmount: editorPaymentAmount,
+          assignedTotal: allocationSummary.assignedTotal,
+          excess: allocationSummary.excess,
+          tolerance: EXCESS_TOLERANCE,
+        }) &&
+        !window.confirm(
+          "Hay servicios seleccionados pero sin monto asignado. El pago quedará completo como saldo a favor. ¿Querés continuar?",
+        )
+      ) {
+        return;
+      }
 
       if (
         excessAction === "credit_entry" &&
@@ -1951,6 +2103,20 @@ export default function GroupOperatorPaymentForm({
 
     if (allocationSummary.overAssigned) {
       toast.error("El total asignado supera el monto del pago.");
+      return;
+    }
+    if (
+      shouldConfirmFullExcessWithServices({
+        hasServices: selectedServices.length > 0,
+        paymentAmount: amountNum,
+        assignedTotal: allocationSummary.assignedTotal,
+        excess: allocationSummary.excess,
+        tolerance: EXCESS_TOLERANCE,
+      }) &&
+      !window.confirm(
+        "Hay servicios seleccionados pero sin monto asignado. El pago quedará completo como saldo a favor. ¿Querés continuar?",
+      )
+    ) {
       return;
     }
     const conv = validateConversion();
@@ -2392,77 +2558,51 @@ export default function GroupOperatorPaymentForm({
                 {selectedServices.length > 0 &&
                   (action === "create" || selectedPayment) && (
                   <div className="rounded-2xl border border-sky-300/70 bg-white p-4 dark:border-sky-600/30 dark:bg-sky-950/10 md:col-span-2">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="space-y-2">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400 md:text-xs">
-                          Ajustes avanzados
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <span className={`${pillBase} ${pillNeutral}`}>
-                            Asignado:{" "}
-                            {formatMoney(
-                              allocationSummary.assignedTotal,
-                              editorPaymentCurrency || "ARS",
-                            )}
-                          </span>
-                          <span className={`${pillBase} ${pillNeutral}`}>
-                            Total pago:{" "}
-                            {formatMoney(
-                              editorPaymentAmount || 0,
-                              editorPaymentCurrency || "ARS",
-                            )}
-                          </span>
-                          {allocationSummary.excess > EXCESS_TOLERANCE ? (
-                            <span className={`${pillBase} ${pillWarn}`}>
-                              Excedente:{" "}
-                              {formatMoney(
-                                allocationSummary.excess,
-                                editorPaymentCurrency || "ARS",
-                              )}
-                            </span>
-                          ) : (
-                            <span className={`${pillBase} ${pillOk}`}>
-                              Sin excedente
-                            </span>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      <span className={`${pillBase} ${pillNeutral}`}>
+                        Asignado:{" "}
+                        {formatMoney(
+                          allocationSummary.assignedTotal,
+                          editorPaymentCurrency || "ARS",
+                        )}
+                      </span>
+                      <span className={`${pillBase} ${pillNeutral}`}>
+                        Total pago:{" "}
+                        {formatMoney(
+                          editorPaymentAmount || 0,
+                          editorPaymentCurrency || "ARS",
+                        )}
+                      </span>
+                      {allocationSummary.excess > EXCESS_TOLERANCE ? (
+                        <span className={`${pillBase} ${pillWarn}`}>
+                          Excedente:{" "}
+                          {formatMoney(
+                            allocationSummary.excess,
+                            editorPaymentCurrency || "ARS",
                           )}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setShowAdvancedAllocations((prev) => !prev)
-                        }
-                        className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors md:text-xs ${
-                          showAdvancedAllocations
-                            ? "border-sky-300/80 bg-sky-100/85 text-sky-900 dark:border-sky-700 dark:bg-sky-900/25 dark:text-sky-100"
-                            : "border-slate-300/80 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-800/70"
-                        }`}
-                        aria-expanded={showAdvancedAllocations}
-                        aria-controls="operator-payment-advanced-allocation"
-                      >
-                        {showAdvancedAllocations
-                          ? "Ocultar ajustes"
-                          : "Mostrar ajustes"}
-                      </button>
+                        </span>
+                      ) : (
+                        <span className={`${pillBase} ${pillOk}`}>
+                          Sin excedente
+                        </span>
+                      )}
                     </div>
-                    <div
-                      id="operator-payment-advanced-allocation"
-                      className={`mt-3 ${showAdvancedAllocations ? "" : "hidden"}`}
-                    >
-                      <ServiceAllocationsEditor
-                        services={selectedServices}
-                        paymentCurrency={editorPaymentCurrency}
-                        paymentAmount={editorPaymentAmount}
-                        resetKey={allocationResetKey}
-                        excessAction={excessAction}
-                        onExcessActionChange={setExcessAction}
-                        excessMissingAccountAction={excessMissingAccountAction}
-                        onExcessMissingAccountActionChange={
-                          setExcessMissingAccountAction
-                        }
-                        onSummaryChange={setAllocationSummary}
-                      />
-                    </div>
+                    <ServiceAllocationsEditor
+                      services={selectedServices}
+                      paymentCurrency={editorPaymentCurrency}
+                      paymentAmount={editorPaymentAmount}
+                      initialAllocations={
+                        action === "attach" ? attachInitialAllocations : undefined
+                      }
+                      resetKey={allocationResetKey}
+                      excessAction={excessAction}
+                      onExcessActionChange={setExcessAction}
+                      excessMissingAccountAction={excessMissingAccountAction}
+                      onExcessMissingAccountActionChange={
+                        setExcessMissingAccountAction
+                      }
+                      onSummaryChange={setAllocationSummary}
+                    />
                   </div>
                 )}
               </Section>
@@ -2510,7 +2650,11 @@ export default function GroupOperatorPaymentForm({
                                   ? "bg-sky-100/70 dark:bg-sky-900/30"
                                   : ""
                               }`}
-                              onClick={() => setSelectedPayment(opt)}
+                              onClick={() => {
+                                setSelectedPayment(opt);
+                                setSelectedIds([]);
+                                setAttachInitialAllocations([]);
+                              }}
                             >
                               <div className="text-[13px] font-medium leading-snug md:text-sm">
                                 Nº {displayId} ·{" "}
@@ -2557,6 +2701,11 @@ export default function GroupOperatorPaymentForm({
                             se reemplazarán.
                           </p>
                         )}
+                      {loadingSelectedPaymentDetail && (
+                        <p className="mt-2 text-slate-600 dark:text-slate-400">
+                          Cargando servicios y asignaciones del pago...
+                        </p>
+                      )}
                     </div>
                   )}
                 </Section>
