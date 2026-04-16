@@ -29,6 +29,7 @@ import {
 import DestinationPicker, {
   DestinationOption,
 } from "@/components/DestinationPicker";
+import OperatorPicker from "@/components/operators/OperatorPicker";
 import NoteComposer from "@/components/notes/NoteComposer";
 import Spinner from "@/components/Spinner";
 import { loadFinancePicks } from "@/utils/loadFinancePicks";
@@ -2079,23 +2080,23 @@ export default function ServiceForm({
                 </Field>
 
                 <Field id="id_operator" label="Operador" required>
-                  <select
-                    id="id_operator"
-                    name="id_operator"
-                    value={formData.id_operator || 0}
-                    onChange={handleChange}
+                  <OperatorPicker
+                    operators={operators}
+                    valueId={formData.id_operator || null}
+                    onSelect={(operator) =>
+                      updateField("id_operator", String(operator.id_operator))
+                    }
+                    onClear={() => updateField("id_operator", "0")}
+                    disabled={!(operatorsReady ?? true) || operators.length === 0}
+                    placeholder={
+                      !(operatorsReady ?? true)
+                        ? "Cargando operadores..."
+                        : operators.length
+                          ? "Buscar operador por nombre o número..."
+                          : "Sin operadores"
+                    }
                     required
-                    className="w-full cursor-pointer appearance-none rounded-2xl border border-sky-300/80 bg-white/70 p-2 px-3 text-sky-950 shadow-sm shadow-sky-950/5 outline-none transition focus:border-sky-400/70 focus:bg-white focus:ring-2 focus:ring-sky-200/60 dark:border-sky-500/40 dark:bg-white/10 dark:text-white dark:focus:bg-white/15 dark:focus:ring-sky-500/30"
-                  >
-                    <option value={0} disabled>
-                      Seleccionar operador
-                    </option>
-                    {operators.map((op) => (
-                      <option key={op.id_operator} value={op.id_operator}>
-                        {op.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </Field>
 
                 <Field id="currency" label="Moneda" required>
