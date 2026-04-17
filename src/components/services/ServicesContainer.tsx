@@ -1637,8 +1637,6 @@ export default function ServicesContainer(props: ServicesContainerProps) {
     );
   }
 
-  const canAdminLike =
-    role === "administrativo" || role === "gerente" || role === "desarrollador";
   const canViewOperatorDues =
     role === "administrativo" ||
     role === "desarrollador" ||
@@ -2085,30 +2083,28 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 </div>
               </div>
 
-              {/* Pasajeros lista */}
-              <div className="mt-4 rounded-2xl border border-white/5 bg-white/20 p-4 shadow-sm shadow-sky-950/10 dark:bg-white/5">
-                <p className="text-sm font-semibold">{`Lista de pasajeros (${booking.pax_count})`}</p>
-                <ul className="ml-5 mt-2 list-disc text-sm">
-                  <li>
-                    {cap(booking.titular.first_name)}{" "}
-                    {cap(booking.titular.last_name)}
-                  </li>
-                  {booking.clients.map((client) => (
-                    <li key={client.id_client}>
-                      {cap(client.first_name)} {cap(client.last_name)}
-                    </li>
-                  ))}
-                </ul>
-                {Array.isArray(booking.simple_companions) &&
-                  booking.simple_companions.length > 0 && (
-                    <p className="mt-2 text-xs text-sky-950/70 dark:text-white/70">
-                      Acompañantes simples: {booking.simple_companions.length}
-                    </p>
-                  )}
-              </div>
-
-              {/* Facturación + Observaciones */}
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border border-white/5 bg-white/20 p-4 shadow-sm shadow-sky-950/10 dark:bg-white/5">
+                  <p className="text-sm font-semibold">{`Lista de pasajeros (${booking.pax_count})`}</p>
+                  <ul className="ml-5 mt-2 list-disc text-sm">
+                    <li>
+                      {cap(booking.titular.first_name)}{" "}
+                      {cap(booking.titular.last_name)}
+                    </li>
+                    {booking.clients.map((client) => (
+                      <li key={client.id_client}>
+                        {cap(client.first_name)} {cap(client.last_name)}
+                      </li>
+                    ))}
+                  </ul>
+                  {Array.isArray(booking.simple_companions) &&
+                    booking.simple_companions.length > 0 && (
+                      <p className="mt-2 text-xs text-sky-950/70 dark:text-white/70">
+                        Acompañantes simples: {booking.simple_companions.length}
+                      </p>
+                    )}
+                </div>
+
                 <div className="rounded-2xl border border-white/5 bg-white/20 p-4 shadow-sm shadow-sky-950/10 dark:bg-white/5">
                   <p className="text-sm font-semibold">Facturación</p>
                   <ul className="ml-4 mt-2 list-disc text-sm">
@@ -2120,142 +2116,138 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                     </li>
                   </ul>
                 </div>
+              </div>
 
-                <div className="rounded-2xl border border-white/5 bg-white/20 p-4 shadow-sm shadow-sky-950/10 dark:bg-white/5">
-                  <p className="mb-2 text-sm font-semibold">
-                    Observaciones de administración
-                  </p>
-                  <li className="list-none">
-                    <AnimatePresence initial={false}>
-                      {isEditingInvObs ? (
-                        <motion.div
-                          key="edit"
-                          layout
-                          variants={obsVariants}
-                          initial="hidden"
-                          animate="visible"
-                          exit="exit"
-                          transition={{ duration: 0.2 }}
-                          className="flex w-full flex-col gap-3"
-                        >
-                          <NoteComposer
-                            id="booking-observation"
-                            value={invObsDraft}
-                            onChange={setInvObsDraft}
-                            placeholder="Notas internas de la reserva…"
-                            rows={3}
-                            className="flex-1"
-                            textareaClassName="w-full rounded-2xl border border-sky-950/10 bg-white/50 p-2 px-3 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
-                            inputClassName="w-full rounded-2xl border border-sky-950/10 bg-white/40 p-2 px-3 text-sm shadow-sm shadow-sky-950/10 outline-none placeholder:text-xs placeholder:font-light dark:border-white/10 dark:bg-white/10"
-                            addButtonClassName="rounded-full bg-sky-100 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
+              <div className="mt-4 rounded-2xl border border-white/5 bg-white/20 p-4 shadow-sm shadow-sky-950/10 dark:bg-white/5">
+                <p className="mb-2 text-sm font-semibold">Notas internas</p>
+                <li className="list-none">
+                  <AnimatePresence initial={false}>
+                    {isEditingInvObs ? (
+                      <motion.div
+                        key="edit"
+                        layout
+                        variants={obsVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="exit"
+                        transition={{ duration: 0.2 }}
+                        className="flex w-full flex-col gap-3"
+                      >
+                        <NoteComposer
+                          id="booking-observation"
+                          value={invObsDraft}
+                          onChange={setInvObsDraft}
+                          placeholder="Notas internas de la reserva…"
+                          rows={3}
+                          className="flex-1"
+                          textareaClassName="w-full rounded-2xl border border-sky-950/10 bg-white/50 p-2 px-3 outline-none backdrop-blur placeholder:font-light placeholder:tracking-wide dark:border-white/10 dark:bg-white/10 dark:text-white"
+                          inputClassName="w-full rounded-2xl border border-sky-950/10 bg-white/40 p-2 px-3 text-sm shadow-sm shadow-sky-950/10 outline-none placeholder:text-xs placeholder:font-light dark:border-white/10 dark:bg-white/10"
+                          addButtonClassName="rounded-full bg-sky-100 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition-transform hover:scale-95 active:scale-90 dark:bg-white/10 dark:text-white"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleInvObsSave}
+                            disabled={isSavingInvObs}
+                            className={`rounded-full px-6 py-2 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:backdrop-blur ${
+                              isSavingInvObs
+                                ? "bg-sky-100/50 text-sky-950/50 dark:bg-white/5 dark:text-white/50"
+                                : "bg-sky-100 text-sky-950 dark:bg-white/10 dark:text-white"
+                            }`}
+                          >
+                            {isSavingInvObs ? (
+                              <Spinner />
+                            ) : (
+                              <span className="inline-flex items-center gap-2">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  strokeWidth={1.7}
+                                  stroke="currentColor"
+                                  className="size-5"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"
+                                  />
+                                </svg>
+                                Guardar
+                              </span>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setIsEditingInvObs(false);
+                              setInvObsDraft(booking.observation || "");
+                            }}
+                            className="rounded-full bg-red-600 px-6 py-2 text-center text-red-100 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
+                            aria-label="Cancelar edición"
+                            title="Cancelar"
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              strokeWidth={1.7}
+                              stroke="currentColor"
+                              className="size-5"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M6 18 18 6M6 6l12 12"
+                              />
+                            </svg>
+                          </button>
+                        </div>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="view"
+                        layout
+                        variants={obsVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="exit"
+                        transition={{ duration: 0.2 }}
+                        className="flex items-start justify-between gap-2"
+                      >
+                        <div className="min-h-[28px] min-w-0 flex-1 rounded-xl bg-white/30 p-2 dark:bg-white/5">
+                          <RichNote
+                            text={booking.observation}
+                            emptyLabel="Sin notas internas"
+                            className="space-y-2 text-sm font-light text-sky-900/80 dark:text-white/80"
                           />
-                          <div className="flex gap-2">
-                            <button
-                              onClick={handleInvObsSave}
-                              disabled={isSavingInvObs}
-                              className={`rounded-full px-6 py-2 shadow-sm shadow-sky-950/20 transition-transform hover:scale-95 active:scale-90 dark:backdrop-blur ${
-                                isSavingInvObs
-                                  ? "bg-sky-100/50 text-sky-950/50 dark:bg-white/5 dark:text-white/50"
-                                  : "bg-sky-100 text-sky-950 dark:bg-white/10 dark:text-white"
-                              }`}
-                            >
-                              {isSavingInvObs ? (
-                                <Spinner />
-                              ) : (
-                                <span className="inline-flex items-center gap-2">
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    strokeWidth={1.7}
-                                    stroke="currentColor"
-                                    className="size-5"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"
-                                    />
-                                  </svg>
-                                  Guardar
-                                </span>
-                              )}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setIsEditingInvObs(false);
-                                setInvObsDraft(booking.observation || "");
-                              }}
-                              className="rounded-full bg-red-600 px-6 py-2 text-center text-red-100 shadow-sm shadow-red-950/20 transition-transform hover:scale-95 active:scale-90 dark:bg-red-800"
-                              aria-label="Cancelar edición"
-                              title="Cancelar"
-                            >
-                              <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                strokeWidth={1.7}
-                                stroke="currentColor"
-                                className="size-5"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  d="M6 18 18 6M6 6l12 12"
-                                />
-                              </svg>
-                            </button>
-                          </div>
-                        </motion.div>
-                      ) : (
-                        <motion.div
-                          key="view"
-                          layout
-                          variants={obsVariants}
-                          initial="hidden"
-                          animate="visible"
-                          exit="exit"
-                          transition={{ duration: 0.2 }}
-                          className="flex items-start justify-between gap-2"
+                        </div>
+                        <button
+                          onClick={() => {
+                            setInvObsDraft(booking.observation || "");
+                            setIsEditingInvObs(true);
+                          }}
+                          className="rounded-full p-2 text-sky-950 transition-transform hover:scale-95 active:scale-90 dark:text-white"
+                          title="Editar nota interna"
+                          aria-label="Editar nota interna"
                         >
-                          <div className="min-h-[28px] min-w-0 flex-1 rounded-xl bg-white/30 p-2 dark:bg-white/5">
-                            <RichNote
-                              text={booking.observation}
-                              emptyLabel="Sin observaciones"
-                              className="space-y-2 text-sm font-light text-sky-900/80 dark:text-white/80"
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={1.5}
+                            stroke="currentColor"
+                            className="size-6"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
                             />
-                          </div>
-                          {canAdminLike && (
-                            <button
-                              onClick={() => {
-                                setInvObsDraft(booking.observation || "");
-                                setIsEditingInvObs(true);
-                              }}
-                              className="rounded-full p-2 text-sky-950 transition-transform hover:scale-95 active:scale-90 dark:text-white"
-                              title="Editar observación"
-                              aria-label="Editar observación"
-                            >
-                              <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                strokeWidth={1.5}
-                                stroke="currentColor"
-                                className="size-6"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
-                                />
-                              </svg>
-                            </button>
-                          )}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </li>
-                </div>
+                          </svg>
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </li>
               </div>
             </div>
           )}
