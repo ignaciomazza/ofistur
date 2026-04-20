@@ -14,6 +14,7 @@ import "react-toastify/dist/ReactToastify.css";
  *  Tipos / helpers
  *  ========================= */
 type Maybe<T> = T | null | undefined;
+type DebtState = "all" | "debtors" | "non_debtors";
 
 type DevAgency = {
   id_agency: number;
@@ -39,6 +40,7 @@ type DevAgency = {
     clients: number;
     bookings: number;
   };
+  last_connection_at?: Maybe<string | Date>;
 };
 
 type BillingStatus = "PAID" | "PENDING" | "OVERDUE" | "NONE";
@@ -60,15 +62,27 @@ type ListResponse = {
 };
 
 const PAGE_SIZE = 12;
+const DEBT_STATE_OPTIONS: Array<{ value: DebtState; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "debtors", label: "Deudores" },
+  { value: "non_debtors", label: "No deudores" },
+];
 
-function formatDateDMY(value?: string | Date | null): string {
-  if (!value) return "—";
+function matchesDebtState(status: BillingStatus | undefined, state: DebtState) {
+  const safeStatus = status ?? "NONE";
+  if (state === "all") return true;
+  if (state === "debtors") return safeStatus === "OVERDUE";
+  return safeStatus !== "OVERDUE";
+}
+
+function formatDateTime(value?: string | Date | null): string {
+  if (!value) return "Sin conexión registrada";
   const d = typeof value === "string" ? new Date(value) : value;
-  if (Number.isNaN(d.getTime())) return "—";
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yy = d.getUTCFullYear();
-  return `${dd}/${mm}/${yy}`;
+  if (Number.isNaN(d.getTime())) return "Sin conexión registrada";
+  return new Intl.DateTimeFormat("es-AR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(d);
 }
 
 function getBillingBadge(status?: BillingStatus) {
@@ -83,7 +97,7 @@ function getBillingBadge(status?: BillingStatus) {
       return {
         label: "Vencido",
         className:
-          "border-red-300/50 bg-red-500/20 text-red-100 dark:text-red-100",
+          "border-red-400/60 bg-red-100/80 text-red-900 dark:border-red-300/50 dark:bg-red-500/20 dark:text-red-100",
       };
     case "PENDING":
       return {
@@ -99,6 +113,7 @@ function getBillingBadge(status?: BillingStatus) {
       };
   }
 }
+
 function toYMD(value?: string | Date | null): string {
   if (!value) return "";
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
@@ -239,6 +254,7 @@ export default function DevAgenciesPage() {
   const [deleteTarget, setDeleteTarget] = useState<DevAgency | null>(null);
   const [deleteConfirmationText, setDeleteConfirmationText] =
     useState<string>("");
+  const [debtState, setDebtState] = useState<DebtState>("all");
 
   // Form
   const [openForm, setOpenForm] = useState<boolean>(false);
@@ -271,7 +287,7 @@ export default function DevAgenciesPage() {
       setLoading(true);
       try {
         const res = await authFetch(
-          `/api/dev/agencies?limit=${PAGE_SIZE}`,
+          `/api/dev/agencies?limit=${PAGE_SIZE}&debt_state=${debtState}`,
           { signal: controller.signal },
           token,
         );
@@ -295,7 +311,7 @@ export default function DevAgenciesPage() {
       }
     })();
     return () => controller.abort();
-  }, [token]);
+  }, [token, debtState]);
 
   /** Ver más */
   const loadMore = async () => {
@@ -303,7 +319,7 @@ export default function DevAgenciesPage() {
     setLoadingMore(true);
     try {
       const res = await authFetch(
-        `/api/dev/agencies?limit=${PAGE_SIZE}&cursor=${nextCursor}`,
+        `/api/dev/agencies?limit=${PAGE_SIZE}&cursor=${nextCursor}&debt_state=${debtState}`,
         {},
         token,
       );
@@ -444,7 +460,11 @@ export default function DevAgenciesPage() {
           );
         }
         const created = (await res.json()) as DevAgency;
-        setItems((prev) => [created, ...prev]);
+        setItems((prev) =>
+          matchesDebtState(created.billing?.status, debtState)
+            ? [created, ...prev]
+            : prev,
+        );
         toast.success("Agencia creada");
       }
       setOpenForm(false);
@@ -516,7 +536,7 @@ export default function DevAgenciesPage() {
       <section className="text-sky-950 dark:text-white">
         {/* Header */}
         <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Agencias (Dev)</h1>
+          <h1 className="text-2xl font-semibold">Agencias</h1>
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => router.push("/dev/agencies/stats")}
@@ -537,6 +557,28 @@ export default function DevAgenciesPage() {
           <p className="mb-4 text-sm text-sky-950/70 dark:text-white/70">
             No tenés permisos para este panel.
           </p>
+        )}
+
+        {!forbidden && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {DEBT_STATE_OPTIONS.map((option) => {
+              const isActive = debtState === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setDebtState(option.value)}
+                  className={`rounded-full border px-4 py-2 text-sm transition-transform hover:scale-95 active:scale-90 ${
+                    isActive
+                      ? "border-sky-400/60 bg-sky-200/30 text-sky-950 dark:border-sky-300/60 dark:bg-sky-200/20 dark:text-sky-100"
+                      : "border-sky-300/40 bg-sky-100/20 text-sky-900 dark:text-sky-200"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         )}
 
         {/* Form colapsable */}
@@ -740,7 +782,9 @@ export default function DevAgenciesPage() {
           <Spinner />
         ) : items.length === 0 ? (
           <div className="rounded-3xl border border-white/10 bg-white/10 p-6">
-            No hay agencias.
+            {debtState === "all"
+              ? "No hay agencias."
+              : "No hay agencias para este filtro."}
           </div>
         ) : (
           <>
@@ -785,36 +829,15 @@ export default function DevAgenciesPage() {
                     >
                       {getBillingBadge(a.billing?.status).label}
                     </span>
-                    {a.billing?.period_end && (
-                      <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-sky-950/70 dark:text-white/70">
-                        Hasta {formatDateDMY(a.billing.period_end)}
-                      </span>
-                    )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="grid grid-cols-1 gap-2 text-sm">
                     <div>
                       <p className="text-xs uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                        Email
+                        Última conexión
                       </p>
-                      <p className="break-all font-medium">
-                        {a.email?.trim() || "—"}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                        Teléfono
-                      </p>
-                      <p className="font-medium">{a.phone?.trim() || "—"}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-xs uppercase tracking-wide text-sky-950/60 dark:text-white/60">
-                        Fundación
-                      </p>
-                      <p className="font-medium">
-                        {a.foundation_date
-                          ? formatDateDMY(a.foundation_date)
-                          : "—"}
+                      <p className="text-xs font-medium">
+                        {formatDateTime(a.last_connection_at)}
                       </p>
                     </div>
                   </div>

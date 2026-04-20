@@ -33,17 +33,6 @@ type Overview = {
 
 const ALLOWED_ROLES = new Set(["desarrollador"]);
 
-function formatAnchor(value?: string | Date | null): string {
-  if (!value) return "-";
-  const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime())) return "-";
-  return new Intl.DateTimeFormat("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: "America/Argentina/Buenos_Aires",
-  }).format(date);
-}
-
 function formatDateTime(value?: string | Date | null): string {
   if (!value) return "-";
   const date = value instanceof Date ? value : new Date(value);
@@ -105,8 +94,6 @@ export default function SubscriptionStatusBanner() {
   }, [canView, token]);
 
   if (loading || !ready || !canView || !overview) return null;
-
-  const anchor = formatAnchor(overview.next_anchor_date);
   const flags = overview.flags || {
     in_collection: Boolean(overview.in_collection),
     is_past_due: Boolean(overview.is_past_due),
@@ -142,22 +129,6 @@ export default function SubscriptionStatusBanner() {
       <div className="mb-3 rounded-2xl border border-yellow-300/70 bg-yellow-100/30 px-4 py-2 text-sm text-yellow-900 shadow-sm dark:border-yellow-300/40 dark:bg-yellow-500/10 dark:text-yellow-50">
         Cobro en proceso.
         {nextAttemptAt ? ` Próximo intento: ${nextAttemptAt}.` : ""}
-      </div>
-    );
-  }
-
-  if (overview.mandate_status === "PENDING" || overview.mandate_status === "PENDING_BANK") {
-    return (
-      <div className="mb-3 rounded-2xl border border-amber-300/70 bg-amber-100/30 px-4 py-2 text-sm text-amber-900 shadow-sm dark:border-amber-300/40 dark:bg-amber-500/10 dark:text-amber-50">
-        Mandato en revisión, se activará cuando el banco lo confirme.
-      </div>
-    );
-  }
-
-  if (overview.status === "ACTIVE") {
-    return (
-      <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-300/70 bg-emerald-100/30 px-4 py-1.5 text-xs font-medium text-emerald-900 shadow-sm dark:border-emerald-300/40 dark:bg-emerald-500/10 dark:text-emerald-50">
-        Suscripción activa. Próximo cobro: {anchor}
       </div>
     );
   }

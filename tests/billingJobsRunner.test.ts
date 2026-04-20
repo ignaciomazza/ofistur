@@ -359,7 +359,7 @@ describe("billing jobs runner", () => {
       id_lock: 1,
       lock_key: "billing:prepare_batch:debug_csv:2026-03-08",
       acquired_at: new Date("2026-03-08T03:00:00.000Z"),
-      expires_at: new Date("2026-03-08T23:59:59.000Z"),
+      expires_at: new Date("2099-03-08T23:59:59.000Z"),
       owner_run_id: "existing-lock",
       metadata: null,
       released_at: null,

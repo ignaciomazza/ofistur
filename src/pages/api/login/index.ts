@@ -63,6 +63,16 @@ export default async function handler(
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
+    // Best-effort: no bloquea el login si falla el update de actividad.
+    void prisma.user
+      .update({
+        where: { id_user: user.id_user },
+        data: { last_login_at: new Date() },
+      })
+      .catch((err) => {
+        console.error("[login][last_login_at]", err);
+      });
+
     // Payload consistente con el resto de la API
     const claims = {
       id_user: user.id_user,

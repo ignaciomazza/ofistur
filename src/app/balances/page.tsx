@@ -330,6 +330,8 @@ const toNum = (v: number | string | null | undefined) => {
     typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
   return Number.isFinite(n) ? n : 0;
 };
+const round2 = (value: number) =>
+  Math.round((value + Number.EPSILON) * 100) / 100;
 const normCurrency = (raw: string | null | undefined): CurrencyCode => {
   const s = (raw || "").trim().toUpperCase();
   if (s === "USD" || s === "U$D" || s === "U$S" || s === "US$") return "USD";
@@ -347,6 +349,40 @@ const TAKE = 120;
 
 const CLIENT_STATUSES = ["Pendiente", "Pago", "Facturado"];
 const OPERATOR_STATUSES = ["Pendiente", "Pago"];
+
+function makeCurrencyTotals(): Record<CurrencyCode, number> {
+  return { ARS: 0, USD: 0 };
+}
+
+function addCurrencyTotals(
+  target: Record<CurrencyCode, number>,
+  source: Record<CurrencyCode, number>,
+) {
+  target.ARS += source.ARS || 0;
+  target.USD += source.USD || 0;
+}
+
+function addCurrencyAmount(
+  target: Record<CurrencyCode, number>,
+  currency: CurrencyCode,
+  amount: number,
+) {
+  target[currency] += amount;
+}
+
+function downloadJsonFile(payload: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 /* ================= Page ================= */
 export default function BalancesPage() {
@@ -465,6 +501,7 @@ export default function BalancesPage() {
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingJson, setExportingJson] = useState(false);
   const [appliedListQuery, setAppliedListQuery] = useState("");
   const [pageInit, setPageInit] = useState(false);
 
@@ -1521,6 +1558,296 @@ export default function BalancesPage() {
     }
   };
 
+  const downloadMonthlyJSON = async () => {
+    if (exportingJson) return;
+    setExportingJson(true);
+    try {
+      const todayKey = todayDateKeyInBuenosAires();
+      const resolveRange = (): {
+        from: string;
+        to: string;
+        usedDefaultRange: boolean;
+      } => {
+        if (from && to) return { from, to, usedDefaultRange: false };
+        if (from && !to) return { from, to: todayKey, usedDefaultRange: true };
+        if (!from && to) {
+          const monthPrefix =
+            /^\d{4}-\d{2}-\d{2}$/.test(to) ? to.slice(0, 7) : todayKey.slice(0, 7);
+          return {
+            from: `${monthPrefix}-01`,
+            to,
+            usedDefaultRange: true,
+          };
+        }
+        const currentMonth = todayKey.slice(0, 7);
+        return {
+          from: `${currentMonth}-01`,
+          to: todayKey,
+          usedDefaultRange: true,
+        };
+      };
+
+      const range = resolveRange();
+
+      const fallbackQuery = buildQS(undefined);
+      fallbackQuery.delete("cursor");
+      fallbackQuery.delete("take");
+      const baseFilters = new URLSearchParams(
+        appliedListQuery || fallbackQuery.toString(),
+      );
+      if (dateMode === "creation") {
+        baseFilters.set("creationFrom", range.from);
+        baseFilters.set("creationTo", range.to);
+        baseFilters.delete("from");
+        baseFilters.delete("to");
+      } else {
+        baseFilters.set("from", range.from);
+        baseFilters.set("to", range.to);
+        baseFilters.delete("creationFrom");
+        baseFilters.delete("creationTo");
+      }
+
+      const salesTotal = makeCurrencyTotals();
+      const collectionsTotal = makeCurrencyTotals();
+      const receivablesTotal = makeCurrencyTotals();
+      const operatorDuesTotal = makeCurrencyTotals();
+      const serviceCostsTotal = makeCurrencyTotals();
+      const commissionsTotal = makeCurrencyTotals();
+
+      let bookingCount = 0;
+      let serviceCount = 0;
+      let receiptCount = 0;
+
+      let next: number | null = null;
+      for (let i = 0; i < 220; i++) {
+        const qs = new URLSearchParams(baseFilters.toString());
+        qs.set("take", String(TAKE));
+        if (next != null) qs.set("cursor", String(next));
+
+        const res = await authFetch(
+          `/api/bookings?${qs.toString()}`,
+          { cache: "no-store" },
+          token || undefined,
+        );
+        const json: BookingsAPI = await res.json();
+        if (!res.ok) throw new Error(json?.error || "Error al generar JSON");
+
+        const items = Array.isArray(json.items) ? json.items : [];
+        bookingCount += items.length;
+
+        for (const booking of items) {
+          const amounts = computeBookingAmounts(booking);
+          addCurrencyTotals(salesTotal, amounts.saleNoInt);
+          addCurrencyTotals(collectionsTotal, amounts.paid);
+          addCurrencyTotals(receivablesTotal, amounts.debt);
+          addCurrencyTotals(operatorDuesTotal, amounts.operatorDebt);
+
+          if (useBookingSaleTotal) {
+            const bookingCommission = computeBookingCommissionBaseByCurrency(
+              booking,
+              amounts.saleNoInt,
+            );
+            addCurrencyTotals(commissionsTotal, bookingCommission);
+          } else {
+            const taxByCurrency = sumTaxesByCurrency(booking.services);
+            addCurrencyAmount(
+              commissionsTotal,
+              "ARS",
+              taxByCurrency.ARS.commNet || 0,
+            );
+            addCurrencyAmount(
+              commissionsTotal,
+              "USD",
+              taxByCurrency.USD.commNet || 0,
+            );
+          }
+
+          const services = Array.isArray(booking.services) ? booking.services : [];
+          serviceCount += services.length;
+          for (const service of services) {
+            const cur = normCurrency(service.currency);
+            addCurrencyAmount(serviceCostsTotal, cur, toNum(service.cost_price));
+          }
+
+          receiptCount += Array.isArray(booking.Receipt)
+            ? booking.Receipt.length
+            : 0;
+        }
+
+        next = json.nextCursor ?? null;
+        if (next === null || items.length === 0) break;
+      }
+
+      type InvestmentScanResult = {
+        totals: Record<CurrencyCode, number>;
+        count: number;
+      };
+      const scanInvestments = async (opts: {
+        operatorOnly?: boolean;
+        excludeOperator?: boolean;
+      }): Promise<InvestmentScanResult> => {
+        const totals = makeCurrencyTotals();
+        let count = 0;
+        let nextCursor: number | null = null;
+
+        for (let i = 0; i < 220; i++) {
+          const qs = new URLSearchParams({
+            paidFrom: range.from,
+            paidTo: range.to,
+            effectivePaidDate: "1",
+            take: "100",
+          });
+          if (opts.operatorOnly) qs.set("operatorOnly", "1");
+          if (opts.excludeOperator) qs.set("excludeOperator", "1");
+          if (nextCursor != null) qs.set("cursor", String(nextCursor));
+
+          const res = await authFetch(
+            `/api/investments?${qs.toString()}`,
+            { cache: "no-store" },
+            token || undefined,
+          );
+
+          const payload = (await res.json()) as {
+            error?: string;
+            items?: Array<{ amount?: number | string | null; currency?: string | null }>;
+            nextCursor?: number | null;
+          };
+          if (!res.ok) {
+            throw new Error(payload?.error || "Error al cargar pagos/gastos");
+          }
+
+          const items = Array.isArray(payload.items) ? payload.items : [];
+          count += items.length;
+          for (const row of items) {
+            const cur = normCurrency(row.currency);
+            addCurrencyAmount(totals, cur, toNum(row.amount));
+          }
+
+          const nextValue =
+            typeof payload.nextCursor === "number" &&
+            Number.isFinite(payload.nextCursor)
+              ? payload.nextCursor
+              : null;
+          if (!nextValue || nextValue === nextCursor) break;
+          nextCursor = nextValue;
+        }
+
+        return { totals, count };
+      };
+
+      const [operatorPayments, nonOperatorExpenses] = await Promise.all([
+        scanInvestments({ operatorOnly: true }),
+        scanInvestments({ excludeOperator: true }),
+      ]);
+
+      const grossProfit = makeCurrencyTotals();
+      const outflowsTotal = makeCurrencyTotals();
+      const salesResult = makeCurrencyTotals();
+      const commissionResult = makeCurrencyTotals();
+      const cashResult = makeCurrencyTotals();
+      const workingCapitalGap = makeCurrencyTotals();
+      (["ARS", "USD"] as const).forEach((cur) => {
+        grossProfit[cur] = round2((salesTotal[cur] || 0) - (serviceCostsTotal[cur] || 0));
+        salesResult[cur] = round2(
+          (grossProfit[cur] || 0) - (nonOperatorExpenses.totals[cur] || 0),
+        );
+        commissionResult[cur] = round2(
+          (commissionsTotal[cur] || 0) - (nonOperatorExpenses.totals[cur] || 0),
+        );
+        outflowsTotal[cur] = round2(
+          (operatorPayments.totals[cur] || 0) +
+            (nonOperatorExpenses.totals[cur] || 0),
+        );
+        cashResult[cur] = round2(
+          (collectionsTotal[cur] || 0) - (outflowsTotal[cur] || 0),
+        );
+        workingCapitalGap[cur] = round2(
+          (receivablesTotal[cur] || 0) - (operatorDuesTotal[cur] || 0),
+        );
+      });
+
+      const report = {
+        report_type: "agency_monthly_financial_state",
+        version: 2,
+        generated_at: new Date().toISOString(),
+        timezone: "America/Argentina/Buenos_Aires",
+        period: {
+          from: range.from,
+          to: range.to,
+          date_mode: dateMode,
+          used_default_month_range: range.usedDefaultRange,
+        },
+        formula_notes: {
+          gross_profit_total: "sales_total - service_costs_total",
+          sales_result_total:
+            "gross_profit_total - non_operator_expenses_total",
+          commission_result_total:
+            "commissions_total - non_operator_expenses_total (alineado con Ganancias)",
+          cash_result_total:
+            "collections_total - operator_payments_total - non_operator_expenses_total",
+          working_capital_gap_total:
+            "receivables_total - operator_dues_total",
+        },
+        filters: {
+          query: q.trim() || null,
+          owner_id: ownerId || null,
+          client_status: clientStatusArr,
+          operator_status: operatorStatusArr,
+        },
+        summary_by_currency: {
+          ARS: {
+            sales_total: round2(salesTotal.ARS),
+            service_costs_total: round2(serviceCostsTotal.ARS),
+            gross_profit_total: round2(grossProfit.ARS),
+            commissions_total: round2(commissionsTotal.ARS),
+            collections_total: round2(collectionsTotal.ARS),
+            receivables_total: round2(receivablesTotal.ARS),
+            operator_dues_total: round2(operatorDuesTotal.ARS),
+            operator_payments_total: round2(operatorPayments.totals.ARS),
+            non_operator_expenses_total: round2(nonOperatorExpenses.totals.ARS),
+            outflows_total: round2(outflowsTotal.ARS),
+            sales_result_total: round2(salesResult.ARS),
+            commission_result_total: round2(commissionResult.ARS),
+            cash_result_total: round2(cashResult.ARS),
+            working_capital_gap_total: round2(workingCapitalGap.ARS),
+          },
+          USD: {
+            sales_total: round2(salesTotal.USD),
+            service_costs_total: round2(serviceCostsTotal.USD),
+            gross_profit_total: round2(grossProfit.USD),
+            commissions_total: round2(commissionsTotal.USD),
+            collections_total: round2(collectionsTotal.USD),
+            receivables_total: round2(receivablesTotal.USD),
+            operator_dues_total: round2(operatorDuesTotal.USD),
+            operator_payments_total: round2(operatorPayments.totals.USD),
+            non_operator_expenses_total: round2(nonOperatorExpenses.totals.USD),
+            outflows_total: round2(outflowsTotal.USD),
+            sales_result_total: round2(salesResult.USD),
+            commission_result_total: round2(commissionResult.USD),
+            cash_result_total: round2(cashResult.USD),
+            working_capital_gap_total: round2(workingCapitalGap.USD),
+          },
+        },
+        counts: {
+          bookings: bookingCount,
+          services: serviceCount,
+          receipts: receiptCount,
+          operator_payments: operatorPayments.count,
+          non_operator_expenses: nonOperatorExpenses.count,
+        },
+      };
+
+      const safeFrom = range.from.replaceAll("-", "");
+      const safeTo = range.to.replaceAll("-", "");
+      downloadJsonFile(report, `estado_mensual_${safeFrom}_${safeTo}.json`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Error al descargar JSON";
+      toast.error(msg);
+    } finally {
+      setExportingJson(false);
+    }
+  };
+
   /* ---------- Acciones filtros ---------- */
   const clearFilters = () => {
     setQ("");
@@ -1747,7 +2074,14 @@ export default function BalancesPage() {
           <ExportSheetButton
             onClick={downloadCSV}
             loading={exportingCsv}
-            disabled={exportingCsv}
+            disabled={exportingCsv || exportingJson}
+          />
+          <ExportSheetButton
+            onClick={downloadMonthlyJSON}
+            loading={exportingJson}
+            disabled={exportingCsv || exportingJson}
+            label="Descargar JSON mensual"
+            loadingLabel="Generando JSON..."
           />
           {activeFilterCount > 0 && (
             <button onClick={clearFilters} className={ICON_BTN}>

@@ -161,6 +161,7 @@ model User {
   first_name     String
   last_name      String
   creation_date  DateTime @default(now())
+  last_login_at  DateTime?
   id_agency      Int
   agency         Agency   @relation(fields: [id_agency], references: [id_agency], onDelete: Cascade)
 
@@ -197,6 +198,7 @@ model User {
   billingFileImportRunsUploaded      BillingFileImportRun[]       @relation("BillingFileImportRunUploadedBy")
 
   @@unique([id_agency, agency_user_id], name: "agency_user_id_unique")
+  @@index([id_agency, last_login_at])
 }
 
 model Client {

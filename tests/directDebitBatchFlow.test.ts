@@ -249,6 +249,9 @@ const txMock = {
   agencyBillingAdjustment: {
     findMany: vi.fn(async () => []),
   },
+  agencyStorageConfig: {
+    findUnique: vi.fn(async () => ({ enabled: false })),
+  },
   agencyBillingCycle: {
     findUnique: vi.fn(async ({ where }: { where: { agency_billing_cycle_unique: { subscription_id: number; anchor_date: Date } } }) => {
       const key = where.agency_billing_cycle_unique;
@@ -654,6 +657,7 @@ const prismaMock = {
   agencyBillingPaymentMethod: txMock.agencyBillingPaymentMethod,
   agencyBillingConfig: txMock.agencyBillingConfig,
   agencyBillingAdjustment: txMock.agencyBillingAdjustment,
+  agencyStorageConfig: txMock.agencyStorageConfig,
   agencyBillingFileBatch: {
     create: txMock.agencyBillingFileBatch.create,
     update: txMock.agencyBillingFileBatch.update,
