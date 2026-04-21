@@ -31,6 +31,12 @@ import {
   type FinancePaymentMethod,
   type FinanceCurrency,
 } from "@/utils/loadFinancePicks";
+import {
+  downloadCsvFile,
+  formatCsvNumber,
+  toCsvHeaderRow,
+  toCsvRow,
+} from "@/utils/csv";
 
 const DEFAULT_TZ = "America/Argentina/Buenos_Aires";
 
@@ -135,6 +141,7 @@ type FiltersState = {
   accountId: string;
   teamId: string;
 };
+type DateField = "creation" | "departure";
 
 const GLASS =
   "rounded-3xl border border-white/10 bg-white/10 p-6 text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur dark:text-white";
@@ -215,6 +222,21 @@ function clampPct(value: string) {
 function toSafeNumber(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+function downloadJsonFile(payload: unknown, filename: string) {
+  if (typeof window === "undefined") return;
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 function bookingInternalLabel(agencyBookingId: number | null) {
@@ -499,10 +521,19 @@ export default function EarningsPage() {
   );
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
-  const [dateField, setDateField] = useState<"creation" | "departure">(
-    "creation",
-  );
+  const [dateField, setDateField] = useState<DateField>("creation");
   const [minPaidPct, setMinPaidPct] = useState(0);
+  const [appliedRange, setAppliedRange] = useState<{
+    from: string;
+    to: string;
+    dateField: DateField;
+    minPaidPct: number;
+  }>({
+    from: defaultFrom,
+    to: defaultTo,
+    dateField: "creation",
+    minPaidPct: 0,
+  });
   const [filters, setFilters] = useState<FiltersState>({
     clientStatus: "Todas",
     operatorStatus: "Todas",
@@ -514,6 +545,8 @@ export default function EarningsPage() {
   const [viewMode, setViewMode] = useState<"charts" | "details">("charts");
   const [data, setData] = useState<EarningsResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportingSheet, setExportingSheet] = useState(false);
   const [expandedUsers, setExpandedUsers] = useState<Set<number>>(new Set());
   const [nonOperatorExpenseByCurrency, setNonOperatorExpenseByCurrency] =
     useState<Record<string, number>>({});
@@ -663,6 +696,12 @@ export default function EarningsPage() {
       setData(json);
       setNonOperatorExpenseByCurrency(nonOperator);
       setExpandedUsers(new Set());
+      setAppliedRange({
+        from,
+        to,
+        dateField,
+        minPaidPct,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error desconocido";
       toast.error(msg);
@@ -701,6 +740,145 @@ export default function EarningsPage() {
     });
     return map;
   }, [data]);
+
+  const tableRowsByCurrency = useMemo(
+    () =>
+      currencyOrder.map((cur) => ({
+        moneda: cur,
+        filas: (itemsByCurrency[cur] || []).map((item) => ({
+          equipo: String(item.teamName || "").trim() || "Sin equipo",
+          vendedor: String(item.userName || "").trim() || "Sin vendedor",
+          comision_vendedor: toSafeNumber(item.totalSellerComm),
+          comision_lider: toSafeNumber(item.totalLeaderComm),
+          comision_agencia: toSafeNumber(item.totalAgencyShare),
+        })),
+      })),
+    [currencyOrder, itemsByCurrency],
+  );
+
+  const flattenedRowsForCsv = useMemo(
+    () =>
+      tableRowsByCurrency.flatMap((bucket) =>
+        bucket.filas.map((row) => ({
+          moneda: bucket.moneda,
+          ...row,
+        })),
+      ),
+    [tableRowsByCurrency],
+  );
+
+  const commissionSummaryRows = useMemo(() => {
+    if (!data) return [];
+    return currencyOrder.map((cur) => {
+      const stats = data.statsByCurrency?.[cur];
+      const seller = toSafeNumber(data.totals?.sellerComm?.[cur]);
+      const leader = toSafeNumber(data.totals?.leaderComm?.[cur]);
+      const agency = toSafeNumber(data.totals?.agencyShare?.[cur]);
+      const comisionDelRango = toSafeNumber(
+        stats?.commissionTotal ?? seller + leader + agency,
+      );
+      const ivaComisiones = Math.max(comisionDelRango, 0) * COMMISSION_VAT_TOTAL_RATE;
+      const gastosMes = toSafeNumber(nonOperatorExpenseByCurrency[cur]);
+      const gananciaTotal = comisionDelRango - gastosMes;
+      const tasaPagoPorcentaje = Math.round(toSafeNumber(stats?.paymentRate) * 100);
+      return {
+        moneda: cur,
+        comision_del_rango: comisionDelRango,
+        iva_comisiones_informativo: ivaComisiones,
+        inversion_gastos_del_mes: gastosMes,
+        ganancia_total: gananciaTotal,
+        facturacion: toSafeNumber(stats?.saleTotal),
+        cobrado: toSafeNumber(stats?.paidTotal),
+        pendiente: toSafeNumber(stats?.debtTotal),
+        tasa_pago_porcentaje: tasaPagoPorcentaje,
+        distribucion_comision: {
+          vendedor: seller,
+          lider: leader,
+          agencia: agency,
+        },
+      };
+    });
+  }, [currencyOrder, data, nonOperatorExpenseByCurrency]);
+
+  const closeExportDialog = useCallback(() => {
+    if (exportingSheet) return;
+    setExportDialogOpen(false);
+  }, [exportingSheet]);
+
+  const exportSheet = useCallback(
+    (format: "csv" | "json") => {
+      if (exportingSheet) return;
+      if (!data || flattenedRowsForCsv.length === 0) {
+        toast.info("No hay datos para exportar en el periodo actual.");
+        return;
+      }
+
+      setExportingSheet(true);
+      try {
+        const safeFrom = appliedRange.from.replaceAll("-", "");
+        const safeTo = appliedRange.to.replaceAll("-", "");
+        const baseName = `ganancias_${safeFrom}_${safeTo}`;
+
+        if (format === "csv") {
+          const headers = [
+            "Moneda",
+            "Equipo",
+            "Vendedor",
+            "Comision vendedor",
+            "Comision lider",
+            "Comision agencia",
+          ];
+          const rows = flattenedRowsForCsv.map((row) =>
+            toCsvRow([
+              { value: row.moneda },
+              { value: row.equipo },
+              { value: row.vendedor },
+              { value: formatCsvNumber(row.comision_vendedor), numeric: true },
+              { value: formatCsvNumber(row.comision_lider), numeric: true },
+              { value: formatCsvNumber(row.comision_agencia), numeric: true },
+            ]),
+          );
+          const csv = [toCsvHeaderRow(headers), ...rows].join("\r\n");
+          downloadCsvFile(csv, `${baseName}.csv`);
+        } else {
+          const jsonPayload = {
+            reporte: "ganancias_comisiones_agencia",
+            version: 1,
+            generado_en: new Date().toISOString(),
+            zona_horaria: DEFAULT_TZ,
+            periodo: {
+              desde: appliedRange.from,
+              hasta: appliedRange.to,
+              tipo_fecha:
+                appliedRange.dateField === "creation" ? "creacion" : "viaje",
+              minimo_cobrado_porcentaje: appliedRange.minPaidPct,
+            },
+            resumen_comisiones_agencia: commissionSummaryRows,
+            tablas_comisiones_agencia: tableRowsByCurrency,
+          };
+          downloadJsonFile(jsonPayload, `${baseName}.json`);
+        }
+
+        setExportDialogOpen(false);
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : "No se pudo descargar la planilla.",
+        );
+      } finally {
+        setExportingSheet(false);
+      }
+    },
+    [
+      appliedRange,
+      commissionSummaryRows,
+      data,
+      exportingSheet,
+      flattenedRowsForCsv,
+      tableRowsByCurrency,
+    ],
+  );
 
   const bookingDetailsByBooking = useMemo(() => {
     const map = new Map<number, BookingServiceDetail[]>();
@@ -1027,7 +1205,7 @@ export default function EarningsPage() {
                       d="m19.5 8.25-7.5 7.5-7.5-7.5"
                     />
                   </svg>
-                  {showAdvanced ? "Ocultar filtros" : "Filtros avanzados"}
+                  {showAdvanced ? "Ocultar avanzados" : "Avanzados"}
                 </span>
               </button>
 
@@ -1109,6 +1287,27 @@ export default function EarningsPage() {
 
             {showAdvanced && (
               <div className="grid grid-cols-1 gap-6 border-t border-white/10 pt-6 md:grid-cols-2 xl:grid-cols-4">
+                <div className="flex flex-col gap-2 md:col-span-2 xl:col-span-4">
+                  <label className="block text-xs opacity-70">Planilla</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExportDialogOpen(true)}
+                      disabled={loading || exportingSheet}
+                      className={BTN_SKY}
+                    >
+                      <span className="flex items-center justify-center gap-2 text-sm">
+                        {exportingSheet
+                          ? "Preparando descarga..."
+                          : "Descargar planilla"}
+                      </span>
+                    </button>
+                    <p className="text-[11px] opacity-60">
+                      Exporta las tablas debajo de &quot;Comisiones de la
+                      agencia&quot; con el periodo actualmente cargado.
+                    </p>
+                  </div>
+                </div>
                 <div className="flex flex-col gap-2">
                   <label className="block text-xs opacity-70">
                     Estado pax
@@ -1653,6 +1852,51 @@ export default function EarningsPage() {
 
         {data && data.items.length === 0 && !loading && (
           <p className="text-center opacity-80">No hay datos para ese rango.</p>
+        )}
+
+        {exportDialogOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <button
+              type="button"
+              onClick={closeExportDialog}
+              className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+              aria-label="Cerrar selector de formato"
+            />
+            <div
+              className={`${GLASS} relative z-10 w-full max-w-md border-white/20 p-5`}
+            >
+              <h3 className="text-base font-semibold">Descargar planilla</h3>
+              <p className="mt-1 text-sm opacity-75">
+                Elegi el formato de descarga para el periodo en pantalla.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => exportSheet("csv")}
+                  disabled={exportingSheet}
+                  className={BTN_SKY}
+                >
+                  Excel / CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportSheet("json")}
+                  disabled={exportingSheet}
+                  className={BTN_SKY}
+                >
+                  JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={closeExportDialog}
+                  disabled={exportingSheet}
+                  className={BTN_ROSE}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </section>
     </ProtectedRoute>

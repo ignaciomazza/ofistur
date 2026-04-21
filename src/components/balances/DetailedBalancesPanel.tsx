@@ -221,7 +221,6 @@ export default function DetailedBalancesPanel({
   const [rows, setRows] = useState<UnifiedBalanceRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
-  const [exportingJson, setExportingJson] = useState(false);
 
   const [q, setQ] = useState("");
   const [dueFrom, setDueFrom] = useState("");
@@ -523,63 +522,6 @@ export default function DetailedBalancesPanel({
     });
   };
 
-  const downloadJson = async () => {
-    if (exportingJson) return;
-    setExportingJson(true);
-    try {
-      const payload = {
-        generated_at: new Date().toISOString(),
-        filters: appliedFilters,
-        summary: {
-          count: rows.length,
-          passengers_count: summary.paxCount,
-          operators_count: summary.operatorCount,
-          totals: {
-            all: Object.fromEntries(summary.all.entries()),
-            passengers: Object.fromEntries(summary.pax.entries()),
-            operators: Object.fromEntries(summary.operators.entries()),
-          },
-        },
-        items: rows.map((row) => ({
-          source: row.source,
-          id: row.id,
-          agency_id: row.agencyId,
-          booking_id: row.bookingId,
-          booking_agency_id: row.bookingAgencyId,
-          entity: row.entityLabel,
-          detail: row.detailLabel,
-          due_date: row.dueDate,
-          due_month: row.dueMonth,
-          status: row.status,
-          derived_status: row.derivedStatus,
-          is_overdue: row.isOverdue,
-          currency: row.currency,
-          amount: Number(row.amount.toFixed(2)),
-        })),
-      };
-
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json;charset=utf-8",
-      });
-      const url = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `saldos_detallados_${todayDateKeyInBuenosAires()}.json`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "No se pudo exportar el JSON de saldos.",
-      );
-    } finally {
-      setExportingJson(false);
-    }
-  };
-
   return (
     <div className={GLASS}>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -591,15 +533,6 @@ export default function DetailedBalancesPanel({
             Unifica cuotas de pasajeros y deudas de operador con fecha y monto.
           </p>
         </div>
-        <button
-          type="button"
-          className={BTN}
-          onClick={downloadJson}
-          disabled={exportingJson || rows.length === 0}
-          title="Descargar datos en JSON"
-        >
-          {exportingJson ? "Exportando..." : "Exportar JSON"}
-        </button>
       </div>
 
       <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-12">
