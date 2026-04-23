@@ -672,17 +672,21 @@ export default async function handler(
       extra_adjustments,
     } = req.body;
 
+    const typeText = typeof type === "string" ? type.trim() : "";
+    const destinationText =
+      typeof destination === "string" ? destination.trim() : "";
     const parsedOperatorId = Number(id_operator);
     const parsedBookingId = Number(booking_id);
     const missingFields: string[] = [];
 
-    if (!type || !String(type).trim()) missingFields.push("tipo");
+    if (!typeText) missingFields.push("tipo");
     if (sale_price === undefined || sale_price === null || sale_price === "") {
       missingFields.push("precio de venta");
     }
     if (cost_price === undefined || cost_price === null || cost_price === "") {
       missingFields.push("precio de costo");
     }
+    if (!destinationText) missingFields.push("destino");
     if (!currency || !String(currency).trim()) missingFields.push("moneda");
     if (!Number.isFinite(parsedOperatorId) || parsedOperatorId <= 0) {
       missingFields.push("operador");
@@ -749,13 +753,14 @@ export default async function handler(
         return tx.service.create({
           data: {
             agency_service_id: agencyServiceId,
-            type,
-            description: description || null,
-            note: note || null,
+            type: typeText,
+            description:
+              typeof description === "string" ? description.trim() : "",
+            note: typeof note === "string" ? note.trim() : "",
             sale_price: salePriceNum,
             cost_price: costPriceNum,
-            destination: destination || "",
-            reference: reference || "",
+            destination: destinationText,
+            reference: typeof reference === "string" ? reference.trim() : "",
             tax_21: toNullableNumber(tax_21),
             tax_105: toNullableNumber(tax_105),
             exempt: toNullableNumber(exempt),

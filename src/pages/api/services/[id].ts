@@ -78,7 +78,11 @@ export default async function handler(
       extra_adjustments,
     } = req.body;
 
-    if (!type || sale_price === undefined || cost_price === undefined) {
+    const typeText = typeof type === "string" ? type.trim() : "";
+    const destinationText =
+      typeof destination === "string" ? destination.trim() : "";
+
+    if (!typeText || sale_price === undefined || cost_price === undefined) {
       return res.status(400).json({
         error: "Todos los campos obligatorios deben ser completados.",
       });
@@ -138,13 +142,13 @@ export default async function handler(
       const service = await prisma.service.update({
         where: { id_service: serviceId },
         data: {
-          type,
-          description: description || null,
-          note: note || null,
+          type: typeText,
+          description: typeof description === "string" ? description.trim() : "",
+          note: typeof note === "string" ? note.trim() : "",
           sale_price: salePriceNum,
           cost_price: costPriceNum,
-          destination: destination || "",
-          reference: reference || "",
+          destination: destinationText,
+          reference: typeof reference === "string" ? reference.trim() : "",
           tax_21: toNullableNumber(tax_21),
           tax_105: toNullableNumber(tax_105),
           exempt: toNullableNumber(exempt),

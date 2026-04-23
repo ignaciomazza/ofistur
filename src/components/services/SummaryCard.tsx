@@ -55,6 +55,7 @@ interface SummaryCardProps {
   bookingSaleTotals?: Record<string, number | string> | null;
   ownerPctOverride?: number | null;
   role?: string;
+  hideRefreshButton?: boolean;
   onSaveCommission?: (
     overrides: CommissionOverrides | null,
   ) => Promise<boolean>;
@@ -489,6 +490,7 @@ export default function SummaryCard({
   bookingSaleTotals,
   ownerPctOverride = null,
   role,
+  hideRefreshButton = false,
   onSaveCommission,
 }: SummaryCardProps) {
   const labels: Record<string, string> = {
@@ -1996,17 +1998,19 @@ export default function SummaryCard({
         currencies.length > 1 ? "border border-white/10 bg-white/10 p-6" : ""
       } text-sky-950 shadow-md shadow-sky-950/10 backdrop-blur dark:text-white`}
     >
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => setRefreshKey((prev) => prev + 1)}
-          disabled={loadingCalc}
-          className="rounded-full border border-white/10 bg-white/20 px-3 py-1 text-xs font-medium shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:bg-white/10"
-          aria-label="Actualizar resumen"
-        >
-          Actualizar
-        </button>
-      </div>
+      {!hideRefreshButton && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setRefreshKey((prev) => prev + 1)}
+            disabled={loadingCalc}
+            className="rounded-full border border-white/10 bg-white/20 px-3 py-1 text-xs font-medium shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:bg-white/10"
+            aria-label="Actualizar resumen"
+          >
+            Actualizar
+          </button>
+        </div>
+      )}
 
       <div className={`grid ${colsClass} gap-6`}>
         {currencies.map((currency) => {
