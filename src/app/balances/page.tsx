@@ -21,9 +21,13 @@ import {
   formatCsvNumber,
   toCsvHeaderRow,
   toCsvRow,
+  type CsvRowCell,
 } from "@/utils/csv";
 import ExportSheetButton from "@/components/ui/ExportSheetButton";
 import DetailedBalancesPanel from "@/components/balances/DetailedBalancesPanel";
+import {
+  buildServiceFinancialRows,
+} from "@/app/balances/serviceRows";
 
 /* ================= Tipos ================= */
 
@@ -37,6 +41,13 @@ type CurrentUser = UserLite & { role?: string | null };
 type CurrencyCode = "ARS" | "USD";
 
 type ServiceForBalance = {
+  id_service?: number | null;
+  agency_service_id?: number | null;
+  type?: string | null;
+  description?: string | null;
+  reference?: string | null;
+  departure_date?: string | null;
+  return_date?: string | null;
   sale_price: number;
   currency: CurrencyCode;
   card_interest?: number | null;
@@ -59,6 +70,11 @@ type ServiceForBalance = {
   vatOnCommission21?: number | null;
   vatOnCommission10_5?: number | null;
   billing_override?: unknown;
+  operator?: {
+    id_operator?: number | null;
+    agency_operator_id?: number | null;
+    name?: string | null;
+  } | null;
 };
 
 type ReceiptForBalance = {
@@ -151,9 +167,11 @@ const TAX_CURRENCIES: CurrencyCode[] = ["ARS", "USD"];
 /* ====== Tipo normalizado para la tabla / export ====== */
 
 type NormalizedBooking = Booking & {
+  _rowKey: string;
   _titularFull: string;
   _ownerFull: string;
   _saleNoInt: Record<CurrencyCode, number>;
+  _cost: Record<CurrencyCode, number>;
   _saleWithInt: Record<CurrencyCode, number>;
   _paid: Record<CurrencyCode, number>;
   _debt: Record<CurrencyCode, number>;
@@ -168,12 +186,53 @@ type NormalizedBooking = Booking & {
   _taxByCurrency: Record<CurrencyCode, TaxBucket>;
 };
 
+type NormalizedServiceRow = {
+  _rowKey: string;
+  id_booking: number;
+  agency_booking_id: number | null;
+  public_id?: string | null;
+  clientStatus: string;
+  operatorStatus: string;
+  creation_date: string;
+  _titularFull: string;
+  _ownerFull: string;
+  _saleNoInt: Record<CurrencyCode, number>;
+  _cost: Record<CurrencyCode, number>;
+  _paid: Record<CurrencyCode, number>;
+  _debt: Record<CurrencyCode, number>;
+  _operatorDebt: Record<CurrencyCode, number>;
+  _saleLabel: string;
+  _paidLabel: string;
+  _debtLabel: string;
+  _operatorDebtLabel: string;
+  _depDateKey: string;
+  _retDateKey: string;
+  _travelLabel: string;
+  _taxByCurrency: Record<CurrencyCode, TaxBucket>;
+  _serviceType: string;
+  _serviceDescription: string;
+  _serviceReference: string;
+  _serviceOperator: string;
+  _serviceDepDateKey: string;
+  _serviceRetDateKey: string;
+  _serviceTravelLabel: string;
+  _serviceId: number | null;
+  _serviceAgencyId: number | null;
+};
+
+type BalanceRow = NormalizedBooking | NormalizedServiceRow;
+
 type BalanceKpis = {
   count: number;
   sale: Record<CurrencyCode, number>;
   paid: Record<CurrencyCode, number>;
   debt: Record<CurrencyCode, number>;
   operatorDebt: Record<CurrencyCode, number>;
+};
+
+type BalanceKpisByMode = {
+  booking: BalanceKpis;
+  service: BalanceKpis;
 };
 
 /* ================= Estilos compartidos (glass / sky) ================= */
@@ -189,6 +248,8 @@ const BADGE =
   "inline-flex items-center justify-center rounded-full px-2.5 py-0.5 text-xs font-medium";
 
 /* ================= Columnas visibles ================= */
+type ViewMode = "booking" | "service";
+
 type VisibleKey =
   | "id_booking"
   | "titular"
@@ -197,7 +258,13 @@ type VisibleKey =
   | "operatorStatus"
   | "creation_date"
   | "travel"
+  | "service_type"
+  | "service_description"
+  | "service_reference"
+  | "service_operator"
+  | "service_travel"
   | "sale_total"
+  | "cost_total"
   | "paid_total"
   | "debt_total"
   | "operator_debt"
@@ -218,17 +285,28 @@ type VisibleKey =
   | "tax_commWithVAT"
   | "tax_total";
 
-type ColumnDef = { key: VisibleKey; label: string; always?: boolean };
+type ColumnDef = {
+  key: VisibleKey;
+  label: string;
+  always?: boolean;
+  modes?: ViewMode[];
+};
 
 const ALL_COLUMNS: ColumnDef[] = [
   { key: "id_booking", label: "Reserva", always: true },
   { key: "titular", label: "Titular", always: true },
   { key: "owner", label: "Vendedor" },
-  { key: "clientStatus", label: "Pax" },
-  { key: "operatorStatus", label: "Operador" },
+  { key: "clientStatus", label: "Estado pax" },
+  { key: "operatorStatus", label: "Estado operador" },
   { key: "creation_date", label: "Creación" },
-  { key: "travel", label: "Viaje" },
+  { key: "travel", label: "Viaje", modes: ["booking"] },
+  { key: "service_type", label: "Tipo servicio", modes: ["service"] },
+  { key: "service_description", label: "Servicio", modes: ["service"] },
+  { key: "service_reference", label: "Referencia", modes: ["service"] },
+  { key: "service_operator", label: "Operador servicio", modes: ["service"] },
+  { key: "service_travel", label: "Fechas servicio", modes: ["service"] },
   { key: "sale_total", label: "Venta (sin int.)" },
+  { key: "cost_total", label: "Costo" },
   { key: "paid_total", label: "Cobrado" },
   { key: "debt_total", label: "Deuda" },
   { key: "operator_debt", label: "Deuda operadores" },
@@ -270,6 +348,7 @@ type TaxColumnKey =
 
 type NumericColumnKey =
   | "sale_total"
+  | "cost_total"
   | "paid_total"
   | "debt_total"
   | "operator_debt"
@@ -296,6 +375,7 @@ const TAX_FIELD_BY_COLUMN: Record<TaxColumnKey, keyof TaxBucket> = {
 
 const NUMERIC_COLUMN_KEYS: NumericColumnKey[] = [
   "sale_total",
+  "cost_total",
   "paid_total",
   "debt_total",
   "operator_debt",
@@ -467,11 +547,13 @@ export default function BalancesPage() {
   const [exportingCsv, setExportingCsv] = useState(false);
   const [appliedListQuery, setAppliedListQuery] = useState("");
   const [pageInit, setPageInit] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("booking");
 
   /* ---------- Densidad / layout ---------- */
   type Density = "comfortable" | "compact";
   const [density, setDensity] = useState<Density>("comfortable");
-  const STORAGE_KEY_COLS = "balances-columns-v2";
+  const STORAGE_KEY_COLS_BOOKING = "balances-columns-booking-v1";
+  const STORAGE_KEY_COLS_SERVICE = "balances-columns-service-v1";
   const STORAGE_KEY_DENS = "balances-density-v1";
 
   useEffect(() => {
@@ -536,6 +618,17 @@ export default function BalancesPage() {
     [],
   );
 
+  const sumCostByCurrency = useCallback((services: Booking["services"]) => {
+    return services.reduce<Record<CurrencyCode, number>>(
+      (acc, s) => {
+        const cur = normCurrency(s.currency);
+        acc[cur] = (acc[cur] || 0) + toNum(s.cost_price);
+        return acc;
+      },
+      { ARS: 0, USD: 0 },
+    );
+  }, []);
+
   const sumReceiptsByCurrency = useCallback((receipts: Booking["Receipt"]) => {
     return receipts.reduce<Record<CurrencyCode, number>>(
       (acc, r) => {
@@ -592,6 +685,7 @@ export default function BalancesPage() {
       const saleNoInt = useBookingSaleTotal
         ? normalizeSaleTotals(b.sale_totals)
         : sumByCurrency(b.services, false);
+      const cost = sumCostByCurrency(b.services);
       const saleWithInt = useBookingSaleTotal
         ? saleNoInt
         : sumByCurrency(b.services, true);
@@ -603,11 +697,12 @@ export default function BalancesPage() {
       };
       const operatorDebt = sumOperatorDuesByCurrency(b.OperatorDue);
 
-      return { saleNoInt, saleWithInt, paid, debt, operatorDebt };
+      return { saleNoInt, cost, saleWithInt, paid, debt, operatorDebt };
     },
     [
       calcMode,
       normalizeSaleTotals,
+      sumCostByCurrency,
       sumByCurrency,
       sumOperatorDuesByCurrency,
       sumReceiptsByCurrency,
@@ -737,7 +832,7 @@ export default function BalancesPage() {
           ? `${b.user?.first_name || ""} ${b.user?.last_name || ""}`.trim()
           : "";
 
-      const { saleNoInt, saleWithInt, paid, debt, operatorDebt } =
+      const { saleNoInt, cost, saleWithInt, paid, debt, operatorDebt } =
         computeBookingAmounts(b);
 
       const saleLabel = [
@@ -782,9 +877,11 @@ export default function BalancesPage() {
       }
       return {
         ...b,
+        _rowKey: `booking-${b.id_booking}`,
         _titularFull: titularFull,
         _ownerFull: ownerFull,
         _saleNoInt: saleNoInt,
+        _cost: cost,
         _saleWithInt: saleWithInt,
         _paid: paid,
         _debt: debt,
@@ -816,6 +913,95 @@ export default function BalancesPage() {
   const normalized = useMemo<NormalizedBooking[]>(
     () => data.map((b) => normalizeBooking(b)),
     [data, normalizeBooking],
+  );
+
+  const buildServiceRowsForBooking = useCallback(
+    (booking: NormalizedBooking): NormalizedServiceRow[] => {
+      const financialRows = buildServiceFinancialRows({
+        services: booking.services,
+        bookingSaleNoInt: booking._saleNoInt,
+        bookingPaid: booking._paid,
+        bookingDebt: booking._debt,
+        bookingOperatorDebt: booking._operatorDebt,
+        bookingTaxByCurrency: booking._taxByCurrency,
+        transferFeePct,
+        useBookingSaleTotal,
+      });
+
+      const toMoneyLabel = (values: Record<CurrencyCode, number>): string => {
+        const chunks: string[] = [];
+        if (values.ARS) chunks.push(fmtARS(values.ARS));
+        if (values.USD) chunks.push(fmtUSD(values.USD));
+        return chunks.join(" y ") || "—";
+      };
+
+      return financialRows.map((service) => {
+        const serviceTravelLabel =
+          service.departure_date || service.return_date
+            ? `${formatDateAR(
+                typeof service.departure_date === "string"
+                  ? service.departure_date
+                  : null,
+              )} – ${formatDateAR(
+                typeof service.return_date === "string"
+                  ? service.return_date
+                  : null,
+              )}`
+            : "—";
+        const serviceDepDateKey =
+          toDateKeyInBuenosAiresLegacySafe(
+            typeof service.departure_date === "string"
+              ? service.departure_date
+              : null,
+          ) ?? "";
+        const serviceRetDateKey =
+          toDateKeyInBuenosAiresLegacySafe(
+            typeof service.return_date === "string" ? service.return_date : null,
+          ) ?? "";
+        const serviceIdPart =
+          service.agency_service_id ?? service.id_service ?? service.serviceIndex;
+
+        return {
+          _rowKey: `service-${booking.id_booking}-${serviceIdPart}-${service.serviceIndex}`,
+          id_booking: booking.id_booking,
+          agency_booking_id: booking.agency_booking_id ?? null,
+          public_id: booking.public_id ?? null,
+          clientStatus: booking.clientStatus,
+          operatorStatus: booking.operatorStatus,
+          creation_date: booking.creation_date,
+          _titularFull: booking._titularFull,
+          _ownerFull: booking._ownerFull,
+          _saleNoInt: service.saleNoInt,
+          _cost: service.cost,
+          _paid: service.paid,
+          _debt: service.debt,
+          _operatorDebt: service.operatorDebt,
+          _saleLabel: toMoneyLabel(service.saleNoInt),
+          _paidLabel: toMoneyLabel(service.paid),
+          _debtLabel: toMoneyLabel(service.debt),
+          _operatorDebtLabel: toMoneyLabel(service.operatorDebt),
+          _depDateKey: booking._depDateKey,
+          _retDateKey: booking._retDateKey,
+          _travelLabel: booking._travelLabel,
+          _taxByCurrency: service.taxByCurrency,
+          _serviceType: service.type || "—",
+          _serviceDescription: service.description || "—",
+          _serviceReference: service.reference || "—",
+          _serviceOperator: service.operator_name || "—",
+          _serviceDepDateKey: serviceDepDateKey,
+          _serviceRetDateKey: serviceRetDateKey,
+          _serviceTravelLabel: serviceTravelLabel,
+          _serviceId: service.id_service,
+          _serviceAgencyId: service.agency_service_id,
+        };
+      });
+    },
+    [fmtARS, fmtUSD, transferFeePct, useBookingSaleTotal],
+  );
+
+  const normalizedServices = useMemo<NormalizedServiceRow[]>(
+    () => normalized.flatMap((booking) => buildServiceRowsForBooking(booking)),
+    [buildServiceRowsForBooking, normalized],
   );
 
   /* ---------- Owners para selector ---------- */
@@ -898,7 +1084,7 @@ export default function BalancesPage() {
   }, [isVendor, currentUserId, ownerId]);
 
   /* ---------- Columnas visibles ---------- */
-  const defaultVisible: VisibleKey[] = [
+  const defaultVisibleBooking: VisibleKey[] = [
     "id_booking",
     "titular",
     "owner",
@@ -907,87 +1093,184 @@ export default function BalancesPage() {
     "creation_date",
     "travel",
   ];
+  const defaultVisibleService: VisibleKey[] = [
+    "id_booking",
+    "titular",
+    "owner",
+    "clientStatus",
+    "operatorStatus",
+    "creation_date",
+    "service_type",
+    "service_description",
+    "service_reference",
+    "service_operator",
+    "service_travel",
+  ];
 
-  const [visible, setVisible] = useState<VisibleKey[]>(defaultVisible);
+  const [visibleBooking, setVisibleBooking] = useState<VisibleKey[]>(
+    defaultVisibleBooking,
+  );
+  const [visibleService, setVisibleService] = useState<VisibleKey[]>(
+    defaultVisibleService,
+  );
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY_COLS);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { visible?: VisibleKey[] };
-      if (Array.isArray(parsed.visible)) setVisible(parsed.visible);
+      const rawBooking = localStorage.getItem(STORAGE_KEY_COLS_BOOKING);
+      if (rawBooking) {
+        const parsedBooking = JSON.parse(rawBooking) as { visible?: VisibleKey[] };
+        if (Array.isArray(parsedBooking.visible)) {
+          setVisibleBooking(parsedBooking.visible);
+        }
+      }
+
+      const rawService = localStorage.getItem(STORAGE_KEY_COLS_SERVICE);
+      if (rawService) {
+        const parsedService = JSON.parse(rawService) as { visible?: VisibleKey[] };
+        if (Array.isArray(parsedService.visible)) {
+          setVisibleService(parsedService.visible);
+        }
+      }
     } catch {
       // ignore
     }
   }, []);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_COLS, JSON.stringify({ visible }));
-  }, [visible]);
+    localStorage.setItem(
+      STORAGE_KEY_COLS_BOOKING,
+      JSON.stringify({ visible: visibleBooking }),
+    );
+  }, [visibleBooking]);
+  useEffect(() => {
+    localStorage.setItem(
+      STORAGE_KEY_COLS_SERVICE,
+      JSON.stringify({ visible: visibleService }),
+    );
+  }, [visibleService]);
 
-  const allKeys = useMemo(() => ALL_COLUMNS.map((c) => c.key), []);
-  const toggleCol = (k: VisibleKey) =>
-    setVisible((v) => (v.includes(k) ? v.filter((x) => x !== k) : [...v, k]));
-  const setAll = () => setVisible(allKeys);
-  const setNone = () =>
-    setVisible(ALL_COLUMNS.filter((c) => c.always).map((c) => c.key));
-  const resetCols = () =>
-    setVisible(defaultVisible.filter((k) => allKeys.includes(k)));
+  const columnsForMode = useMemo(
+    () =>
+      ALL_COLUMNS.filter((col) => !col.modes || col.modes.includes(viewMode)),
+    [viewMode],
+  );
+  const allKeysForMode = useMemo(
+    () => columnsForMode.map((col) => col.key),
+    [columnsForMode],
+  );
+  const allKeysSetForMode = useMemo(
+    () => new Set<VisibleKey>(allKeysForMode),
+    [allKeysForMode],
+  );
+  const alwaysKeysForMode = useMemo(
+    () => columnsForMode.filter((col) => col.always).map((col) => col.key),
+    [columnsForMode],
+  );
+  const visibleCurrent = viewMode === "booking" ? visibleBooking : visibleService;
   const visibleCols = useMemo(
-    () => ALL_COLUMNS.filter((c) => c.always || visible.includes(c.key)),
-    [visible],
+    () =>
+      columnsForMode.filter(
+        (col) => col.always || visibleCurrent.includes(col.key),
+      ),
+    [columnsForMode, visibleCurrent],
   );
 
-  // Presets rápidos para columnas
-  const applyPreset = (p: "basic" | "finance" | "debt") => {
-    if (p === "basic") {
-      setVisible([
-        "id_booking",
-        "titular",
-        "owner",
-        "clientStatus",
-        "operatorStatus",
-        "creation_date",
-        "travel",
-      ]);
-    } else if (p === "finance") {
-      setVisible([
-        "id_booking",
-        "titular",
-        "owner",
-        "sale_total",
-        "paid_total",
-        "debt_total",
-        "tax_iva21",
-        "tax_iva105",
-        "tax_iva21_comm",
-        "tax_iva105_comm",
-        "tax_base21",
-        "tax_base105",
-        "tax_exento",
-        "tax_otros",
-        "tax_noComp",
-        "tax_transf",
-        "tax_cardIVA",
-        "tax_commNoVAT",
-        "tax_commNet",
-        "tax_commWithVAT",
-        "tax_total",
-        "creation_date",
-      ]);
-    } else {
-      setVisible([
-        "id_booking",
-        "titular",
-        "debt_total",
-        "operator_debt",
-        "paid_total",
-        "owner",
-        "tax_iva21",
-        "tax_iva105",
-        "tax_total",
-      ]);
+  const toggleCol = (key: VisibleKey) => {
+    if (viewMode === "booking") {
+      setVisibleBooking((prev) =>
+        prev.includes(key) ? prev.filter((col) => col !== key) : [...prev, key],
+      );
+      return;
     }
+    setVisibleService((prev) =>
+      prev.includes(key) ? prev.filter((col) => col !== key) : [...prev, key],
+    );
+  };
+
+  type ColumnSection = {
+    id: string;
+    title: string;
+    keys: VisibleKey[];
+  };
+
+  const pickerSections = useMemo<ColumnSection[]>(() => {
+    const sections: ColumnSection[] = [
+      {
+        id: "identity",
+        title: "Identificación",
+        keys: ["id_booking", "titular", "owner"],
+      },
+      {
+        id: "states",
+        title: "Estados y Fechas",
+        keys:
+          viewMode === "booking"
+            ? ["clientStatus", "operatorStatus", "creation_date", "travel"]
+            : ["clientStatus", "operatorStatus", "creation_date", "service_travel"],
+      },
+      ...(viewMode === "service"
+        ? ([
+            {
+              id: "service",
+              title: "Detalle Servicio",
+              keys: [
+                "service_type",
+                "service_description",
+                "service_reference",
+                "service_operator",
+              ],
+            },
+          ] satisfies ColumnSection[])
+        : []),
+      {
+        id: "amounts",
+        title: "Montos",
+        keys: ["sale_total", "cost_total", "paid_total", "debt_total", "operator_debt"],
+      },
+      {
+        id: "taxes",
+        title: "Impuestos y Comisiones",
+        keys: [
+          "tax_iva21",
+          "tax_iva105",
+          "tax_iva21_comm",
+          "tax_iva105_comm",
+          "tax_base21",
+          "tax_base105",
+          "tax_exento",
+          "tax_otros",
+          "tax_noComp",
+          "tax_transf",
+          "tax_cardBase",
+          "tax_cardIVA",
+          "tax_commNoVAT",
+          "tax_commNet",
+          "tax_commWithVAT",
+          "tax_total",
+        ],
+      },
+    ];
+
+    return sections
+      .map((section) => ({
+        ...section,
+        keys: section.keys.filter((key) => allKeysSetForMode.has(key)),
+      }))
+      .filter((section) => section.keys.length > 0);
+  }, [allKeysSetForMode, viewMode]);
+
+  const setSectionVisibility = (keys: VisibleKey[], shouldShow: boolean) => {
+    const keySet = new Set(keys);
+    const baseUpdater = (prev: VisibleKey[]) => {
+      if (shouldShow) {
+        return Array.from(new Set([...prev, ...keys]));
+      }
+      return prev.filter(
+        (key) => !keySet.has(key) || alwaysKeysForMode.includes(key),
+      );
+    };
+    if (viewMode === "booking") setVisibleBooking(baseUpdater);
+    else setVisibleService(baseUpdater);
   };
 
   /* ---------- Ordenamiento ---------- */
@@ -999,7 +1282,13 @@ export default function BalancesPage() {
     | "operatorStatus"
     | "creation_date"
     | "travel"
+    | "service_type"
+    | "service_description"
+    | "service_reference"
+    | "service_operator"
+    | "service_travel"
     | "sale_total"
+    | "cost_total"
     | "paid_total"
     | "debt_total"
     | "operator_debt"
@@ -1034,142 +1323,199 @@ export default function BalancesPage() {
     });
   };
 
-  const getTaxFieldSum = (b: NormalizedBooking, field: keyof TaxBucket) => {
-    const ars = b._taxByCurrency.ARS[field] || 0;
-    const usd = b._taxByCurrency.USD[field] || 0;
+  const isServiceRow = (row: BalanceRow): row is NormalizedServiceRow => {
+    return "_serviceDescription" in row;
+  };
+
+  const getTaxFieldSum = (row: BalanceRow, field: keyof TaxBucket) => {
+    const ars = row._taxByCurrency.ARS[field] || 0;
+    const usd = row._taxByCurrency.USD[field] || 0;
     // le doy más peso al ARS para ordenar
     return ars * 1e6 + usd;
   };
 
-  const sortedRows = useMemo(() => {
-    const rows = [...normalized];
+  useEffect(() => {
+    const serviceSortKeys = new Set<SortKey>([
+      "service_type",
+      "service_description",
+      "service_reference",
+      "service_operator",
+      "service_travel",
+    ]);
+    if (viewMode === "booking" && serviceSortKeys.has(sortKey)) {
+      setSortKey("creation_date");
+      setSortDir("desc");
+      return;
+    }
+    if (viewMode === "service" && sortKey === "travel") {
+      setSortKey("service_travel");
+      setSortDir("desc");
+    }
+  }, [sortKey, viewMode]);
+
+  const rowsForMode = useMemo<BalanceRow[]>(
+    () => (viewMode === "booking" ? normalized : normalizedServices),
+    [normalized, normalizedServices, viewMode],
+  );
+
+  const compareRowsByCurrentSort = useCallback(
+    (a: BalanceRow, b: BalanceRow) => {
     const dirMul = sortDir === "asc" ? 1 : -1;
+    let va: number | string = 0;
+    let vb: number | string = 0;
 
-    rows.sort((a, b) => {
-      let va: number | string = 0;
-      let vb: number | string = 0;
+    switch (sortKey) {
+      case "id_booking":
+        va = a.agency_booking_id ?? a.id_booking;
+        vb = b.agency_booking_id ?? b.id_booking;
+        break;
+      case "titular":
+        va = a._titularFull || "";
+        vb = b._titularFull || "";
+        break;
+      case "owner":
+        va = a._ownerFull || "";
+        vb = b._ownerFull || "";
+        break;
+      case "clientStatus":
+        va = a.clientStatus || "";
+        vb = b.clientStatus || "";
+        break;
+      case "operatorStatus":
+        va = a.operatorStatus || "";
+        vb = b.operatorStatus || "";
+        break;
+      case "creation_date":
+        va = toDateKeyInBuenosAiresLegacySafe(a.creation_date) ?? "";
+        vb = toDateKeyInBuenosAiresLegacySafe(b.creation_date) ?? "";
+        break;
+      case "travel":
+        va = a._depDateKey || "";
+        vb = b._depDateKey || "";
+        break;
+      case "service_type":
+        va = isServiceRow(a) ? a._serviceType || "" : "";
+        vb = isServiceRow(b) ? b._serviceType || "" : "";
+        break;
+      case "service_description":
+        va = isServiceRow(a) ? a._serviceDescription || "" : "";
+        vb = isServiceRow(b) ? b._serviceDescription || "" : "";
+        break;
+      case "service_reference":
+        va = isServiceRow(a) ? a._serviceReference || "" : "";
+        vb = isServiceRow(b) ? b._serviceReference || "" : "";
+        break;
+      case "service_operator":
+        va = isServiceRow(a) ? a._serviceOperator || "" : "";
+        vb = isServiceRow(b) ? b._serviceOperator || "" : "";
+        break;
+      case "service_travel":
+        va = isServiceRow(a) ? a._serviceDepDateKey || "" : "";
+        vb = isServiceRow(b) ? b._serviceDepDateKey || "" : "";
+        break;
+      case "sale_total":
+        va = (a._saleNoInt.ARS || 0) * 1e6 + (a._saleNoInt.USD || 0);
+        vb = (b._saleNoInt.ARS || 0) * 1e6 + (b._saleNoInt.USD || 0);
+        break;
+      case "cost_total":
+        va = (a._cost.ARS || 0) * 1e6 + (a._cost.USD || 0);
+        vb = (b._cost.ARS || 0) * 1e6 + (b._cost.USD || 0);
+        break;
+      case "paid_total":
+        va = (a._paid.ARS || 0) * 1e6 + (a._paid.USD || 0);
+        vb = (b._paid.ARS || 0) * 1e6 + (b._paid.USD || 0);
+        break;
+      case "debt_total":
+        va = (a._debt.ARS || 0) * 1e6 + (a._debt.USD || 0);
+        vb = (b._debt.ARS || 0) * 1e6 + (b._debt.USD || 0);
+        break;
+      case "operator_debt":
+        va = (a._operatorDebt.ARS || 0) * 1e6 + (a._operatorDebt.USD || 0);
+        vb = (b._operatorDebt.ARS || 0) * 1e6 + (b._operatorDebt.USD || 0);
+        break;
+      case "tax_iva21":
+        va = getTaxFieldSum(a, "iva21");
+        vb = getTaxFieldSum(b, "iva21");
+        break;
+      case "tax_iva105":
+        va = getTaxFieldSum(a, "iva105");
+        vb = getTaxFieldSum(b, "iva105");
+        break;
+      case "tax_iva21_comm":
+        va = getTaxFieldSum(a, "iva21Comm");
+        vb = getTaxFieldSum(b, "iva21Comm");
+        break;
+      case "tax_iva105_comm":
+        va = getTaxFieldSum(a, "iva105Comm");
+        vb = getTaxFieldSum(b, "iva105Comm");
+        break;
+      case "tax_base21":
+        va = getTaxFieldSum(a, "base21");
+        vb = getTaxFieldSum(b, "base21");
+        break;
+      case "tax_base105":
+        va = getTaxFieldSum(a, "base105");
+        vb = getTaxFieldSum(b, "base105");
+        break;
+      case "tax_exento":
+        va = getTaxFieldSum(a, "exento");
+        vb = getTaxFieldSum(b, "exento");
+        break;
+      case "tax_otros":
+        va = getTaxFieldSum(a, "otros");
+        vb = getTaxFieldSum(b, "otros");
+        break;
+      case "tax_noComp":
+        va = getTaxFieldSum(a, "noComp");
+        vb = getTaxFieldSum(b, "noComp");
+        break;
+      case "tax_transf":
+        va = getTaxFieldSum(a, "transf");
+        vb = getTaxFieldSum(b, "transf");
+        break;
+      case "tax_cardBase":
+        va = getTaxFieldSum(a, "cardIntBase");
+        vb = getTaxFieldSum(b, "cardIntBase");
+        break;
+      case "tax_cardIVA":
+        va = getTaxFieldSum(a, "cardIntIVA");
+        vb = getTaxFieldSum(b, "cardIntIVA");
+        break;
+      case "tax_commNoVAT":
+        va = getTaxFieldSum(a, "commSinIVA");
+        vb = getTaxFieldSum(b, "commSinIVA");
+        break;
+      case "tax_commNet":
+        va = getTaxFieldSum(a, "commNet");
+        vb = getTaxFieldSum(b, "commNet");
+        break;
+      case "tax_commWithVAT":
+        va = getTaxFieldSum(a, "commWithVAT");
+        vb = getTaxFieldSum(b, "commWithVAT");
+        break;
+      case "tax_total":
+        va = getTaxFieldSum(a, "total");
+        vb = getTaxFieldSum(b, "total");
+        break;
+    }
 
-      switch (sortKey) {
-        case "id_booking":
-          va = a.agency_booking_id ?? a.id_booking;
-          vb = b.agency_booking_id ?? b.id_booking;
-          break;
-        case "titular":
-          va = a._titularFull || "";
-          vb = b._titularFull || "";
-          break;
-        case "owner":
-          va = a._ownerFull || "";
-          vb = b._ownerFull || "";
-          break;
-        case "clientStatus":
-          va = a.clientStatus || "";
-          vb = b.clientStatus || "";
-          break;
-        case "operatorStatus":
-          va = a.operatorStatus || "";
-          vb = b.operatorStatus || "";
-          break;
-        case "creation_date":
-          va = toDateKeyInBuenosAiresLegacySafe(a.creation_date) ?? "";
-          vb = toDateKeyInBuenosAiresLegacySafe(b.creation_date) ?? "";
-          break;
-        case "travel":
-          va = a._depDateKey || "";
-          vb = b._depDateKey || "";
-          break;
-        case "sale_total":
-          va = (a._saleNoInt.ARS || 0) * 1e6 + (a._saleNoInt.USD || 0);
-          vb = (b._saleNoInt.ARS || 0) * 1e6 + (b._saleNoInt.USD || 0);
-          break;
-        case "paid_total":
-          va = (a._paid.ARS || 0) * 1e6 + (a._paid.USD || 0);
-          vb = (b._paid.ARS || 0) * 1e6 + (b._paid.USD || 0);
-          break;
-        case "debt_total":
-          va = (a._debt.ARS || 0) * 1e6 + (a._debt.USD || 0);
-          vb = (b._debt.ARS || 0) * 1e6 + (b._debt.USD || 0);
-          break;
-        case "operator_debt":
-          va = (a._operatorDebt.ARS || 0) * 1e6 + (a._operatorDebt.USD || 0);
-          vb = (b._operatorDebt.ARS || 0) * 1e6 + (b._operatorDebt.USD || 0);
-          break;
-        case "tax_iva21":
-          va = getTaxFieldSum(a, "iva21");
-          vb = getTaxFieldSum(b, "iva21");
-          break;
-        case "tax_iva105":
-          va = getTaxFieldSum(a, "iva105");
-          vb = getTaxFieldSum(b, "iva105");
-          break;
-        case "tax_iva21_comm":
-          va = getTaxFieldSum(a, "iva21Comm");
-          vb = getTaxFieldSum(b, "iva21Comm");
-          break;
-        case "tax_iva105_comm":
-          va = getTaxFieldSum(a, "iva105Comm");
-          vb = getTaxFieldSum(b, "iva105Comm");
-          break;
-        case "tax_base21":
-          va = getTaxFieldSum(a, "base21");
-          vb = getTaxFieldSum(b, "base21");
-          break;
-        case "tax_base105":
-          va = getTaxFieldSum(a, "base105");
-          vb = getTaxFieldSum(b, "base105");
-          break;
-        case "tax_exento":
-          va = getTaxFieldSum(a, "exento");
-          vb = getTaxFieldSum(b, "exento");
-          break;
-        case "tax_otros":
-          va = getTaxFieldSum(a, "otros");
-          vb = getTaxFieldSum(b, "otros");
-          break;
-        case "tax_noComp":
-          va = getTaxFieldSum(a, "noComp");
-          vb = getTaxFieldSum(b, "noComp");
-          break;
-        case "tax_transf":
-          va = getTaxFieldSum(a, "transf");
-          vb = getTaxFieldSum(b, "transf");
-          break;
-        case "tax_cardBase":
-          va = getTaxFieldSum(a, "cardIntBase");
-          vb = getTaxFieldSum(b, "cardIntBase");
-          break;
-        case "tax_cardIVA":
-          va = getTaxFieldSum(a, "cardIntIVA");
-          vb = getTaxFieldSum(b, "cardIntIVA");
-          break;
-        case "tax_commNoVAT":
-          va = getTaxFieldSum(a, "commSinIVA");
-          vb = getTaxFieldSum(b, "commSinIVA");
-          break;
-        case "tax_commNet":
-          va = getTaxFieldSum(a, "commNet");
-          vb = getTaxFieldSum(b, "commNet");
-          break;
-        case "tax_commWithVAT":
-          va = getTaxFieldSum(a, "commWithVAT");
-          vb = getTaxFieldSum(b, "commWithVAT");
-          break;
-        case "tax_total":
-          va = getTaxFieldSum(a, "total");
-          vb = getTaxFieldSum(b, "total");
-          break;
-      }
+    if (typeof va === "string" && typeof vb === "string") {
+      return va.localeCompare(vb, "es") * dirMul;
+    }
+    return ((va as number) - (vb as number)) * dirMul;
+  }, [sortDir, sortKey]);
 
-      if (typeof va === "string" && typeof vb === "string") {
-        return va.localeCompare(vb, "es") * dirMul;
-      }
-      return ((va as number) - (vb as number)) * dirMul;
-    });
+  const sortRowsByCurrentSort = useCallback(
+    (rows: BalanceRow[]) => [...rows].sort(compareRowsByCurrentSort),
+    [compareRowsByCurrentSort],
+  );
 
-    return rows;
-  }, [normalized, sortKey, sortDir]);
+  const sortedRows = useMemo(
+    () => sortRowsByCurrentSort(rowsForMode),
+    [rowsForMode, sortRowsByCurrentSort],
+  );
 
-  const [fullKpis, setFullKpis] = useState<BalanceKpis | null>(null);
+  const [fullKpis, setFullKpis] = useState<BalanceKpisByMode | null>(null);
   const [fullKpisLoading, setFullKpisLoading] = useState(false);
   const totalsAbortRef = useRef<AbortController | null>(null);
 
@@ -1266,15 +1612,15 @@ export default function BalancesPage() {
     setFullKpisLoading(true);
     setFullKpis(null);
 
-    let count = 0;
-    let saleARS = 0,
-      saleUSD = 0,
-      paidARS = 0,
-      paidUSD = 0,
-      debtARS = 0,
-      debtUSD = 0,
-      operatorDebtARS = 0,
-      operatorDebtUSD = 0;
+    const createKpis = (): BalanceKpis => ({
+      count: 0,
+      sale: { ARS: 0, USD: 0 },
+      paid: { ARS: 0, USD: 0 },
+      debt: { ARS: 0, USD: 0 },
+      operatorDebt: { ARS: 0, USD: 0 },
+    });
+    const bookingKpis = createKpis();
+    const serviceKpis = createKpis();
 
     try {
       let next: number | null = null;
@@ -1290,18 +1636,39 @@ export default function BalancesPage() {
           throw new Error(json?.error || "Error al cargar totales");
 
         const items = Array.isArray(json.items) ? json.items : [];
-        count += items.length;
 
         for (const b of items) {
           const amounts = computeBookingAmounts(b);
-          saleARS += amounts.saleNoInt.ARS || 0;
-          saleUSD += amounts.saleNoInt.USD || 0;
-          paidARS += amounts.paid.ARS || 0;
-          paidUSD += amounts.paid.USD || 0;
-          debtARS += amounts.debt.ARS || 0;
-          debtUSD += amounts.debt.USD || 0;
-          operatorDebtARS += amounts.operatorDebt.ARS || 0;
-          operatorDebtUSD += amounts.operatorDebt.USD || 0;
+          bookingKpis.count += 1;
+          bookingKpis.sale.ARS += amounts.saleNoInt.ARS || 0;
+          bookingKpis.sale.USD += amounts.saleNoInt.USD || 0;
+          bookingKpis.paid.ARS += amounts.paid.ARS || 0;
+          bookingKpis.paid.USD += amounts.paid.USD || 0;
+          bookingKpis.debt.ARS += amounts.debt.ARS || 0;
+          bookingKpis.debt.USD += amounts.debt.USD || 0;
+          bookingKpis.operatorDebt.ARS += amounts.operatorDebt.ARS || 0;
+          bookingKpis.operatorDebt.USD += amounts.operatorDebt.USD || 0;
+
+          const serviceRows = buildServiceFinancialRows({
+            services: b.services,
+            bookingSaleNoInt: amounts.saleNoInt,
+            bookingPaid: amounts.paid,
+            bookingDebt: amounts.debt,
+            bookingOperatorDebt: amounts.operatorDebt,
+            transferFeePct,
+            useBookingSaleTotal,
+          });
+          serviceKpis.count += serviceRows.length;
+          for (const row of serviceRows) {
+            serviceKpis.sale.ARS += row.saleNoInt.ARS || 0;
+            serviceKpis.sale.USD += row.saleNoInt.USD || 0;
+            serviceKpis.paid.ARS += row.paid.ARS || 0;
+            serviceKpis.paid.USD += row.paid.USD || 0;
+            serviceKpis.debt.ARS += row.debt.ARS || 0;
+            serviceKpis.debt.USD += row.debt.USD || 0;
+            serviceKpis.operatorDebt.ARS += row.operatorDebt.ARS || 0;
+            serviceKpis.operatorDebt.USD += row.operatorDebt.USD || 0;
+          }
         }
 
         next = json.nextCursor ?? null;
@@ -1310,11 +1677,8 @@ export default function BalancesPage() {
 
       if (!controller.signal.aborted) {
         setFullKpis({
-          count,
-          sale: { ARS: saleARS, USD: saleUSD },
-          paid: { ARS: paidARS, USD: paidUSD },
-          debt: { ARS: debtARS, USD: debtUSD },
-          operatorDebt: { ARS: operatorDebtARS, USD: operatorDebtUSD },
+          booking: bookingKpis,
+          service: serviceKpis,
         });
       }
     } catch (e) {
@@ -1325,7 +1689,14 @@ export default function BalancesPage() {
     } finally {
       if (!controller.signal.aborted) setFullKpisLoading(false);
     }
-  }, [buildQS, calcMode, computeBookingAmounts, token]);
+  }, [
+    buildQS,
+    calcMode,
+    computeBookingAmounts,
+    token,
+    transferFeePct,
+    useBookingSaleTotal,
+  ]);
 
   const handleSearch = () => {
     setCursor(null);
@@ -1357,7 +1728,7 @@ export default function BalancesPage() {
   /* ---------- Helpers de impuestos para UI / CSV ---------- */
 
   function formatTaxField(
-    b: NormalizedBooking,
+    b: BalanceRow,
     field: keyof TaxBucket,
   ): string {
     const parts: string[] = [];
@@ -1373,7 +1744,7 @@ export default function BalancesPage() {
   }
 
   const renderTaxCell = (
-    b: NormalizedBooking,
+    b: BalanceRow,
     field: keyof TaxBucket,
     tdKey: string,
     rowPad: string,
@@ -1397,8 +1768,9 @@ export default function BalancesPage() {
   );
 
   const getNumericColumnValues = useCallback(
-    (b: NormalizedBooking, key: NumericColumnKey): Record<CurrencyCode, number> => {
+    (b: BalanceRow, key: NumericColumnKey): Record<CurrencyCode, number> => {
       if (key === "sale_total") return b._saleNoInt;
+      if (key === "cost_total") return b._cost;
       if (key === "paid_total") return b._paid;
       if (key === "debt_total") return b._debt;
       if (key === "operator_debt") return b._operatorDebt;
@@ -1436,7 +1808,7 @@ export default function BalancesPage() {
   }, [getNumericColumnValues, sortedRows, visibleCols]);
 
   /* ---------- CSV (full-scan, no sólo lo cargado) ---------- */
-  const toTextCellValue = (col: VisibleKey, b: NormalizedBooking): string => {
+  const toTextCellValue = (col: VisibleKey, b: BalanceRow): string => {
     switch (col) {
       case "id_booking":
         return String(b.agency_booking_id ?? b.id_booking);
@@ -1452,24 +1824,53 @@ export default function BalancesPage() {
         return formatDateAR(b.creation_date);
       case "travel":
         return b._travelLabel;
+      case "service_type":
+        return isServiceRow(b) ? b._serviceType : "";
+      case "service_description":
+        return isServiceRow(b) ? b._serviceDescription : "";
+      case "service_reference":
+        return isServiceRow(b) ? b._serviceReference : "";
+      case "service_operator":
+        return isServiceRow(b) ? b._serviceOperator : "";
+      case "service_travel":
+        return isServiceRow(b) ? b._serviceTravelLabel : "";
       default:
         return "";
     }
+  };
+
+  const getExportCurrencies = (
+    row: BalanceRow,
+    numericKeys: NumericColumnKey[],
+  ): CurrencyCode[] => {
+    if (numericKeys.length === 0) return ["ARS"];
+    const hasARS = numericKeys.some(
+      (key) => Math.abs(getNumericColumnValues(row, key).ARS || 0) > 0,
+    );
+    const hasUSD = numericKeys.some(
+      (key) => Math.abs(getNumericColumnValues(row, key).USD || 0) > 0,
+    );
+    if (hasARS && hasUSD) return ["ARS", "USD"];
+    if (hasUSD) return ["USD"];
+    return ["ARS"];
   };
 
   const downloadCSV = async () => {
     if (exportingCsv) return;
     setExportingCsv(true);
     try {
-      const headers = visibleCols.flatMap((col) =>
-        isNumericColumnKey(col.key)
-          ? [`${col.label} ARS`, `${col.label} USD`]
-          : [col.label],
-      );
+      const textColumns = visibleCols.filter((col) => !isNumericColumnKey(col.key));
+      const numericColumns = visibleCols.filter((col) => isNumericColumnKey(col.key));
+      const numericKeys = numericColumns.map((col) => col.key as NumericColumnKey);
+      const headers = [
+        ...textColumns.map((col) => col.label),
+        "Moneda",
+        ...numericColumns.map((col) => col.label),
+      ];
 
       // Full-scan con paginado
       let next: number | null = null;
-      const rows: string[] = [];
+      const fullRows: BalanceRow[] = [];
       const fallbackQuery = buildQS(undefined);
       fallbackQuery.delete("cursor");
       fallbackQuery.delete("take");
@@ -1492,27 +1893,37 @@ export default function BalancesPage() {
         const pageNorm: NormalizedBooking[] = json.items.map((b) =>
           normalizeBooking(b),
         );
-
-        for (const b of pageNorm) {
-          const rowCells = visibleCols.flatMap((col) => {
-            if (isNumericColumnKey(col.key)) {
-              const values = getNumericColumnValues(b, col.key);
-              return [
-                { value: formatCsvNumber(values.ARS), numeric: true },
-                { value: formatCsvNumber(values.USD), numeric: true },
-              ];
-            }
-            return [{ value: toTextCellValue(col.key, b) }];
-          });
-          rows.push(toCsvRow(rowCells));
-        }
+        const pageRows: BalanceRow[] =
+          viewMode === "booking"
+            ? pageNorm
+            : pageNorm.flatMap((b) => buildServiceRowsForBooking(b));
+        fullRows.push(...pageRows);
 
         next = json.nextCursor ?? null;
         if (next === null) break;
       }
 
+      const orderedRows = sortRowsByCurrentSort(fullRows);
+      const rows: string[] = [];
+      for (const row of orderedRows) {
+        const currencies = getExportCurrencies(row, numericKeys);
+        for (const currency of currencies) {
+          const rowCells: CsvRowCell[] = [
+            ...textColumns.map((col) => ({ value: toTextCellValue(col.key, row) })),
+            { value: currency },
+            ...numericColumns.map((col) => {
+              const key = col.key as NumericColumnKey;
+              const amount = getNumericColumnValues(row, key)[currency] || 0;
+              return { value: formatCsvNumber(amount), numeric: true };
+            }),
+          ];
+          rows.push(toCsvRow(rowCells));
+        }
+      }
+
       const csv = [toCsvHeaderRow(headers), ...rows].join("\r\n");
-      downloadCsvFile(csv, `reservas_${todayDateKeyInBuenosAires()}.csv`);
+      const filePrefix = viewMode === "booking" ? "reservas" : "servicios";
+      downloadCsvFile(csv, `${filePrefix}_${todayDateKeyInBuenosAires()}.csv`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error al descargar CSV";
       toast.error(msg);
@@ -1546,12 +1957,12 @@ export default function BalancesPage() {
     if (clientStatusArr.length)
       chips.push({
         key: "clientStatus",
-        label: `Pax: ${clientStatusArr.join(", ")}`,
+        label: `Estado pax: ${clientStatusArr.join(", ")}`,
       });
     if (operatorStatusArr.length)
       chips.push({
         key: "operatorStatus",
-        label: `Operador: ${operatorStatusArr.join(", ")}`,
+        label: `Estado operador: ${operatorStatusArr.join(", ")}`,
       });
     if (from || to) {
       const range = `${from ? formatDateAR(from) : "—"} – ${to ? formatDateAR(to) : "—"}`;
@@ -1577,7 +1988,9 @@ export default function BalancesPage() {
   /* ================= UI ================= */
   const rowPad = density === "compact" ? "py-1.5" : "py-2.5";
   const kpiPlaceholder = fullKpisLoading ? "Calculando..." : "—";
-  const kpisForHeader = fullKpis;
+  const kpisForHeader = fullKpis ? fullKpis[viewMode] : null;
+  const modeLabel = viewMode === "booking" ? "reservas" : "servicios";
+  const loadedRowsForMode = rowsForMode.length;
 
   return (
     <ProtectedRoute>
@@ -1589,7 +2002,7 @@ export default function BalancesPage() {
               Saldos / Reservas
             </h1>
             <p className="text-sm opacity-70">
-              Visualizá ventas, cobros, deuda e impuestos por reserva.
+              Visualizá ventas, cobros, deuda e impuestos por {modeLabel}.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1692,6 +2105,23 @@ export default function BalancesPage() {
 
         {/* Toolbar */}
         <div className="mb-6 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-1 rounded-3xl border border-white/30 bg-white/10 p-1 dark:border-white/10">
+            <button
+              onClick={() => setViewMode("booking")}
+              className={`${ICON_BTN} px-3 py-1 ${viewMode === "booking" ? "ring-1 ring-sky-400/60" : "opacity-80"}`}
+            >
+              Reservas
+            </button>
+            <button
+              onClick={() => setViewMode("service")}
+              className={`${ICON_BTN} px-3 py-1 ${viewMode === "service" ? "ring-1 ring-sky-400/60" : "opacity-80"}`}
+            >
+              Servicios
+            </button>
+          </div>
+
+          <div className="hidden h-5 w-px bg-sky-950/30 dark:bg-white/30 sm:block" />
+
           <button
             onClick={() => setFiltersOpen((v) => !v)}
             className={ICON_BTN}
@@ -1708,20 +2138,6 @@ export default function BalancesPage() {
           <button onClick={() => setPickerOpen(true)} className={ICON_BTN}>
             Columnas
           </button>
-
-          <div className="hidden h-5 w-px bg-sky-950/30 dark:bg-white/30 sm:block" />
-
-          <div className="flex items-center gap-1">
-            <button onClick={() => applyPreset("basic")} className={ICON_BTN}>
-              Básico
-            </button>
-            <button onClick={() => applyPreset("finance")} className={ICON_BTN}>
-              Finanzas
-            </button>
-            <button onClick={() => applyPreset("debt")} className={ICON_BTN}>
-              Deuda
-            </button>
-          </div>
 
           <div className="hidden h-5 w-px bg-sky-950/30 dark:bg-white/30 sm:block" />
 
@@ -1821,7 +2237,7 @@ export default function BalancesPage() {
                       }
                       className={`${CHIP} ${clientStatusArr.includes(st) ? "ring-1 ring-sky-400/50" : ""}`}
                     >
-                      Pax: {st}
+                      Estado pax: {st}
                     </button>
                   ))}
                   {OPERATOR_STATUSES.map((st) => (
@@ -1836,7 +2252,7 @@ export default function BalancesPage() {
                       }
                       className={`${CHIP} ${operatorStatusArr.includes(st) ? "ring-1 ring-sky-400/50" : ""}`}
                     >
-                      Operador: {st}
+                      Estado operador: {st}
                     </button>
                   ))}
                 </div>
@@ -1929,7 +2345,7 @@ export default function BalancesPage() {
             <tbody className="h-96 overflow-scroll">
               {sortedRows.map((b, idx) => (
                 <tr
-                  key={b.id_booking}
+                  key={b._rowKey}
                   className={`border-t border-white/20 transition hover:bg-white/10 dark:border-white/10 ${
                     idx % 2 === 1 ? "bg-white/5 dark:bg-white/5" : ""
                   }`}
@@ -2008,6 +2424,62 @@ export default function BalancesPage() {
                             {b._travelLabel}
                           </td>
                         );
+                      case "service_type":
+                        return (
+                          <td
+                            key={col.key}
+                            className={`px-4 ${rowPad} text-center`}
+                          >
+                            {isServiceRow(b) ? b._serviceType : "—"}
+                          </td>
+                        );
+                      case "service_description":
+                        return (
+                          <td
+                            key={col.key}
+                            className={`px-4 ${rowPad} text-center`}
+                          >
+                            {isServiceRow(b) ? (
+                              <span>
+                                {b._serviceDescription}
+                                {(b._serviceAgencyId || b._serviceId) && (
+                                  <span className="ml-1 opacity-60">
+                                    N° {b._serviceAgencyId ?? b._serviceId}
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        );
+                      case "service_reference":
+                        return (
+                          <td
+                            key={col.key}
+                            className={`px-4 ${rowPad} text-center`}
+                          >
+                            {isServiceRow(b) ? b._serviceReference : "—"}
+                          </td>
+                        );
+                      case "service_operator":
+                        return (
+                          <td
+                            key={col.key}
+                            className={`px-4 ${rowPad} text-center`}
+                          >
+                            {isServiceRow(b) ? b._serviceOperator : "—"}
+                          </td>
+                        );
+                      case "service_travel":
+                        return (
+                          <td
+                            key={col.key}
+                            className={`px-4 ${rowPad} text-center`}
+                          >
+                            {isServiceRow(b) ? b._serviceTravelLabel : "—"}
+                          </td>
+                        );
                       case "sale_total":
                         return (
                           <td
@@ -2015,6 +2487,15 @@ export default function BalancesPage() {
                             className={`px-4 ${rowPad} text-center`}
                           >
                             {b._saleLabel}
+                          </td>
+                        );
+                      case "cost_total":
+                        return (
+                          <td
+                            key={col.key}
+                            className={`px-4 ${rowPad} text-center`}
+                          >
+                            {formatCurrencyTotals(b._cost)}
                           </td>
                         );
                       case "paid_total":
@@ -2141,7 +2622,7 @@ export default function BalancesPage() {
 
           <div className="flex w-full items-center justify-between border-t border-white/30 bg-white/10 px-3 py-2 text-xs backdrop-blur dark:border-white/10 dark:bg-white/10">
             <div className="opacity-70">
-              {sortedRows.length} filas (de {normalized.length} cargadas)
+              {sortedRows.length} filas (de {loadedRowsForMode} cargadas)
             </div>
             <button
               onClick={() => fetchPage(false)}
@@ -2163,17 +2644,21 @@ export default function BalancesPage() {
         <ColumnPickerModal
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
-          items={ALL_COLUMNS.map((c) => ({
-            key: c.key,
-            label: c.label,
-            locked: c.always,
+          sections={pickerSections.map((section) => ({
+            id: section.id,
+            title: section.title,
+            items: section.keys
+              .map((key) => columnsForMode.find((col) => col.key === key))
+              .filter((col): col is ColumnDef => Boolean(col))
+              .map((col) => ({
+                key: col.key,
+                label: col.label,
+                locked: col.always,
+              })),
           }))}
-          visibleKeys={visible}
+          visibleKeys={visibleCurrent}
           onToggle={toggleCol}
-          onAll={setAll}
-          onNone={setNone}
-          onReset={resetCols}
-          onPreset={applyPreset}
+          onSectionVisibility={setSectionVisibility}
         />
 
         <ToastContainer position="bottom-right" />
@@ -2186,23 +2671,21 @@ export default function BalancesPage() {
 function ColumnPickerModal({
   open,
   onClose,
-  items,
+  sections,
   visibleKeys,
   onToggle,
-  onAll,
-  onNone,
-  onReset,
-  onPreset,
+  onSectionVisibility,
 }: {
   open: boolean;
   onClose: () => void;
-  items: { key: VisibleKey; label: string; locked?: boolean }[];
+  sections: {
+    id: string;
+    title: string;
+    items: { key: VisibleKey; label: string; locked?: boolean }[];
+  }[];
   visibleKeys: VisibleKey[];
   onToggle: (k: VisibleKey) => void;
-  onAll: () => void;
-  onNone: () => void;
-  onReset: () => void;
-  onPreset: (p: "basic" | "finance" | "debt") => void;
+  onSectionVisibility: (keys: VisibleKey[], shouldShow: boolean) => void;
 }) {
   if (!open) return null;
   return (
@@ -2221,46 +2704,59 @@ function ColumnPickerModal({
           </button>
         </div>
 
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs opacity-70">Presets:</span>
-          <button onClick={() => onPreset("basic")} className={ICON_BTN}>
-            Básico
-          </button>
-          <button onClick={() => onPreset("finance")} className={ICON_BTN}>
-            Finanzas
-          </button>
-          <button onClick={() => onPreset("debt")} className={ICON_BTN}>
-            Deuda
-          </button>
-        </div>
-
-        <div className="grid max-h-72 grid-cols-1 gap-1 overflow-auto pr-1 sm:grid-cols-2">
-          {items.map((it) => (
-            <label
-              key={it.key}
-              className={`flex cursor-pointer items-center justify-between rounded-3xl px-2 py-1 text-sm ${it.locked ? "opacity-60" : "hover:bg-white/10 dark:hover:bg-zinc-800/50"}`}
+        <div className="max-h-80 space-y-3 overflow-auto pr-1">
+          {sections.map((section) => (
+            <div
+              key={section.id}
+              className="rounded-2xl border border-white/20 bg-white/5 p-3 dark:border-white/10 dark:bg-white/5"
             >
-              <span>{it.label}</span>
-              <input
-                type="checkbox"
-                checked={visibleKeys.includes(it.key)}
-                onChange={() => !it.locked && onToggle(it.key)}
-                disabled={it.locked}
-              />
-            </label>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold">{section.title}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSectionVisibility(
+                        section.items.map((item) => item.key),
+                        true,
+                      )
+                    }
+                    className={ICON_BTN}
+                  >
+                    Mostrar sección
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSectionVisibility(
+                        section.items.map((item) => item.key),
+                        false,
+                      )
+                    }
+                    className={ICON_BTN}
+                  >
+                    Ocultar sección
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                {section.items.map((it) => (
+                  <label
+                    key={it.key}
+                    className={`flex cursor-pointer items-center justify-between rounded-3xl px-2 py-1 text-sm ${it.locked ? "opacity-60" : "hover:bg-white/10 dark:hover:bg-zinc-800/50"}`}
+                  >
+                    <span>{it.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={visibleKeys.includes(it.key)}
+                      onChange={() => !it.locked && onToggle(it.key)}
+                      disabled={it.locked}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
           ))}
-        </div>
-
-        <div className="mt-3 flex items-center gap-2">
-          <button onClick={onAll} className={ICON_BTN}>
-            Todas
-          </button>
-          <button onClick={onNone} className={ICON_BTN}>
-            Ninguna
-          </button>
-          <button onClick={onReset} className={ICON_BTN}>
-            Reset
-          </button>
         </div>
 
         <div className="mt-4 flex justify-end">
@@ -2300,7 +2796,7 @@ function StatusBadge({
   return (
     <span
       className={`${BADGE} ${cls}`}
-      title={`${type === "client" ? "Pax" : "Operador"}: ${value}`}
+      title={`${type === "client" ? "Estado pax" : "Estado operador"}: ${value}`}
     >
       {value || "—"}
     </span>
