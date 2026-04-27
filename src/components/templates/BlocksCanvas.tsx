@@ -22,6 +22,7 @@ import {
   BLOCK_TEXT_SIZE_OPTIONS,
   BLOCK_TEXT_WEIGHT_CLASS,
   BLOCK_TEXT_WEIGHT_OPTIONS,
+  blockTextSizeToCssPx,
   blockTextWeightToCss,
   resolveBlockTextStyle,
 } from "@/lib/blockTextStyle";
@@ -65,14 +66,18 @@ function normalizeGroupedDragOrder(
   if (!draggingId || groupIds.length <= 1) return nextIds;
   const groupSet = new Set(groupIds);
   const nonSelectedIds = nextIds.filter((id) => !groupSet.has(id));
-  if (nonSelectedIds.length + groupIds.length !== nextIds.length) return nextIds;
+  if (nonSelectedIds.length + groupIds.length !== nextIds.length)
+    return nextIds;
   const dragIndex = nextIds.indexOf(draggingId);
   if (dragIndex < 0) return nextIds;
   let insertIndex = 0;
   for (let i = 0; i < dragIndex; i += 1) {
     if (!groupSet.has(nextIds[i])) insertIndex += 1;
   }
-  const boundedIndex = Math.max(0, Math.min(nonSelectedIds.length, insertIndex));
+  const boundedIndex = Math.max(
+    0,
+    Math.min(nonSelectedIds.length, insertIndex),
+  );
   const rebuilt = [...nonSelectedIds];
   rebuilt.splice(boundedIndex, 0, ...groupIds);
   return rebuilt;
@@ -394,11 +399,7 @@ const EditableText = forwardRef<HTMLDivElement, EditableProps>(
       if (!multiline) text = text.replace(/\s*\n+\s*/g, " ");
       const normalized = sanitizeText(text);
       insertPlainTextAtCursor(normalized, { multiline: !!multiline });
-      onChange(
-        sanitizeText(
-          readEditableText(e.currentTarget, !!multiline),
-        ),
-      );
+      onChange(sanitizeText(readEditableText(e.currentTarget, !!multiline)));
     };
 
     const handleKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (e) => {
@@ -680,9 +681,10 @@ const BlockItem: React.FC<BlockItemProps> = ({
             : 1,
         scale: isDraggingSelf && !isGroupDragActive ? 1.015 : 1,
         rotate: isDraggingSelf && !isGroupDragActive ? 0.2 : 0,
-        boxShadow: isDraggingSelf && !isGroupDragActive
-          ? "0 18px 36px rgba(0,0,0,0.16)"
-          : "0 0 0 rgba(0,0,0,0)",
+        boxShadow:
+          isDraggingSelf && !isGroupDragActive
+            ? "0 18px 36px rgba(0,0,0,0.16)"
+            : "0 0 0 rgba(0,0,0,0)",
       }}
       transition={{
         type: "spring",
@@ -892,7 +894,11 @@ const BlockItem: React.FC<BlockItemProps> = ({
                     strokeLinejoin="round"
                     d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
                   />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 5l14 14" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M5 5l14 14"
+                  />
                 </svg>
               </span>
             ) : null}
@@ -1007,7 +1013,11 @@ const BlockItem: React.FC<BlockItemProps> = ({
                         mode === "fixed" ? "form" : "fixed",
                       )
                     }
-                    className={cx(controlChipClass, toggleChipClass, "px-2 py-1")}
+                    className={cx(
+                      controlChipClass,
+                      toggleChipClass,
+                      "px-2 py-1",
+                    )}
                     title={toggleActionLabel}
                     aria-label={toggleActionLabel}
                   >
@@ -1215,6 +1225,7 @@ function HeadingEditor({
   options,
   readOnly,
   textSizeClass,
+  textInlineStyle,
   textWeight,
 }: {
   b: OrderedBlock;
@@ -1222,6 +1233,7 @@ function HeadingEditor({
   options: CanvasOptions;
   readOnly: boolean;
   textSizeClass: string;
+  textInlineStyle: React.CSSProperties;
   textWeight: BlockTextWeight;
 }) {
   const hv = (b.value as HeadingV) ?? { type: "heading", text: "", level: 1 };
@@ -1236,6 +1248,7 @@ function HeadingEditor({
         readOnly={readOnly}
         multiline={false}
         style={{
+          ...textInlineStyle,
           fontFamily: options.headingFont,
           fontWeight: blockTextWeightToCss(textWeight),
         }}
@@ -1249,11 +1262,13 @@ function SubtitleEditor({
   onPatch,
   readOnly,
   textClass,
+  textInlineStyle,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   readOnly: boolean;
   textClass: string;
+  textInlineStyle: React.CSSProperties;
 }) {
   const sv = (b.value as SubtitleV) ?? { type: "subtitle", text: "" };
   return (
@@ -1264,6 +1279,7 @@ function SubtitleEditor({
       placeholder="Escribí el subtítulo…"
       readOnly={readOnly}
       multiline={false}
+      style={textInlineStyle}
     />
   );
 }
@@ -1273,11 +1289,13 @@ function ParagraphEditor({
   onPatch,
   readOnly,
   textClass,
+  textInlineStyle,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   readOnly: boolean;
   textClass: string;
+  textInlineStyle: React.CSSProperties;
 }) {
   const pv = (b.value as ParagraphV) ?? { type: "paragraph", text: "" };
   return (
@@ -1288,9 +1306,8 @@ function ParagraphEditor({
       placeholder="Párrafo… (Enter para salto de línea, Tab para tabular)"
       readOnly={readOnly}
       multiline
-      onShiftEnter={() =>
-        insertPlainTextAtCursor("\n", { multiline: true })
-      }
+      style={textInlineStyle}
+      onShiftEnter={() => insertPlainTextAtCursor("\n", { multiline: true })}
     />
   );
 }
@@ -1303,12 +1320,14 @@ function ListEditor({
   options,
   readOnly,
   textClass,
+  textInlineStyle,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
   options: CanvasOptions;
   readOnly: boolean;
   textClass: string;
+  textInlineStyle: React.CSSProperties;
 }) {
   const lv = (b.value as ListV) ?? { type: "list", items: [] };
   const items: string[] = Array.isArray(lv.items) ? lv.items : [];
@@ -1377,6 +1396,7 @@ function ListEditor({
               placeholder={`Ítem ${i + 1}`}
               readOnly={readOnly}
               multiline={false}
+              style={textInlineStyle}
               onEnter={() => !readOnly && addAt(i + 1)}
               onShiftEnter={() =>
                 !readOnly && document.execCommand?.("insertText", false, "\n")
@@ -1456,6 +1476,7 @@ function KeyValueEditor({
   innerRadiusClass,
   controlsOnDarkSurface,
   textClass,
+  textInlineStyle,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
@@ -1464,6 +1485,7 @@ function KeyValueEditor({
   innerRadiusClass: string;
   controlsOnDarkSurface: boolean;
   textClass: string;
+  textInlineStyle: React.CSSProperties;
 }) {
   const kv = (b.value as KeyValueV) ?? { type: "keyValue", pairs: [] };
   const pairs: Array<{ key: string; value: string }> = Array.isArray(kv.pairs)
@@ -1540,6 +1562,7 @@ function KeyValueEditor({
             placeholder="Clave"
             readOnly={readOnly}
             multiline={false}
+            style={textInlineStyle}
             onEnter={() => !readOnly && focusVal(i)}
             onBackspaceEmpty={() => {
               if (readOnly) return;
@@ -1554,6 +1577,7 @@ function KeyValueEditor({
             placeholder="Valor"
             readOnly={readOnly}
             multiline={false}
+            style={textInlineStyle}
             onEnter={() => !readOnly && addAt(i + 1)}
             onShiftEnter={() =>
               !readOnly && document.execCommand?.("insertText", false, "\n")
@@ -1622,6 +1646,7 @@ function TwoColsEditor({
   innerRadiusClass,
   options,
   textClass,
+  textInlineStyle,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
@@ -1630,6 +1655,7 @@ function TwoColsEditor({
   innerRadiusClass: string;
   options: CanvasOptions;
   textClass: string;
+  textInlineStyle: React.CSSProperties;
 }) {
   const tv = (b.value as TwoColsV) ?? {
     type: "twoColumns",
@@ -1648,6 +1674,7 @@ function TwoColsEditor({
           className={textClass}
           placeholder="Columna izquierda…"
           readOnly={readOnly}
+          style={textInlineStyle}
         />
       </div>
       <div
@@ -1660,6 +1687,7 @@ function TwoColsEditor({
           className={textClass}
           placeholder="Columna derecha…"
           readOnly={readOnly}
+          style={textInlineStyle}
         />
       </div>
     </div>
@@ -1674,6 +1702,7 @@ function ThreeColsEditor({
   innerRadiusClass,
   options,
   textClass,
+  textInlineStyle,
 }: {
   b: OrderedBlock;
   onPatch: (patch: Partial<BlockFormValue>) => void;
@@ -1682,6 +1711,7 @@ function ThreeColsEditor({
   innerRadiusClass: string;
   options: CanvasOptions;
   textClass: string;
+  textInlineStyle: React.CSSProperties;
 }) {
   const tv = (b.value as ThreeColsV) ?? {
     type: "threeColumns",
@@ -1701,6 +1731,7 @@ function ThreeColsEditor({
           className={textClass}
           placeholder="Izquierda…"
           readOnly={readOnly}
+          style={textInlineStyle}
         />
       </div>
       <div
@@ -1713,6 +1744,7 @@ function ThreeColsEditor({
           className={textClass}
           placeholder="Centro…"
           readOnly={readOnly}
+          style={textInlineStyle}
         />
       </div>
       <div
@@ -1725,6 +1757,7 @@ function ThreeColsEditor({
           className={textClass}
           placeholder="Derecha…"
           readOnly={readOnly}
+          style={textInlineStyle}
         />
       </div>
     </div>
@@ -1929,7 +1962,8 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
   const getCompensatedGroupOffset = useCallback(
     (id: string): number => {
       if (!groupDragActiveRef.current) return 0;
-      const anchorId = draggingIdRef.current ?? groupDragIdsRef.current[0] ?? id;
+      const anchorId =
+        draggingIdRef.current ?? groupDragIdsRef.current[0] ?? id;
       const anchorBaseTop = groupDragBaseTopRef.current.get(anchorId);
       const anchorEl = itemRefs.current.get(anchorId);
       const anchorDelta =
@@ -2106,6 +2140,9 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
           const textWeightClass =
             BLOCK_TEXT_WEIGHT_CLASS[resolvedTextStyle.weight];
           const textClass = cx(textSizeClass, textWeightClass);
+          const textInlineStyle: React.CSSProperties = {
+            fontSize: blockTextSizeToCssPx(resolvedTextStyle.size),
+          };
 
           return (
             <BlockItem
@@ -2117,9 +2154,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
               onToggleSelected={() => toggleSelected(b.id)}
               isGroupDragActive={isGroupDragActive}
               isInDraggingGroup={isInDraggingGroup}
-              isGroupDragMate={
-                isInDraggingGroup && draggingId !== b.id
-              }
+              isGroupDragMate={isInDraggingGroup && draggingId !== b.id}
               groupDragOffsetY={getCompensatedGroupOffset(b.id)}
               canToggleMode={canToggleMode ? canToggleMode(b) : true}
               onRemove={() => remove(b.id)}
@@ -2151,10 +2186,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   groupDragIdsRef.current.forEach((id) => {
                     const el = itemRefs.current.get(id);
                     if (!el) return;
-                    groupDragBaseTopRef.current.set(
-                      id,
-                      readDocTop(el),
-                    );
+                    groupDragBaseTopRef.current.set(id, readDocTop(el));
                   });
                   setGroupDragMemberIds(groupDragIdsRef.current);
                   setGroupDragOffsetY(0);
@@ -2181,6 +2213,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   readOnly={readOnly}
                   options={options}
                   textSizeClass={textSizeClass}
+                  textInlineStyle={textInlineStyle}
                   textWeight={resolvedTextStyle.weight}
                 />
               )}
@@ -2190,6 +2223,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   onPatch={(p) => patchBlock(b.id, p)}
                   readOnly={readOnly}
                   textClass={textClass}
+                  textInlineStyle={textInlineStyle}
                 />
               )}
               {b.type === "paragraph" && (
@@ -2198,6 +2232,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   onPatch={(p) => patchBlock(b.id, p)}
                   readOnly={readOnly}
                   textClass={textClass}
+                  textInlineStyle={textInlineStyle}
                 />
               )}
               {b.type === "list" && (
@@ -2207,6 +2242,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   options={options}
                   readOnly={readOnly}
                   textClass={textClass}
+                  textInlineStyle={textInlineStyle}
                 />
               )}
               {b.type === "keyValue" && (
@@ -2218,6 +2254,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   innerRadiusClass={options.innerRadiusClass}
                   controlsOnDarkSurface={options.controlsOnDarkSurface}
                   textClass={textClass}
+                  textInlineStyle={textInlineStyle}
                 />
               )}
               {b.type === "twoColumns" && (
@@ -2229,6 +2266,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   innerRadiusClass={options.innerRadiusClass}
                   options={options}
                   textClass={textClass}
+                  textInlineStyle={textInlineStyle}
                 />
               )}
               {b.type === "threeColumns" && (
@@ -2240,6 +2278,7 @@ const BlocksCanvas: React.FC<BlocksCanvasProps> = ({
                   innerRadiusClass={options.innerRadiusClass}
                   options={options}
                   textClass={textClass}
+                  textInlineStyle={textInlineStyle}
                 />
               )}
             </BlockItem>

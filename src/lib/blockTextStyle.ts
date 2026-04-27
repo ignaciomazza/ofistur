@@ -9,6 +9,8 @@ export const BLOCK_TEXT_SIZE_OPTIONS: Array<{
   value: BlockTextSize;
   label: string;
 }> = [
+  { value: "xxxxxs", label: "XXXXXS" },
+  { value: "xxxxs", label: "XXXXS" },
   { value: "xxxs", label: "XXXS" },
   { value: "xxs", label: "XXS" },
   { value: "xs", label: "XS" },
@@ -31,6 +33,8 @@ export const BLOCK_TEXT_WEIGHT_OPTIONS: Array<{
 ];
 
 export const BLOCK_TEXT_SIZE_CLASS: Record<BlockTextSize, string> = {
+  xxxxxs: "text-[7px]",
+  xxxxs: "text-[8px]",
   xxxs: "text-[9px]",
   xxs: "text-[10px]",
   xs: "text-xs",
@@ -50,6 +54,8 @@ export const BLOCK_TEXT_WEIGHT_CLASS: Record<BlockTextWeight, string> = {
 };
 
 const BLOCK_TEXT_SIZE_PT: Record<BlockTextSize, number> = {
+  xxxxxs: 6,
+  xxxxs: 7,
   xxxs: 8,
   xxs: 9,
   xs: 10,
@@ -58,6 +64,19 @@ const BLOCK_TEXT_SIZE_PT: Record<BlockTextSize, number> = {
   lg: 14,
   xl: 16,
   "2xl": 20,
+};
+
+const BLOCK_TEXT_SIZE_PX: Record<BlockTextSize, number> = {
+  xxxxxs: 7,
+  xxxxs: 8,
+  xxxs: 9,
+  xxs: 10,
+  xs: 12,
+  sm: 14,
+  base: 16,
+  lg: 18,
+  xl: 20,
+  "2xl": 24,
 };
 
 const BLOCK_TEXT_WEIGHT_CSS: Record<BlockTextWeight, number> = {
@@ -70,6 +89,8 @@ const BLOCK_TEXT_WEIGHT_CSS: Record<BlockTextWeight, number> = {
 
 export function isBlockTextSize(value: unknown): value is BlockTextSize {
   return (
+    value === "xxxxxs" ||
+    value === "xxxxs" ||
     value === "xxxs" ||
     value === "xxs" ||
     value === "xs" ||
@@ -91,8 +112,11 @@ export function isBlockTextWeight(value: unknown): value is BlockTextWeight {
   );
 }
 
-export function sanitizeBlockTextStyle(input: unknown): BlockTextStyle | undefined {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+export function sanitizeBlockTextStyle(
+  input: unknown,
+): BlockTextStyle | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    return undefined;
   const raw = input as { size?: unknown; weight?: unknown };
   const size = isBlockTextSize(raw.size) ? raw.size : undefined;
   const weight = isBlockTextWeight(raw.weight) ? raw.weight : undefined;
@@ -134,6 +158,10 @@ export function resolveBlockTextStyle(input: {
 
 export function blockTextSizeToPdfPt(size: BlockTextSize): number {
   return BLOCK_TEXT_SIZE_PT[size];
+}
+
+export function blockTextSizeToCssPx(size: BlockTextSize): number {
+  return BLOCK_TEXT_SIZE_PX[size];
 }
 
 export function blockTextWeightToCss(weight: BlockTextWeight): number {

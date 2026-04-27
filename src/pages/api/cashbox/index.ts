@@ -269,7 +269,8 @@ const round2 = (value: number) =>
   Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
 function toCashboxDateIso(value: Date | null | undefined): string {
-  if (!value || !Number.isFinite(value.getTime())) return new Date().toISOString();
+  if (!value || !Number.isFinite(value.getTime()))
+    return new Date().toISOString();
 
   const isExactUtcMidnight =
     value.getUTCHours() === 0 &&
@@ -313,7 +314,9 @@ function getCashFlowEntries(m: CashboxMovement): {
         }))
       : fallback;
 
-  return rows.filter((entry) => Number.isFinite(entry.amount) && entry.amount > 0);
+  return rows.filter(
+    (entry) => Number.isFinite(entry.amount) && entry.amount > 0,
+  );
 }
 
 /**
@@ -329,7 +332,11 @@ function aggregateCashbox(
   from: Date,
   to: Date,
   movements: CashboxMovement[],
-  openingBalancesByAccount: { account: string; currency: string; amount: number }[] = [],
+  openingBalancesByAccount: {
+    account: string;
+    currency: string;
+    amount: number;
+  }[] = [],
   balancesOverride?: {
     clientDebtByCurrency?: DebtSummary[];
     operatorDebtByCurrency?: DebtSummary[];
@@ -706,11 +713,10 @@ async function getMonthlyMovements(
       (r as { counter_amount?: unknown }).counter_amount != null &&
       (r as { counter_currency?: string | null }).counter_currency;
     const currency = hasCounter
-      ? (r as { counter_currency?: string | null }).counter_currency ??
-        "ARS"
-      : (r as { amount_currency?: string | null }).amount_currency ??
+      ? ((r as { counter_currency?: string | null }).counter_currency ?? "ARS")
+      : ((r as { amount_currency?: string | null }).amount_currency ??
         r.currency ??
-        "ARS";
+        "ARS");
 
     return {
       id: `receipt:${r.id_receipt}`,
@@ -782,20 +788,20 @@ async function getMonthlyMovements(
     const payments = rawPayments.map((p) => ({
       amount: decimalToNumber(p.amount),
       paymentMethod: p.payment_method_id
-        ? methodNameById?.get(p.payment_method_id) ?? null
+        ? (methodNameById?.get(p.payment_method_id) ?? null)
         : null,
       account: p.account_id
-        ? accountNameById?.get(p.account_id) ?? null
+        ? (accountNameById?.get(p.account_id) ?? null)
         : null,
     }));
 
     const fallbackMethod =
       inc.payment_method_id && methodNameById
-        ? methodNameById.get(inc.payment_method_id) ?? null
+        ? (methodNameById.get(inc.payment_method_id) ?? null)
         : null;
     const fallbackAccount =
       inc.account_id && accountNameById
-        ? accountNameById.get(inc.account_id) ?? null
+        ? (accountNameById.get(inc.account_id) ?? null)
         : null;
 
     const useSingle = payments.length === 1;
@@ -814,12 +820,12 @@ async function getMonthlyMovements(
       categoryName: inc.category?.name ?? null,
       counterpartyName: inc.counterparty_name ?? null,
       paymentMethod: useSingle
-        ? payments[0]?.paymentMethod ?? null
+        ? (payments[0]?.paymentMethod ?? null)
         : useMultiple
           ? "Varios"
           : fallbackMethod,
       account: useSingle
-        ? payments[0]?.account ?? null
+        ? (payments[0]?.account ?? null)
         : useMultiple
           ? null
           : fallbackAccount,
@@ -969,7 +975,8 @@ async function getMonthlyMovements(
           (tf.origin_method_id && methodNameById?.get(tf.origin_method_id)) ||
           null,
         account:
-          (tf.origin_account_id && accountNameById?.get(tf.origin_account_id)) ||
+          (tf.origin_account_id &&
+            accountNameById?.get(tf.origin_account_id)) ||
           null,
       });
     }
@@ -1012,7 +1019,8 @@ async function getMonthlyMovements(
         paymentMethod:
           (tf.fee_method_id && methodNameById?.get(tf.fee_method_id)) || null,
         account:
-          (tf.fee_account_id && accountNameById?.get(tf.fee_account_id)) || null,
+          (tf.fee_account_id && accountNameById?.get(tf.fee_account_id)) ||
+          null,
       });
     }
   }
@@ -1398,10 +1406,7 @@ export default async function handler(
   try {
     // 1) Auth (unificado con /api/bookings)
     const auth = await getAuth(req);
-    const planAccess = await ensurePlanFeatureAccess(
-      auth.id_agency,
-      "cashbox",
-    );
+    const planAccess = await ensurePlanFeatureAccess(auth.id_agency, "cashbox");
     if (!planAccess.allowed) {
       throw new HttpError(403, "Plan insuficiente.");
     }
@@ -1453,18 +1458,7 @@ export default async function handler(
 
     const { from, to } = buildMonthRange(year, month);
 
-    // 3) Config financiera
-    const financeConfig = await prisma.financeConfig.findUnique({
-      where: { id_agency: agencyId },
-      select: {
-        hide_operator_expenses_in_investments: true,
-      },
-    });
-
-    const hideOperatorExpenses =
-      !!financeConfig?.hide_operator_expenses_in_investments;
-
-    // Mapa de cuentas por ID (para normalizar nombres)
+    // 3) Mapa de cuentas por ID (para normalizar nombres)
     const accounts = await prisma.financeAccount.findMany({
       where: { id_agency: agencyId },
       select: { id_account: true, name: true },
@@ -1485,7 +1479,6 @@ export default async function handler(
 
     // 4) Movimientos del mes
     const movements = await getMonthlyMovements(agencyId, from, to, {
-      hideOperatorExpenses,
       accountNameById,
       methodNameById,
     });
@@ -1498,7 +1491,6 @@ export default async function handler(
       agencyId,
       from,
       {
-        hideOperatorExpenses,
         accountNameById,
         methodNameById,
       },

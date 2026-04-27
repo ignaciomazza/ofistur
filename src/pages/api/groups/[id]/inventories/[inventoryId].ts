@@ -48,9 +48,7 @@ function parseOptionalDecimal(
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
   const n =
-    typeof value === "number"
-      ? value
-      : Number(String(value).replace(",", "."));
+    typeof value === "number" ? value : Number(String(value).replace(",", "."));
   if (!Number.isFinite(n) || n < 0) return undefined;
   return new Prisma.Decimal(n.toFixed(2));
 }
@@ -95,10 +93,15 @@ export default async function handler(
   const inventoryIdRaw = pickParam(req.query.inventoryId);
   const inventoryId = parsePositiveInt(inventoryIdRaw);
   if (!inventoryId) {
-    return groupApiError(res, 400, "El identificador del servicio es inválido.", {
-      code: "GROUP_INVENTORY_ID_INVALID",
-      solution: "Refrescá la pantalla y volvé a intentarlo.",
-    });
+    return groupApiError(
+      res,
+      400,
+      "El identificador del servicio es inválido.",
+      {
+        code: "GROUP_INVENTORY_ID_INVALID",
+        solution: "Refrescá la pantalla y volvé a intentarlo.",
+      },
+    );
   }
 
   const current = await prisma.travelGroupInventory.findFirst({
@@ -132,7 +135,8 @@ export default async function handler(
         "No tenés permisos para editar servicios en la grupal.",
         {
           code: "GROUP_INVENTORY_UPDATE_FORBIDDEN",
-          solution: "Solicitá permisos de edición de grupales a un administrador.",
+          solution:
+            "Solicitá permisos de edición de grupales a un administrador.",
         },
       );
     }
@@ -195,15 +199,10 @@ export default async function handler(
     if (body.inventory_type !== undefined) {
       const inventoryType = parseOptionalString(body.inventory_type, 50);
       if (!inventoryType) {
-        return groupApiError(
-          res,
-          400,
-          "El tipo de servicio es obligatorio.",
-          {
-            code: "GROUP_INVENTORY_TYPE_REQUIRED",
-            solution: "Elegí o escribí un tipo válido (aéreo, hotel, etc.).",
-          },
-        );
+        return groupApiError(res, 400, "El tipo de servicio es obligatorio.", {
+          code: "GROUP_INVENTORY_TYPE_REQUIRED",
+          solution: "Elegí o escribí un tipo válido (aéreo, hotel, etc.).",
+        });
       }
       patch.inventory_type = inventoryType;
     }
@@ -268,9 +267,10 @@ export default async function handler(
       patch.locator = locator;
     }
 
-    const nextTotal = body.total_qty !== undefined
-      ? parseOptionalInt(body.total_qty)
-      : current.total_qty;
+    const nextTotal =
+      body.total_qty !== undefined
+        ? parseOptionalInt(body.total_qty)
+        : current.total_qty;
     if (body.total_qty !== undefined && (nextTotal == null || nextTotal <= 0)) {
       return groupApiError(
         res,
@@ -286,9 +286,10 @@ export default async function handler(
       patch.total_qty = nextTotal!;
     }
 
-    const nextAssigned = body.assigned_qty !== undefined
-      ? parseOptionalInt(body.assigned_qty)
-      : current.assigned_qty;
+    const nextAssigned =
+      body.assigned_qty !== undefined
+        ? parseOptionalInt(body.assigned_qty)
+        : current.assigned_qty;
     if (
       body.assigned_qty !== undefined &&
       (nextAssigned === undefined || nextAssigned == null || nextAssigned < 0)
@@ -307,12 +308,15 @@ export default async function handler(
       patch.assigned_qty = nextAssigned!;
     }
 
-    const nextConfirmed = body.confirmed_qty !== undefined
-      ? parseOptionalInt(body.confirmed_qty)
-      : current.confirmed_qty;
+    const nextConfirmed =
+      body.confirmed_qty !== undefined
+        ? parseOptionalInt(body.confirmed_qty)
+        : current.confirmed_qty;
     if (
       body.confirmed_qty !== undefined &&
-      (nextConfirmed === undefined || nextConfirmed == null || nextConfirmed < 0)
+      (nextConfirmed === undefined ||
+        nextConfirmed == null ||
+        nextConfirmed < 0)
     ) {
       return groupApiError(
         res,
@@ -328,9 +332,10 @@ export default async function handler(
       patch.confirmed_qty = nextConfirmed!;
     }
 
-    const nextBlocked = body.blocked_qty !== undefined
-      ? parseOptionalInt(body.blocked_qty)
-      : current.blocked_qty;
+    const nextBlocked =
+      body.blocked_qty !== undefined
+        ? parseOptionalInt(body.blocked_qty)
+        : current.blocked_qty;
     if (
       body.blocked_qty !== undefined &&
       (nextBlocked === undefined || nextBlocked == null || nextBlocked < 0)
@@ -349,11 +354,14 @@ export default async function handler(
       patch.blocked_qty = nextBlocked!;
     }
 
-    const finalTotal = (patch.total_qty as number | undefined) ?? current.total_qty;
-    const finalAssigned = (patch.assigned_qty as number | undefined) ?? current.assigned_qty;
+    const finalTotal =
+      (patch.total_qty as number | undefined) ?? current.total_qty;
+    const finalAssigned =
+      (patch.assigned_qty as number | undefined) ?? current.assigned_qty;
     const finalConfirmed =
       (patch.confirmed_qty as number | undefined) ?? current.confirmed_qty;
-    const finalBlocked = (patch.blocked_qty as number | undefined) ?? current.blocked_qty;
+    const finalBlocked =
+      (patch.blocked_qty as number | undefined) ?? current.blocked_qty;
     if (
       finalAssigned > finalTotal ||
       finalConfirmed > finalTotal ||
@@ -385,15 +393,10 @@ export default async function handler(
     if (body.unit_cost !== undefined) {
       const unitCost = parseOptionalDecimal(body.unit_cost);
       if (unitCost === undefined) {
-        return groupApiError(
-          res,
-          400,
-          "El costo unitario del servicio es inválido.",
-          {
-            code: "GROUP_INVENTORY_UNIT_COST_INVALID",
-            solution: "Ingresá un valor numérico mayor o igual a 0.",
-          },
-        );
+        return groupApiError(res, 400, "El costo del servicio es inválido.", {
+          code: "GROUP_INVENTORY_UNIT_COST_INVALID",
+          solution: "Ingresá un valor numérico mayor o igual a 0.",
+        });
       }
       patch.unit_cost = unitCost;
     }
@@ -446,7 +449,8 @@ export default async function handler(
         "No tenés permisos para eliminar servicios en la grupal.",
         {
           code: "GROUP_INVENTORY_DELETE_FORBIDDEN",
-          solution: "Solicitá permisos de edición de grupales a un administrador.",
+          solution:
+            "Solicitá permisos de edición de grupales a un administrador.",
         },
       );
     }
@@ -462,7 +466,10 @@ export default async function handler(
       );
     }
     const forceDelete = parseForceFlag(req.query.force);
-    if (!forceDelete && (current.assigned_qty > 0 || current.confirmed_qty > 0)) {
+    if (
+      !forceDelete &&
+      (current.assigned_qty > 0 || current.confirmed_qty > 0)
+    ) {
       return groupApiError(
         res,
         409,

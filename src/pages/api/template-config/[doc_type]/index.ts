@@ -297,7 +297,18 @@ const zMupuStyle = z
 const zTextStyle = z
   .object({
     size: z
-      .enum(["xxxs", "xxs", "xs", "sm", "base", "lg", "xl", "2xl"])
+      .enum([
+        "xxxxxs",
+        "xxxxs",
+        "xxxs",
+        "xxs",
+        "xs",
+        "sm",
+        "base",
+        "lg",
+        "xl",
+        "2xl",
+      ])
       .optional(),
     weight: z
       .enum(["light", "normal", "medium", "semibold", "bold"])

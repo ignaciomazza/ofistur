@@ -200,6 +200,7 @@ type InventoryFinancialMeta = {
   pricingMode?: "MANUAL" | "VENTA_TOTAL";
   billingMode?: "AUTO" | "MANUAL";
   operatorId?: number | null;
+  costTotalPrice?: number | null;
   saleUnitPrice?: number | null;
   saleTotalPrice?: number | null;
   taxable21?: number | null;
@@ -361,10 +362,7 @@ function formatPendingInstallmentAmount(
 }
 
 function formatPendingBreakdown(
-  breakdown:
-    | Array<{ currency: string; pending: number }>
-    | null
-    | undefined,
+  breakdown: Array<{ currency: string; pending: number }> | null | undefined,
 ): string {
   if (!Array.isArray(breakdown) || breakdown.length === 0) return "";
   const parts = breakdown
@@ -386,7 +384,9 @@ function getPassengerPendingDisplay(
       : "installments_fallback";
   if (source === "services_minus_receipts") {
     const breakdown = formatPendingBreakdown(
-      pending?.breakdown as Array<{ currency: string; pending: number }> | undefined,
+      pending?.breakdown as
+        | Array<{ currency: string; pending: number }>
+        | undefined,
     );
     const amount =
       breakdown || formatPendingInstallmentAmount(pending?.amount ?? "0");
@@ -489,6 +489,7 @@ function parseInventoryNote(note: string | null | undefined): {
         typeof parsed.operatorId === "number" && parsed.operatorId > 0
           ? parsed.operatorId
           : null,
+      costTotalPrice: normalizeMoneyValue(parsed.costTotalPrice),
       saleUnitPrice: normalizeMoneyValue(parsed.saleUnitPrice),
       saleTotalPrice: normalizeMoneyValue(parsed.saleTotalPrice),
       taxable21: normalizeMoneyValue(parsed.taxable21),
@@ -514,6 +515,7 @@ function buildInventoryNote(
     pricingMode: meta.pricingMode || "MANUAL",
     billingMode: meta.billingMode || "AUTO",
     operatorId: meta.operatorId || null,
+    costTotalPrice: normalizeMoneyValue(meta.costTotalPrice),
     saleUnitPrice: normalizeMoneyValue(meta.saleUnitPrice),
     saleTotalPrice: normalizeMoneyValue(meta.saleTotalPrice),
     taxable21: normalizeMoneyValue(meta.taxable21),
@@ -1113,9 +1115,7 @@ function PassengerClientFields({
                   disabled={disabled}
                   className={FIELD_INPUT_CLASS}
                 >
-                  <option value="">
-                    {field.placeholder || "Seleccionar"}
-                  </option>
+                  <option value="">{field.placeholder || "Seleccionar"}</option>
                   {options.map((option) => (
                     <option key={`${field.key}-${option}`} value={option}>
                       {option}
@@ -1151,9 +1151,7 @@ function PassengerClientFields({
                   disabled={disabled}
                   className={FIELD_INPUT_CLASS}
                 >
-                  <option value="">
-                    {field.placeholder || "Seleccionar"}
-                  </option>
+                  <option value="">{field.placeholder || "Seleccionar"}</option>
                   <option value="true">Sí</option>
                   <option value="false">No</option>
                 </select>
@@ -1268,6 +1266,12 @@ function defaultInventoryDraft(
     meta?.transferFeePct != null
       ? meta.transferFeePct
       : (options?.defaultTransferFeePct ?? 2.4);
+  const sourceTotalQty = Number(source?.total_qty || 0);
+  const sourceUnitCost = toAmountNumber(source?.unit_cost ?? null);
+  const sourceCostTotal =
+    source?.unit_cost != null && sourceTotalQty > 0
+      ? Number((sourceUnitCost * sourceTotalQty).toFixed(2))
+      : null;
   return {
     departure_id:
       source?.travel_group_departure_id != null
@@ -1293,7 +1297,12 @@ function defaultInventoryDraft(
       source?.confirmed_qty != null ? String(source.confirmed_qty) : "0",
     blocked_qty: source?.blocked_qty != null ? String(source.blocked_qty) : "0",
     currency: source?.currency ?? "ARS",
-    unit_cost: source?.unit_cost != null ? String(source.unit_cost) : "",
+    unit_cost:
+      meta?.costTotalPrice != null
+        ? String(meta.costTotalPrice)
+        : sourceCostTotal != null
+          ? String(sourceCostTotal)
+          : "",
     sale_unit_price:
       meta?.saleUnitPrice != null ? String(meta.saleUnitPrice) : "",
     sale_total_price:
@@ -2007,8 +2016,12 @@ export default function GroupDetailPage() {
       const confirmedQty = Number(item.confirmed_qty || 0);
       const blockedQty = Number(item.blocked_qty || 0);
       const availableQty = Math.max(totalQty - assignedQty - blockedQty, 0);
-      const unitCost = toAmountNumber(item.unit_cost);
-      const costTotal = unitCost * totalQty;
+      const storedUnitCost = toAmountNumber(item.unit_cost);
+      const costTotal =
+        meta?.costTotalPrice != null
+          ? Number(meta.costTotalPrice || 0)
+          : storedUnitCost * totalQty;
+      const unitCost = totalQty > 0 ? costTotal / totalQty : storedUnitCost;
       const costAssigned = unitCost * assignedQty;
       const costConfirmed = unitCost * confirmedQty;
       const costBlocked = unitCost * blockedQty;
@@ -2069,8 +2082,8 @@ export default function GroupDetailPage() {
     const qtyConfirmed = Number(inventoryDraft.confirmed_qty || 0);
     const qtyBlocked = Number(inventoryDraft.blocked_qty || 0);
     const qtyAvailable = Math.max(qtyTotal - qtyAssigned - qtyBlocked, 0);
-    const unitCost = toAmountNumber(inventoryDraft.unit_cost);
-    const costTotal = unitCost * qtyTotal;
+    const costTotal = toAmountNumber(inventoryDraft.unit_cost);
+    const unitCost = qtyTotal > 0 ? costTotal / qtyTotal : costTotal;
     const saleTotal = toAmountNumber(inventoryDraft.sale_unit_price) * qtyTotal;
     const taxes =
       toAmountNumber(inventoryDraft.taxable_21) +
@@ -3492,11 +3505,18 @@ export default function GroupDetailPage() {
       ? activeDeparture?.public_id ||
         (activeDepartureId != null ? String(activeDepartureId) : null)
       : inventoryDraft.departure_id || null;
+    const totalQtyNumber = Number(inventoryDraft.total_qty.trim() || 0);
+    const costTotalPrice = normalizeMoneyValue(inventoryDraft.unit_cost);
+    const derivedUnitCost =
+      costTotalPrice != null && totalQtyNumber > 0
+        ? Number((costTotalPrice / totalQtyNumber).toFixed(2))
+        : null;
     const financialMeta: InventoryFinancialMeta = {
       v: 1,
       pricingMode: "MANUAL",
       billingMode: "AUTO",
       operatorId: parsedOperatorId ?? null,
+      costTotalPrice,
       saleUnitPrice: normalizeMoneyValue(inventoryDraft.sale_unit_price),
       saleTotalPrice: null,
       taxable21: normalizeMoneyValue(inventoryDraft.taxable_21),
@@ -3518,7 +3538,7 @@ export default function GroupDetailPage() {
       confirmed_qty: inventoryDraft.confirmed_qty.trim() || "0",
       blocked_qty: inventoryDraft.blocked_qty.trim() || "0",
       currency: inventoryDraft.currency.trim().toUpperCase() || null,
-      unit_cost: inventoryDraft.unit_cost.trim() || null,
+      unit_cost: derivedUnitCost != null ? String(derivedUnitCost) : null,
       note: buildInventoryNote(inventoryDraft.note, financialMeta),
     };
 
@@ -3530,6 +3550,12 @@ export default function GroupDetailPage() {
     }
     if (!payload.label || !payload.inventory_type || !payload.total_qty) {
       const msg = "Completá tipo, nombre y cantidad total del servicio.";
+      setError(msg);
+      toast.error(msg);
+      return;
+    }
+    if (inventoryDraft.unit_cost.trim() && costTotalPrice == null) {
+      const msg = "El costo total de reserva debe ser un número válido.";
       setError(msg);
       toast.error(msg);
       return;
@@ -4147,11 +4173,7 @@ export default function GroupDetailPage() {
               <CollapsibleSectionHeader
                 open={showDeparturePanel}
                 onToggle={() => setShowDeparturePanel((prev) => !prev)}
-                title={
-                  isSingleDepartureMode
-                    ? "Salida principal"
-                    : "Salidas"
-                }
+                title={isSingleDepartureMode ? "Salida principal" : "Salidas"}
                 subtitle={
                   isSingleDepartureMode
                     ? "Creá la salida principal para operar esta grupal."
@@ -5014,7 +5036,7 @@ export default function GroupDetailPage() {
                         </select>
                       </label>
                       <label className="flex flex-col gap-1 text-sm">
-                        Costo unitario
+                        Costo total de reserva
                         <input
                           value={inventoryDraft.unit_cost}
                           onChange={(e) =>
@@ -5028,6 +5050,9 @@ export default function GroupDetailPage() {
                           disabled={submitting}
                           className={FIELD_INPUT_CLASS}
                         />
+                        <span className="ml-1 text-xs text-slate-600 dark:text-slate-400">
+                          Cargá el total del proveedor para este servicio.
+                        </span>
                       </label>
                       <label className="flex flex-col gap-1 text-sm">
                         Venta unitaria estimada
@@ -5133,7 +5158,7 @@ export default function GroupDetailPage() {
 
                     <div className="mt-3 grid grid-cols-1 gap-2 rounded-2xl border border-sky-300/70 bg-white p-3 text-xs text-slate-700 dark:border-sky-600/30 dark:bg-sky-950/5 dark:text-slate-300 md:grid-cols-2">
                       <p>
-                        Costo total estimado:{" "}
+                        Costo total de reserva:{" "}
                         <span className="font-semibold text-slate-900 dark:text-slate-100">
                           {formatMoney(
                             inventoryDraftPreview.costTotal,
@@ -5267,7 +5292,7 @@ export default function GroupDetailPage() {
                         {metrics ? (
                           <>
                             <span className="rounded-full border border-sky-300/80 bg-sky-50/60 px-2 py-0.5 dark:border-sky-600/40 dark:bg-sky-950/20">
-                              Costo total:{" "}
+                              Costo total reserva:{" "}
                               {formatMoney(metrics.costTotal, metrics.currency)}
                             </span>
                             {metrics.saleTotal > 0 ? (
@@ -5669,7 +5694,9 @@ export default function GroupDetailPage() {
                       }}
                       onPaymentDeleted={(deletedId) => {
                         setEditingOperatorPayment((prev) =>
-                          prev && prev.id_investment === deletedId ? null : prev,
+                          prev && prev.id_investment === deletedId
+                            ? null
+                            : prev,
                         );
                         setFinanceOperatorPaymentsReloadKey((prev) => prev + 1);
                         void refreshPaymentsData();
@@ -6081,7 +6108,10 @@ export default function GroupDetailPage() {
                             </td>
                           ) : null}
                           <td className="p-2 text-xs text-slate-700 dark:text-slate-300">
-                            {getPassengerPendingDisplay(item.pending_payment).summary}
+                            {
+                              getPassengerPendingDisplay(item.pending_payment)
+                                .summary
+                            }
                           </td>
                           <td className="p-2">
                             <div className="flex flex-wrap gap-2">
@@ -6234,8 +6264,15 @@ export default function GroupDetailPage() {
                           </span>
                         ) : null}
                         <span className="rounded-full border border-sky-300/70 bg-white px-2 py-0.5 text-slate-700 dark:border-sky-600/30 dark:bg-sky-950/10 dark:text-slate-300">
-                          {getPassengerPendingDisplay(item.pending_payment).label}:{" "}
-                          {getPassengerPendingDisplay(item.pending_payment).summary}
+                          {
+                            getPassengerPendingDisplay(item.pending_payment)
+                              .label
+                          }
+                          :{" "}
+                          {
+                            getPassengerPendingDisplay(item.pending_payment)
+                              .summary
+                          }
                         </span>
                       </div>
                     </article>
@@ -6334,8 +6371,12 @@ export default function GroupDetailPage() {
                           : `Salida: ${item.travelGroupDeparture?.name || "-"}`}
                       </p>
                       <p className="mt-2 text-xs text-slate-700 dark:text-slate-300">
-                        {getPassengerPendingDisplay(item.pending_payment).label}:{" "}
-                        {getPassengerPendingDisplay(item.pending_payment).summary}
+                        {getPassengerPendingDisplay(item.pending_payment).label}
+                        :{" "}
+                        {
+                          getPassengerPendingDisplay(item.pending_payment)
+                            .summary
+                        }
                       </p>
                     </article>
                   );

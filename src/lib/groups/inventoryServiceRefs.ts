@@ -1,4 +1,7 @@
-import { normalizeCurrencyCode, toAmountNumber } from "@/lib/groups/financeShared";
+import {
+  normalizeCurrencyCode,
+  toAmountNumber,
+} from "@/lib/groups/financeShared";
 
 export const GROUP_CONTEXT_BOOKING_BASE = 700_000_000;
 export const GROUP_INVENTORY_SERVICE_BASE = 900_000_000;
@@ -18,32 +21,49 @@ export function buildSyntheticContextBookingId(args: {
   passengerId?: number | null;
 }): number {
   const groupPart =
-    Number.isFinite(args.groupId) && args.groupId > 0 ? Math.trunc(args.groupId) : 0;
+    Number.isFinite(args.groupId) && args.groupId > 0
+      ? Math.trunc(args.groupId)
+      : 0;
   const departurePart =
-    typeof args.departureId === "number" && Number.isFinite(args.departureId) && args.departureId > 0
+    typeof args.departureId === "number" &&
+    Number.isFinite(args.departureId) &&
+    args.departureId > 0
       ? Math.trunc(args.departureId)
       : 0;
   const passengerPart =
-    typeof args.passengerId === "number" && Number.isFinite(args.passengerId) && args.passengerId > 0
+    typeof args.passengerId === "number" &&
+    Number.isFinite(args.passengerId) &&
+    args.passengerId > 0
       ? 1
       : 0;
-  return GROUP_CONTEXT_BOOKING_BASE + groupPart * 100_000 + departurePart * 10 + passengerPart;
+  return (
+    GROUP_CONTEXT_BOOKING_BASE +
+    groupPart * 100_000 +
+    departurePart * 10 +
+    passengerPart
+  );
 }
 
 export function isSyntheticContextBookingId(value: number): boolean {
   const normalized = Math.trunc(Number(value));
-  return Number.isFinite(normalized) && normalized >= GROUP_CONTEXT_BOOKING_BASE;
+  return (
+    Number.isFinite(normalized) && normalized >= GROUP_CONTEXT_BOOKING_BASE
+  );
 }
 
 export function encodeInventoryServiceId(inventoryId: number): number {
   const normalized = Math.trunc(Number(inventoryId));
-  if (!Number.isFinite(normalized) || normalized <= 0) return GROUP_INVENTORY_SERVICE_BASE;
+  if (!Number.isFinite(normalized) || normalized <= 0)
+    return GROUP_INVENTORY_SERVICE_BASE;
   return GROUP_INVENTORY_SERVICE_BASE + normalized;
 }
 
 export function decodeInventoryServiceId(serviceId: number): number | null {
   const normalized = Math.trunc(Number(serviceId));
-  if (!Number.isFinite(normalized) || normalized <= GROUP_INVENTORY_SERVICE_BASE) {
+  if (
+    !Number.isFinite(normalized) ||
+    normalized <= GROUP_INVENTORY_SERVICE_BASE
+  ) {
     return null;
   }
   const inventoryId = normalized - GROUP_INVENTORY_SERVICE_BASE;
@@ -73,11 +93,13 @@ export type InventoryContextServiceRow = {
 type InventoryFinancialMeta = {
   v?: unknown;
   pricingMode?: unknown;
+  costTotalPrice?: unknown;
   saleUnitPrice?: unknown;
   saleTotalPrice?: unknown;
 };
 
 function toNonNegativeMoney(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
   const parsed = toAmountNumber(value);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
   return Number(parsed.toFixed(2));
@@ -104,17 +126,26 @@ export function resolveInventorySaleUnitPrice(
   row: Pick<InventoryContextServiceRow, "unit_cost" | "total_qty" | "note">,
 ): number {
   const fallback = Number(toAmountNumber(row.unit_cost).toFixed(2));
+  return resolveInventoryEstimatedSaleUnitPrice(row) ?? fallback;
+}
+
+export function resolveInventoryEstimatedSaleUnitPrice(
+  row: Pick<InventoryContextServiceRow, "total_qty" | "note">,
+): number | null {
   const meta = parseInventoryFinancialMeta(row.note);
-  if (!meta) return fallback;
+  if (!meta) return null;
 
   const saleUnitPrice = toNonNegativeMoney(meta.saleUnitPrice);
   const saleTotalPrice = toNonNegativeMoney(meta.saleTotalPrice);
   const normalizedPricingMode =
-    String(meta.pricingMode || "").trim().toUpperCase() === "VENTA_TOTAL"
+    String(meta.pricingMode || "")
+      .trim()
+      .toUpperCase() === "VENTA_TOTAL"
       ? "VENTA_TOTAL"
       : "MANUAL";
   const totalQtyRaw = Number(row.total_qty ?? 0);
-  const totalQty = Number.isFinite(totalQtyRaw) && totalQtyRaw > 0 ? totalQtyRaw : 0;
+  const totalQty =
+    Number.isFinite(totalQtyRaw) && totalQtyRaw > 0 ? totalQtyRaw : 0;
 
   if (normalizedPricingMode === "VENTA_TOTAL" && saleTotalPrice != null) {
     if (totalQty > 0) return Number((saleTotalPrice / totalQty).toFixed(2));
@@ -125,7 +156,21 @@ export function resolveInventorySaleUnitPrice(
     if (totalQty > 0) return Number((saleTotalPrice / totalQty).toFixed(2));
     return saleTotalPrice;
   }
-  return fallback;
+  return null;
+}
+
+export function resolveInventoryCostTotal(
+  row: Pick<InventoryContextServiceRow, "unit_cost" | "total_qty" | "note">,
+): number {
+  const meta = parseInventoryFinancialMeta(row.note);
+  const costTotalPrice = toNonNegativeMoney(meta?.costTotalPrice);
+  if (costTotalPrice != null) return costTotalPrice;
+
+  const unitCost = Number(toAmountNumber(row.unit_cost).toFixed(2));
+  const totalQtyRaw = Number(row.total_qty ?? 0);
+  const totalQty =
+    Number.isFinite(totalQtyRaw) && totalQtyRaw > 0 ? totalQtyRaw : 1;
+  return Number((unitCost * totalQty).toFixed(2));
 }
 
 export function mapInventoryToServiceLike(
@@ -137,18 +182,27 @@ export function mapInventoryToServiceLike(
   },
 ): Record<string, unknown> {
   const id = encodeInventoryServiceId(row.id_travel_group_inventory);
-  const currency = normalizeCurrencyCode(row.currency || args.fallbackCurrency || "ARS");
+  const currency = normalizeCurrencyCode(
+    row.currency || args.fallbackCurrency || "ARS",
+  );
   const salePrice = resolveInventorySaleUnitPrice(row);
-  const costPrice = Number(toAmountNumber(row.unit_cost).toFixed(2));
-  const type = String(row.service_type || row.inventory_type || "GRUPAL").trim() || "GRUPAL";
+  const costPrice = resolveInventoryCostTotal(row);
+  const type =
+    String(row.service_type || row.inventory_type || "GRUPAL").trim() ||
+    "GRUPAL";
   const description = String(row.label || "").trim() || `Servicio grupal ${id}`;
   const departureDateIso = toIso(row.travelGroupDeparture?.departure_date);
-  const returnDateIso = toIso(row.travelGroupDeparture?.return_date ?? row.travelGroupDeparture?.departure_date);
+  const returnDateIso = toIso(
+    row.travelGroupDeparture?.return_date ??
+      row.travelGroupDeparture?.departure_date,
+  );
   const destination =
-    String(row.travelGroupDeparture?.name || args.fallbackDestination || "").trim() ||
-    "Salida grupal";
-  const reference =
-    String(row.locator || row.provider || `GRP-INV-${row.id_travel_group_inventory}`).trim();
+    String(
+      row.travelGroupDeparture?.name || args.fallbackDestination || "",
+    ).trim() || "Salida grupal";
+  const reference = String(
+    row.locator || row.provider || `GRP-INV-${row.id_travel_group_inventory}`,
+  ).trim();
 
   return {
     id_service: id,

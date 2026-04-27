@@ -14,6 +14,7 @@ import type {
 import {
   BLOCK_TEXT_SIZE_CLASS,
   BLOCK_TEXT_WEIGHT_CLASS,
+  blockTextSizeToCssPx,
   resolveBlockTextStyle,
   sanitizeBlockTextStyle,
 } from "@/lib/blockTextStyle";
@@ -527,14 +528,15 @@ const KeyValueRow: React.FC<{
   bg: string;
   innerRadiusClass: string;
   className?: string;
-}> = ({ k, v, bg, innerRadiusClass, className }) => (
+  style?: React.CSSProperties;
+}> = ({ k, v, bg, innerRadiusClass, className, style }) => (
   <div
     className={cx(
       "flex items-center justify-between p-2",
       innerRadiusClass,
       className,
     )}
-    style={{ backgroundColor: bg }}
+    style={{ ...style, backgroundColor: bg }}
   >
     <span className="opacity-90">{k}</span>
     <span className="opacity-90">{v}</span>
@@ -740,10 +742,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
     [autoLabels],
   );
 
-  const previewKey = useMemo(
-    () => blocks.map((b) => b.id).join("|"),
-    [blocks],
-  );
+  const previewKey = useMemo(() => blocks.map((b) => b.id).join("|"), [blocks]);
   const [editableBlocks, setEditableBlocks] = useState<OrderedBlock[]>([]);
 
   useEffect(() => {
@@ -1127,7 +1126,8 @@ const TemplateConfigPreview: React.FC<Props> = ({
                 applyMs ? resolveMupuTextStyle(ms, role) : undefined;
               const label = autoLabels.get(b.id) ?? BLOCK_LABELS[b.type];
               const fieldKey = resolveFieldKey(b, label);
-              const headingLevel = b.type === "heading" ? b.level ?? 1 : undefined;
+              const headingLevel =
+                b.type === "heading" ? (b.level ?? 1) : undefined;
               const resolvedText = resolveBlockTextStyle({
                 type: b.type,
                 headingLevel,
@@ -1137,6 +1137,9 @@ const TemplateConfigPreview: React.FC<Props> = ({
                 BLOCK_TEXT_SIZE_CLASS[resolvedText.size],
                 BLOCK_TEXT_WEIGHT_CLASS[resolvedText.weight],
               );
+              const textInlineStyle: React.CSSProperties = {
+                fontSize: blockTextSizeToCssPx(resolvedText.size),
+              };
 
               const placeholder =
                 b.mode === "form" ? (
@@ -1166,6 +1169,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                       className={cx(textClass)}
                       style={{
                         ...(styleHeading || {}),
+                        ...textInlineStyle,
                         fontFamily: styleHeading?.fontFamily ?? headingFont,
                         color:
                           (applyMs && ms?.color) ||
@@ -1186,7 +1190,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                     {topDivider}
                     <h4
                       className={cx(textClass, "opacity-95")}
-                      style={styleSubtitle}
+                      style={{ ...styleSubtitle, ...textInlineStyle }}
                     >
                       {b.mode === "form" ? placeholder : t}
                     </h4>
@@ -1200,7 +1204,10 @@ const TemplateConfigPreview: React.FC<Props> = ({
                 return (
                   <div key={b.id}>
                     {topDivider}
-                    <p className={cx(textClass, "leading-relaxed")} style={styleParagraph}>
+                    <p
+                      className={cx(textClass, "leading-relaxed")}
+                      style={{ ...styleParagraph, ...textInlineStyle }}
+                    >
                       {b.mode === "form" ? placeholder : t}
                     </p>
                   </div>
@@ -1215,12 +1222,19 @@ const TemplateConfigPreview: React.FC<Props> = ({
                     {topDivider}
                     <ul className={cx("list-inside list-disc", listSpace)}>
                       {b.mode === "form" ? (
-                        <li className={textClass} style={styleList}>
+                        <li
+                          className={textClass}
+                          style={{ ...styleList, ...textInlineStyle }}
+                        >
                           {placeholder}
                         </li>
                       ) : (
                         items.map((it, i) => (
-                          <li key={i} className={textClass} style={styleList}>
+                          <li
+                            key={i}
+                            className={textClass}
+                            style={{ ...styleList, ...textInlineStyle }}
+                          >
                             {it}
                           </li>
                         ))
@@ -1261,6 +1275,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                           bg={panelBgStrong}
                           innerRadiusClass={innerRadiusClass}
                           className={textClass}
+                          style={textInlineStyle}
                         />
                       ) : (
                         pairs.map((p, i) => (
@@ -1271,6 +1286,7 @@ const TemplateConfigPreview: React.FC<Props> = ({
                             bg={panelBgStrong}
                             innerRadiusClass={innerRadiusClass}
                             className={textClass}
+                            style={textInlineStyle}
                           />
                         ))
                       )}
@@ -1292,7 +1308,10 @@ const TemplateConfigPreview: React.FC<Props> = ({
                           className={cx("p-3", innerRadiusClass)}
                           style={{ backgroundColor: panelBgStrong }}
                         >
-                          <div className={textClass} style={styleTwo}>
+                          <div
+                            className={textClass}
+                            style={{ ...styleTwo, ...textInlineStyle }}
+                          >
                             {b.mode === "form" ? placeholder : content}
                           </div>
                         </div>
@@ -1315,7 +1334,10 @@ const TemplateConfigPreview: React.FC<Props> = ({
                     className={cx("p-3", innerRadiusClass)}
                     style={{ backgroundColor: panelBgStrong }}
                   >
-                    <div className={textClass} style={styleThree}>
+                    <div
+                      className={textClass}
+                      style={{ ...styleThree, ...textInlineStyle }}
+                    >
                       {b.mode === "form" ? placeholder : content}
                     </div>
                   </div>
@@ -1353,7 +1375,11 @@ const TemplateConfigPreview: React.FC<Props> = ({
               stroke="currentColor"
               strokeWidth={1.6}
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12m-12 6h12m-12 6h12M3.75 6.75h.008v.008H3.75V6.75Zm0 6h.008v.008H3.75V12.75Zm0 6h.008v.008H3.75V18.75Z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M8.25 6.75h12m-12 6h12m-12 6h12M3.75 6.75h.008v.008H3.75V6.75Zm0 6h.008v.008H3.75V12.75Zm0 6h.008v.008H3.75V18.75Z"
+              />
             </svg>
             Contenido
           </span>
@@ -1374,7 +1400,11 @@ const TemplateConfigPreview: React.FC<Props> = ({
                 stroke="currentColor"
                 strokeWidth={1.7}
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 4.5v15m7.5-7.5h-15"
+                />
               </svg>
               {item.label}
             </button>
@@ -1488,7 +1518,9 @@ const TemplateConfigPreview: React.FC<Props> = ({
         )}
 
         {layout === "layoutC" && (
-          <div className={cx("grid gap-0 md:grid-cols-[280px_1fr]", radiusClass)}>
+          <div
+            className={cx("grid gap-0 md:grid-cols-[280px_1fr]", radiusClass)}
+          >
             {/* Sidebar */}
             <aside
               className={cx("p-6", innerRadiusClass)}

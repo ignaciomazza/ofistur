@@ -13,7 +13,10 @@ import {
   parseOptionalPositiveInt,
   requireGroupFinanceContext,
 } from "@/lib/groups/financeShared";
-import { decodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
+import {
+  decodeInventoryServiceId,
+  resolveInventoryCostTotal,
+} from "@/lib/groups/inventoryServiceRefs";
 import {
   asPayloadObject,
   parseGroupOperatorPaymentAllocations,
@@ -103,8 +106,7 @@ async function fetchLogoFromUrl(
   }
 }
 
-const safeFilename = (value: string) =>
-  value.replace(/[^a-zA-Z0-9_-]+/g, "_");
+const safeFilename = (value: string) => value.replace(/[^a-zA-Z0-9_-]+/g, "_");
 
 export default async function handler(
   req: NextApiRequest,
@@ -125,14 +127,9 @@ export default async function handler(
   );
 
   if (!paymentId) {
-    return groupApiError(
-      res,
-      400,
-      "El identificador del pago es inválido.",
-      {
-        code: "GROUP_FINANCE_OPERATOR_PAYMENT_ID_INVALID",
-      },
-    );
+    return groupApiError(res, 400, "El identificador del pago es inválido.", {
+      code: "GROUP_FINANCE_OPERATOR_PAYMENT_ID_INVALID",
+    });
   }
 
   const [payment] = await prisma.$queryRaw<GroupOperatorPaymentPdfRow[]>(
@@ -292,7 +289,9 @@ export default async function handler(
             label: true,
             service_type: true,
             unit_cost: true,
+            total_qty: true,
             currency: true,
+            note: true,
             travelGroupDeparture: {
               select: {
                 name: true,
@@ -304,9 +303,14 @@ export default async function handler(
       : Promise.resolve([]),
   ]);
 
-  const regularById = new Map(regularServices.map((service) => [service.id_service, service]));
+  const regularById = new Map(
+    regularServices.map((service) => [service.id_service, service]),
+  );
   const inventoryById = new Map(
-    inventoryServices.map((inventory) => [inventory.id_travel_group_inventory, inventory]),
+    inventoryServices.map((inventory) => [
+      inventory.id_travel_group_inventory,
+      inventory,
+    ]),
   );
 
   const bookingNumbers = new Set<string>();
@@ -333,8 +337,7 @@ export default async function handler(
           bookingNumber: bookingNumber ?? undefined,
           type: inventory.service_type || "GRUPAL",
           destination: inventory.travelGroupDeparture?.name || "Salida grupal",
-          cost:
-            inventory.unit_cost == null ? null : toNumber(inventory.unit_cost),
+          cost: resolveInventoryCostTotal(inventory),
           currency: normalizeCurrency(inventory.currency || payment.currency),
           dateLabel: inventory.travelGroupDeparture?.departure_date
             ? formatDateOnlyInBuenosAires(
@@ -360,8 +363,7 @@ export default async function handler(
         bookingNumber: bookingNumber ?? undefined,
         type: service.type,
         destination: service.destination,
-        cost:
-          service.cost_price == null ? null : toNumber(service.cost_price),
+        cost: service.cost_price == null ? null : toNumber(service.cost_price),
         currency: normalizeCurrency(service.currency || payment.currency),
         dateLabel: service.departure_date
           ? formatDateOnlyInBuenosAires(service.departure_date)
@@ -371,7 +373,10 @@ export default async function handler(
     .filter((item): item is NonNullable<typeof item> => item !== null);
 
   const serviceBreakdownRows = (() => {
-    if (servicesForPdf.length === 0) return Promise.resolve([] as NonNullable<OperatorPaymentPdfData["service_breakdown"]>);
+    if (servicesForPdf.length === 0)
+      return Promise.resolve(
+        [] as NonNullable<OperatorPaymentPdfData["service_breakdown"]>,
+      );
 
     const serviceInputs = servicesForPdf.map((service) => {
       const labelParts = [`N° ${service.serviceNumber ?? service.id}`];
@@ -380,7 +385,9 @@ export default async function handler(
       return {
         service_id: service.id,
         service_label: labelParts.join(" · "),
-        service_currency: normalizeCurrency(service.currency || payment.currency),
+        service_currency: normalizeCurrency(
+          service.currency || payment.currency,
+        ),
         service_cost: service.cost != null ? toNumber(service.cost) : null,
       };
     });
@@ -412,8 +419,12 @@ export default async function handler(
 
       const payments = history.map((row) => {
         const payload = asPayloadObject(row.payload);
-        const allocations = parseGroupOperatorPaymentAllocations(payload.allocations)
-          .filter((allocation) => targetServiceIds.includes(allocation.service_id))
+        const allocations = parseGroupOperatorPaymentAllocations(
+          payload.allocations,
+        )
+          .filter((allocation) =>
+            targetServiceIds.includes(allocation.service_id),
+          )
           .map((allocation) => ({
             service_id: allocation.service_id,
             service_currency: normalizeCurrency(
@@ -431,7 +442,8 @@ export default async function handler(
           currency: normalizeCurrency(row.currency),
           paid_at: row.paid_at ?? null,
           created_at: row.created_at,
-          base_amount: row.base_amount == null ? null : toNumber(row.base_amount),
+          base_amount:
+            row.base_amount == null ? null : toNumber(row.base_amount),
           base_currency: row.base_currency,
           counter_amount:
             row.counter_amount == null ? null : toNumber(row.counter_amount),
@@ -443,15 +455,16 @@ export default async function handler(
 
       if (
         !payments.some(
-          (row) =>
-            row.payment_id === payment.id_travel_group_operator_payment,
+          (row) => row.payment_id === payment.id_travel_group_operator_payment,
         )
       ) {
         const currentPayload = asPayloadObject(payment.payload);
         const currentAllocations = parseGroupOperatorPaymentAllocations(
           currentPayload.allocations,
         )
-          .filter((allocation) => targetServiceIds.includes(allocation.service_id))
+          .filter((allocation) =>
+            targetServiceIds.includes(allocation.service_id),
+          )
           .map((allocation) => ({
             service_id: allocation.service_id,
             service_currency: normalizeCurrency(
@@ -477,7 +490,9 @@ export default async function handler(
               ? null
               : toNumber(payment.counter_amount),
           counter_currency: payment.counter_currency,
-          service_ids: Array.isArray(payment.service_refs) ? payment.service_refs : [],
+          service_ids: Array.isArray(payment.service_refs)
+            ? payment.service_refs
+            : [],
           allocations: currentAllocations,
         });
       }
@@ -497,7 +512,8 @@ export default async function handler(
   })();
 
   if (bookingNumbers.size === 0) {
-    const fallbackBookingNumber = payment.booking_agency_id ?? payment.booking_id;
+    const fallbackBookingNumber =
+      payment.booking_agency_id ?? payment.booking_id;
     if (fallbackBookingNumber && fallbackBookingNumber > 0) {
       bookingNumbers.add(String(fallbackBookingNumber));
     }
@@ -516,9 +532,7 @@ export default async function handler(
     .trim();
 
   const recipientName =
-    String(payment.operator_name || "").trim() ||
-    createdByName ||
-    "Operador";
+    String(payment.operator_name || "").trim() || createdByName || "Operador";
 
   const data: OperatorPaymentPdfData = {
     paymentNumber,
@@ -538,7 +552,11 @@ export default async function handler(
     counter_currency: payment.counter_currency,
     recipient: {
       id: payment.operator_id ?? payment.created_by ?? null,
-      label: payment.operator_name ? "Operador" : createdByName ? "Usuario" : null,
+      label: payment.operator_name
+        ? "Operador"
+        : createdByName
+          ? "Usuario"
+          : null,
       name: recipientName,
     },
     bookingNumbers: Array.from(bookingNumbers),

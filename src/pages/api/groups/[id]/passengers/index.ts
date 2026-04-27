@@ -8,6 +8,7 @@ import {
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
 import { addGroupReceiptToPaidByCurrency } from "@/lib/groups/groupReceiptDebtValidation";
+import { resolveInventoryEstimatedSaleUnitPrice } from "@/lib/groups/inventoryServiceRefs";
 import { readGroupReceiptPaymentsFromMetadata } from "@/lib/groups/groupReceiptMetadata";
 import { computePassengerPendingValue } from "@/lib/groups/passengerPending";
 
@@ -15,6 +16,27 @@ function pickParam(value: string | string[] | undefined): string | null {
   if (!value) return null;
   return Array.isArray(value) ? value[0] : value;
 }
+
+const addCurrencyTotal = (
+  target: Record<string, number>,
+  currencyRaw: string | null | undefined,
+  amountRaw: number,
+) => {
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  const currency =
+    String(currencyRaw || "ARS")
+      .trim()
+      .toUpperCase() || "ARS";
+  target[currency] = Math.round(((target[currency] || 0) + amount) * 100) / 100;
+};
+
+const hasDetectableTotals = (
+  totals: Record<string, number> | null | undefined,
+) =>
+  Boolean(
+    totals && Object.values(totals).some((value) => Number(value) > 0.01),
+  );
 
 export default async function handler(
   req: NextApiRequest,
@@ -34,10 +56,15 @@ export default async function handler(
 
   const rawGroupId = pickParam(req.query.id);
   if (!rawGroupId) {
-    return groupApiError(res, 400, "El identificador de la grupal es inválido.", {
-      code: "GROUP_ID_INVALID",
-      solution: "Volvé al listado de grupales y abrila nuevamente.",
-    });
+    return groupApiError(
+      res,
+      400,
+      "El identificador de la grupal es inválido.",
+      {
+        code: "GROUP_ID_INVALID",
+        solution: "Volvé al listado de grupales y abrila nuevamente.",
+      },
+    );
   }
 
   const groupWhere = parseGroupWhereInput(rawGroupId, auth.id_agency);
@@ -151,7 +178,10 @@ export default async function handler(
       .map((item) => item.id_travel_group_passenger)
       .filter((id) => Number.isFinite(id) && id > 0);
 
-    const pendingByPassengerId = new Map<number, { amount: string; count: number }>();
+    const pendingByPassengerId = new Map<
+      number,
+      { amount: string; count: number }
+    >();
     if (passengerScopeIds.length > 0) {
       try {
         const pendingAgg = await prisma.travelGroupClientPayment.groupBy({
@@ -186,7 +216,9 @@ export default async function handler(
     const bookingIds = Array.from(
       new Set(
         passengers
-          .map((item) => Number((item as { booking_id?: unknown }).booking_id ?? 0))
+          .map((item) =>
+            Number((item as { booking_id?: unknown }).booking_id ?? 0),
+          )
           .filter((value) => Number.isFinite(value) && value > 0)
           .map((value) => Math.trunc(value)),
       ),
@@ -222,19 +254,78 @@ export default async function handler(
       for (const row of serviceRows) {
         const bookingId = Number(row.booking_id || 0);
         if (!Number.isFinite(bookingId) || bookingId <= 0) continue;
-        const currency = String(row.currency || "ARS").trim().toUpperCase() || "ARS";
+        const currency =
+          String(row.currency || "ARS")
+            .trim()
+            .toUpperCase() || "ARS";
         const sale = Number(row.sale_price || 0);
         const splitInterest =
-          Number(row.taxableCardInterest || 0) + Number(row.vatOnCardInterest || 0);
-        const interest = splitInterest > 0 ? splitInterest : Number(row.card_interest || 0);
+          Number(row.taxableCardInterest || 0) +
+          Number(row.vatOnCardInterest || 0);
+        const interest =
+          splitInterest > 0 ? splitInterest : Number(row.card_interest || 0);
         const total = Math.max(0, sale + Math.max(0, interest));
         if (total <= 0) continue;
 
         const current = serviceTotalsByBookingId.get(bookingId) || {};
-        current[currency] = Math.round(((current[currency] || 0) + total) * 100) / 100;
+        addCurrencyTotal(current, currency, total);
         serviceTotalsByBookingId.set(bookingId, current);
       }
     }
+
+    const inventoryRows = await prisma.travelGroupInventory.findMany({
+      where: {
+        id_agency: auth.id_agency,
+        travel_group_id: group.id_travel_group,
+        ...(departureFilterId
+          ? {
+              OR: [
+                { travel_group_departure_id: null },
+                { travel_group_departure_id: departureFilterId },
+              ],
+            }
+          : {}),
+      },
+      select: {
+        travel_group_departure_id: true,
+        currency: true,
+        unit_cost: true,
+        total_qty: true,
+        note: true,
+      },
+    });
+    const inventoryTotalsByDepartureId = new Map<
+      number | null,
+      Record<string, number>
+    >();
+    for (const row of inventoryRows) {
+      const saleUnitPrice = resolveInventoryEstimatedSaleUnitPrice(row) ?? 0;
+      if (saleUnitPrice <= 0) continue;
+      const departureId = row.travel_group_departure_id ?? null;
+      const current = inventoryTotalsByDepartureId.get(departureId) || {};
+      addCurrencyTotal(current, row.currency, saleUnitPrice);
+      inventoryTotalsByDepartureId.set(departureId, current);
+    }
+    const inventoryTotalsForPassenger = (
+      departureId: number | null,
+    ): Record<string, number> | null => {
+      const totals: Record<string, number> = {};
+      const globalTotals = inventoryTotalsByDepartureId.get(null);
+      if (globalTotals) {
+        for (const [currency, amount] of Object.entries(globalTotals)) {
+          addCurrencyTotal(totals, currency, amount);
+        }
+      }
+      if (departureId != null) {
+        const scopedTotals = inventoryTotalsByDepartureId.get(departureId);
+        if (scopedTotals) {
+          for (const [currency, amount] of Object.entries(scopedTotals)) {
+            addCurrencyTotal(totals, currency, amount);
+          }
+        }
+      }
+      return hasDetectableTotals(totals) ? totals : null;
+    };
 
     const receiptsByPassengerId = new Map<number, Record<string, number>>();
     if (passengerScopeIds.length > 0) {
@@ -274,7 +365,9 @@ export default async function handler(
     return res.status(200).json({
       group,
       items: passengers.map((item) => {
-        const bookingId = Number((item as { booking_id?: unknown }).booking_id ?? 0);
+        const bookingId = Number(
+          (item as { booking_id?: unknown }).booking_id ?? 0,
+        );
         const normalizedBookingId =
           Number.isFinite(bookingId) && bookingId > 0
             ? Math.trunc(bookingId)
@@ -283,8 +376,11 @@ export default async function handler(
           normalizedBookingId > 0 &&
           (bookingPassengerCount.get(normalizedBookingId) ?? 0) === 1;
         const servicesByCurrency = isUnambiguousBooking
-          ? serviceTotalsByBookingId.get(normalizedBookingId) ?? null
+          ? (serviceTotalsByBookingId.get(normalizedBookingId) ?? null)
           : null;
+        const inventoryServicesByCurrency = inventoryTotalsForPassenger(
+          item.travel_group_departure_id ?? null,
+        );
 
         return {
           ...item,
@@ -292,23 +388,30 @@ export default async function handler(
             ? getDeparturePublicId(item.travelGroupDeparture)
             : null,
           pending_payment: computePassengerPendingValue({
-            servicesByCurrency,
+            servicesByCurrency:
+              inventoryServicesByCurrency ?? servicesByCurrency,
             receiptsByCurrency:
               receiptsByPassengerId.get(item.id_travel_group_passenger) ?? null,
-            installmentsFallback:
-              pendingByPassengerId.get(item.id_travel_group_passenger) ?? {
-                amount: "0",
-                count: 0,
-              },
+            installmentsFallback: pendingByPassengerId.get(
+              item.id_travel_group_passenger,
+            ) ?? {
+              amount: "0",
+              count: 0,
+            },
           }),
         };
       }),
     });
   } catch (error) {
     console.error("[groups][passengers][GET]", error);
-    return groupApiError(res, 500, "No pudimos listar los pasajeros de la grupal.", {
-      code: "GROUP_PASSENGER_LIST_ERROR",
-      solution: "Reintentá en unos segundos.",
-    });
+    return groupApiError(
+      res,
+      500,
+      "No pudimos listar los pasajeros de la grupal.",
+      {
+        code: "GROUP_PASSENGER_LIST_ERROR",
+        solution: "Reintentá en unos segundos.",
+      },
+    );
   }
 }

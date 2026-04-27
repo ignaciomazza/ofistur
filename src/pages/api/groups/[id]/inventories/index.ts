@@ -40,9 +40,7 @@ function parseOptionalDecimal(
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
   const n =
-    typeof value === "number"
-      ? value
-      : Number(String(value).replace(",", "."));
+    typeof value === "number" ? value : Number(String(value).replace(",", "."));
   if (!Number.isFinite(n) || n < 0) return undefined;
   return new Prisma.Decimal(n.toFixed(2));
 }
@@ -151,7 +149,10 @@ export default async function handler(
             },
           },
         },
-        orderBy: [{ created_at: "desc" }, { id_travel_group_inventory: "desc" }],
+        orderBy: [
+          { created_at: "desc" },
+          { id_travel_group_inventory: "desc" },
+        ],
       });
       return res.status(200).json({ items });
     } catch (error) {
@@ -176,7 +177,8 @@ export default async function handler(
         "No tenés permisos para cargar servicios en la grupal.",
         {
           code: "GROUP_INVENTORY_CREATE_FORBIDDEN",
-          solution: "Solicitá permisos de edición de grupales a un administrador.",
+          solution:
+            "Solicitá permisos de edición de grupales a un administrador.",
         },
       );
     }
@@ -195,15 +197,10 @@ export default async function handler(
     const body = (req.body ?? {}) as Body;
     const inventoryType = parseOptionalString(body.inventory_type, 50);
     if (!inventoryType) {
-      return groupApiError(
-        res,
-        400,
-        "El tipo de servicio es obligatorio.",
-        {
-          code: "GROUP_INVENTORY_TYPE_REQUIRED",
-          solution: "Elegí o escribí un tipo válido (aéreo, hotel, etc.).",
-        },
-      );
+      return groupApiError(res, 400, "El tipo de servicio es obligatorio.", {
+        code: "GROUP_INVENTORY_TYPE_REQUIRED",
+        solution: "Elegí o escribí un tipo válido (aéreo, hotel, etc.).",
+      });
     }
     const serviceType = parseOptionalString(body.service_type, 80);
     if (serviceType === undefined) {
@@ -214,15 +211,10 @@ export default async function handler(
     }
     const label = parseOptionalString(body.label, 160);
     if (!label) {
-      return groupApiError(
-        res,
-        400,
-        "El nombre del servicio es obligatorio.",
-        {
-          code: "GROUP_INVENTORY_LABEL_REQUIRED",
-          solution: "Ingresá una etiqueta corta para identificar el servicio.",
-        },
-      );
+      return groupApiError(res, 400, "El nombre del servicio es obligatorio.", {
+        code: "GROUP_INVENTORY_LABEL_REQUIRED",
+        solution: "Ingresá una etiqueta corta para identificar el servicio.",
+      });
     }
     const provider = parseOptionalString(body.provider, 120);
     if (provider === undefined) {
@@ -306,15 +298,10 @@ export default async function handler(
 
     const unitCost = parseOptionalDecimal(body.unit_cost);
     if (unitCost === undefined) {
-      return groupApiError(
-        res,
-        400,
-        "El costo unitario del servicio es inválido.",
-        {
-          code: "GROUP_INVENTORY_UNIT_COST_INVALID",
-          solution: "Ingresá un valor numérico mayor o igual a 0.",
-        },
-      );
+      return groupApiError(res, 400, "El costo del servicio es inválido.", {
+        code: "GROUP_INVENTORY_UNIT_COST_INVALID",
+        solution: "Ingresá un valor numérico mayor o igual a 0.",
+      });
     }
 
     const note = parseOptionalString(body.note, 1000);

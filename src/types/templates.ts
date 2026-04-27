@@ -42,6 +42,8 @@ export type CurrentUser = {
 export type Density = "compact" | "comfortable" | "relaxed";
 
 export type BlockTextSize =
+  | "xxxxxs"
+  | "xxxxs"
   | "xxxs"
   | "xxs"
   | "xs"
