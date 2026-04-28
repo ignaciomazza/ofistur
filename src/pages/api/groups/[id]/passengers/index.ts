@@ -8,7 +8,10 @@ import {
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
 import { addGroupReceiptToPaidByCurrency } from "@/lib/groups/groupReceiptDebtValidation";
-import { resolveInventoryEstimatedSaleUnitPrice } from "@/lib/groups/inventoryServiceRefs";
+import {
+  decodeInventoryServiceId,
+  resolveInventoryEstimatedSaleUnitPrice,
+} from "@/lib/groups/inventoryServiceRefs";
 import { readGroupReceiptPaymentsFromMetadata } from "@/lib/groups/groupReceiptMetadata";
 import { computePassengerPendingValue } from "@/lib/groups/passengerPending";
 
@@ -213,66 +216,6 @@ export default async function handler(
       }
     }
 
-    const bookingIds = Array.from(
-      new Set(
-        passengers
-          .map((item) =>
-            Number((item as { booking_id?: unknown }).booking_id ?? 0),
-          )
-          .filter((value) => Number.isFinite(value) && value > 0)
-          .map((value) => Math.trunc(value)),
-      ),
-    );
-    const bookingPassengerCount = new Map<number, number>();
-    for (const bookingId of passengers
-      .map((item) => Number((item as { booking_id?: unknown }).booking_id ?? 0))
-      .filter((value) => Number.isFinite(value) && value > 0)
-      .map((value) => Math.trunc(value))) {
-      bookingPassengerCount.set(
-        bookingId,
-        (bookingPassengerCount.get(bookingId) ?? 0) + 1,
-      );
-    }
-
-    const serviceTotalsByBookingId = new Map<number, Record<string, number>>();
-    if (bookingIds.length > 0) {
-      const serviceRows = await prisma.service.findMany({
-        where: {
-          id_agency: auth.id_agency,
-          booking_id: { in: bookingIds },
-        },
-        select: {
-          booking_id: true,
-          currency: true,
-          sale_price: true,
-          card_interest: true,
-          taxableCardInterest: true,
-          vatOnCardInterest: true,
-        },
-      });
-
-      for (const row of serviceRows) {
-        const bookingId = Number(row.booking_id || 0);
-        if (!Number.isFinite(bookingId) || bookingId <= 0) continue;
-        const currency =
-          String(row.currency || "ARS")
-            .trim()
-            .toUpperCase() || "ARS";
-        const sale = Number(row.sale_price || 0);
-        const splitInterest =
-          Number(row.taxableCardInterest || 0) +
-          Number(row.vatOnCardInterest || 0);
-        const interest =
-          splitInterest > 0 ? splitInterest : Number(row.card_interest || 0);
-        const total = Math.max(0, sale + Math.max(0, interest));
-        if (total <= 0) continue;
-
-        const current = serviceTotalsByBookingId.get(bookingId) || {};
-        addCurrencyTotal(current, currency, total);
-        serviceTotalsByBookingId.set(bookingId, current);
-      }
-    }
-
     const inventoryRows = await prisma.travelGroupInventory.findMany({
       where: {
         id_agency: auth.id_agency,
@@ -287,6 +230,7 @@ export default async function handler(
           : {}),
       },
       select: {
+        id_travel_group_inventory: true,
         travel_group_departure_id: true,
         currency: true,
         unit_cost: true,
@@ -294,37 +238,114 @@ export default async function handler(
         note: true,
       },
     });
-    const inventoryTotalsByDepartureId = new Map<
-      number | null,
-      Record<string, number>
+    const inventorySaleById = new Map<
+      number,
+      { currency: string | null; amount: number }
     >();
     for (const row of inventoryRows) {
       const saleUnitPrice = resolveInventoryEstimatedSaleUnitPrice(row) ?? 0;
-      if (saleUnitPrice <= 0) continue;
-      const departureId = row.travel_group_departure_id ?? null;
-      const current = inventoryTotalsByDepartureId.get(departureId) || {};
-      addCurrencyTotal(current, row.currency, saleUnitPrice);
-      inventoryTotalsByDepartureId.set(departureId, current);
+      inventorySaleById.set(row.id_travel_group_inventory, {
+        currency: row.currency,
+        amount: Math.max(0, saleUnitPrice),
+      });
+    }
+
+    const assignedInventoryIdsByPassengerId = new Map<number, Set<number>>();
+    const assignedInventoryTotalsByPassengerId = new Map<
+      number,
+      Record<string, number>
+    >();
+    const assignedInventorySalesByPassengerId = new Map<
+      number,
+      Array<{ inventory_id: number; amount: number; currency: string }>
+    >();
+    if (passengerScopeIds.length > 0) {
+      const assignmentRows = await prisma.travelGroupClientPayment.findMany({
+        where: {
+          id_agency: auth.id_agency,
+          travel_group_id: group.id_travel_group,
+          travel_group_passenger_id: { in: passengerScopeIds },
+          service_ref: { not: null },
+          status: { not: "CANCELADA" },
+        },
+        select: {
+          travel_group_passenger_id: true,
+          service_ref: true,
+          amount: true,
+          currency: true,
+        },
+      });
+      for (const row of assignmentRows) {
+        const inventoryId = decodeInventoryServiceId(Number(row.service_ref));
+        if (!inventoryId || !inventorySaleById.has(inventoryId)) continue;
+
+        const assignedSet =
+          assignedInventoryIdsByPassengerId.get(
+            row.travel_group_passenger_id,
+          ) ?? new Set<number>();
+        if (assignedSet.has(inventoryId)) continue;
+        assignedSet.add(inventoryId);
+        assignedInventoryIdsByPassengerId.set(
+          row.travel_group_passenger_id,
+          assignedSet,
+        );
+
+        const sale = inventorySaleById.get(inventoryId);
+        if (!sale) continue;
+        const assignmentAmount = Number(row.amount);
+        const amount =
+          Number.isFinite(assignmentAmount) && assignmentAmount >= 0
+            ? assignmentAmount
+            : sale.amount;
+        const currency =
+          String(row.currency || sale.currency || "ARS")
+            .trim()
+            .toUpperCase() || "ARS";
+        const current =
+          assignedInventoryTotalsByPassengerId.get(
+            row.travel_group_passenger_id,
+          ) || {};
+        addCurrencyTotal(current, currency, amount);
+        assignedInventoryTotalsByPassengerId.set(
+          row.travel_group_passenger_id,
+          current,
+        );
+        const saleRows =
+          assignedInventorySalesByPassengerId.get(
+            row.travel_group_passenger_id,
+          ) ?? [];
+        saleRows.push({
+          inventory_id: inventoryId,
+          amount,
+          currency,
+        });
+        assignedInventorySalesByPassengerId.set(
+          row.travel_group_passenger_id,
+          saleRows,
+        );
+      }
     }
     const inventoryTotalsForPassenger = (
-      departureId: number | null,
+      passengerId: number,
     ): Record<string, number> | null => {
-      const totals: Record<string, number> = {};
-      const globalTotals = inventoryTotalsByDepartureId.get(null);
-      if (globalTotals) {
-        for (const [currency, amount] of Object.entries(globalTotals)) {
-          addCurrencyTotal(totals, currency, amount);
-        }
-      }
-      if (departureId != null) {
-        const scopedTotals = inventoryTotalsByDepartureId.get(departureId);
-        if (scopedTotals) {
-          for (const [currency, amount] of Object.entries(scopedTotals)) {
-            addCurrencyTotal(totals, currency, amount);
-          }
-        }
-      }
-      return hasDetectableTotals(totals) ? totals : null;
+      const totals = assignedInventoryTotalsByPassengerId.get(passengerId);
+      return hasDetectableTotals(totals) ? (totals ?? null) : null;
+    };
+    const assignedInventoryIdsForPassenger = (
+      passengerId: number,
+    ): number[] => {
+      const assignedSet = assignedInventoryIdsByPassengerId.get(passengerId);
+      if (!assignedSet) return [];
+      return Array.from(assignedSet).sort((a, b) => a - b);
+    };
+    const assignedInventorySalesForPassenger = (
+      passengerId: number,
+    ): Array<{ inventory_id: number; amount: number; currency: string }> => {
+      return (
+        assignedInventorySalesByPassengerId.get(passengerId)?.sort((a, b) => {
+          return a.inventory_id - b.inventory_id;
+        }) ?? []
+      );
     };
 
     const receiptsByPassengerId = new Map<number, Record<string, number>>();
@@ -365,31 +386,23 @@ export default async function handler(
     return res.status(200).json({
       group,
       items: passengers.map((item) => {
-        const bookingId = Number(
-          (item as { booking_id?: unknown }).booking_id ?? 0,
-        );
-        const normalizedBookingId =
-          Number.isFinite(bookingId) && bookingId > 0
-            ? Math.trunc(bookingId)
-            : 0;
-        const isUnambiguousBooking =
-          normalizedBookingId > 0 &&
-          (bookingPassengerCount.get(normalizedBookingId) ?? 0) === 1;
-        const servicesByCurrency = isUnambiguousBooking
-          ? (serviceTotalsByBookingId.get(normalizedBookingId) ?? null)
-          : null;
         const inventoryServicesByCurrency = inventoryTotalsForPassenger(
-          item.travel_group_departure_id ?? null,
+          item.id_travel_group_passenger,
         );
 
         return {
           ...item,
+          assigned_inventory_ids: assignedInventoryIdsForPassenger(
+            item.id_travel_group_passenger,
+          ),
+          assigned_inventory_sales: assignedInventorySalesForPassenger(
+            item.id_travel_group_passenger,
+          ),
           departure_public_id: item.travelGroupDeparture
             ? getDeparturePublicId(item.travelGroupDeparture)
             : null,
           pending_payment: computePassengerPendingValue({
-            servicesByCurrency:
-              inventoryServicesByCurrency ?? servicesByCurrency,
+            servicesByCurrency: inventoryServicesByCurrency,
             receiptsByCurrency:
               receiptsByPassengerId.get(item.id_travel_group_passenger) ?? null,
             installmentsFallback: pendingByPassengerId.get(

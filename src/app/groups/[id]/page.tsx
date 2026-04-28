@@ -145,6 +145,12 @@ type PassengerItem = {
       pending: number;
     }>;
   };
+  assigned_inventory_ids?: number[];
+  assigned_inventory_sales?: Array<{
+    inventory_id: number;
+    amount: number;
+    currency: string;
+  }>;
 };
 
 type GroupInventoryItem = {
@@ -224,12 +230,22 @@ type InventoryFinancialRow = {
   costConfirmed: number;
   costBlocked: number;
   costAvailable: number;
+  saleUnit: number;
   saleTotal: number;
   transferFeePct: number;
   transferFeeAmount: number;
   taxesTotal: number;
   grossMargin: number;
   operationalDebt: number;
+};
+
+type AssignmentSaleDialogState = {
+  passenger: PassengerItem;
+  mode: "ASSIGN" | "UPDATE";
+  inventoryId: number;
+  inventoryLabel: string;
+  currency: string;
+  value: string;
 };
 
 type GroupFinanceScopeOption = {
@@ -366,9 +382,35 @@ function formatPendingBreakdown(
 ): string {
   if (!Array.isArray(breakdown) || breakdown.length === 0) return "";
   const parts = breakdown
-    .filter((row) => Number(row.pending) > 0.01)
+    .filter((row) => Math.abs(Number(row.pending)) > 0.01)
     .map((row) => formatMoney(Number(row.pending), row.currency || "ARS"));
   return parts.join(" + ");
+}
+
+function formatPassengerBreakdownTotal(
+  breakdown:
+    | Array<{
+        currency: string;
+        services: number;
+        receipts: number;
+        pending: number;
+      }>
+    | null
+    | undefined,
+  key: "services" | "receipts",
+): string {
+  if (!Array.isArray(breakdown) || breakdown.length === 0) return "-";
+  const positiveRows = breakdown.filter((row) => Number(row[key]) > 0.01);
+  if (positiveRows.length > 0) {
+    return positiveRows
+      .map((row) => formatMoney(Number(row[key]), row.currency || "ARS"))
+      .join(" + ");
+  }
+  const hasServices = breakdown.some((row) => Number(row.services) > 0.01);
+  if (key === "receipts" && hasServices) {
+    return formatMoney(0, breakdown[0]?.currency || "ARS");
+  }
+  return "-";
 }
 
 function getPassengerPendingDisplay(
@@ -398,10 +440,45 @@ function getPassengerPendingDisplay(
   }
   return {
     label: "Cuotas pendientes",
-    summary: `${pending?.count ?? 0} · ${formatPendingInstallmentAmount(
-      pending?.amount ?? "0",
-    )}`,
+    summary: formatPendingInstallmentAmount(pending?.amount ?? "0"),
     source,
+  };
+}
+
+function getPassengerFinancialDisplay(
+  pending: PassengerItem["pending_payment"] | null | undefined,
+): {
+  saleTotal: string;
+  appliedPayments: string;
+  pendingLabel: string;
+  pendingSummary: string;
+} {
+  const pendingDisplay = getPassengerPendingDisplay(pending);
+  return {
+    saleTotal: formatPassengerBreakdownTotal(pending?.breakdown, "services"),
+    appliedPayments: formatPassengerBreakdownTotal(
+      pending?.breakdown,
+      "receipts",
+    ),
+    pendingLabel: pendingDisplay.label,
+    pendingSummary: pendingDisplay.summary,
+  };
+}
+
+function getPassengerInventorySale(
+  passenger: PassengerItem,
+  inventoryId: number | null,
+): { amount: number; currency: string } | null {
+  if (!inventoryId || !Array.isArray(passenger.assigned_inventory_sales)) {
+    return null;
+  }
+  const sale = passenger.assigned_inventory_sales.find(
+    (item) => item.inventory_id === inventoryId,
+  );
+  if (!sale) return null;
+  return {
+    amount: Number(sale.amount) || 0,
+    currency: String(sale.currency || "ARS").toUpperCase(),
   };
 }
 
@@ -424,6 +501,27 @@ function toAmountNumber(value: string | number | null | undefined): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function parseMoneyInput(
+  value: string | number | null | undefined,
+): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0
+      ? Number(value.toFixed(2))
+      : null;
+  }
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const numericOnly = raw.replace(/[^\d,.-]/g, "");
+  const normalized = numericOnly.includes(",")
+    ? numericOnly.replace(/\./g, "").replace(",", ".")
+    : /^\d{1,3}(\.\d{3})+$/.test(numericOnly)
+      ? numericOnly.replace(/\./g, "")
+      : numericOnly;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Number(parsed.toFixed(2));
 }
 
 function toReceiptServiceLite(service: Service): ServiceLite {
@@ -541,13 +639,21 @@ function formatMoney(value: number, currency: string): string {
   const code = String(currency || "ARS").toUpperCase();
   if (!Number.isFinite(value)) return `0 ${code}`;
   try {
-    return new Intl.NumberFormat("es-AR", {
+    const formatter = new Intl.NumberFormat("es-AR", {
       style: "currency",
       currency: code,
       maximumFractionDigits: 2,
-    }).format(value);
+    });
+    const formatted = formatter.format(Math.abs(value));
+    if (value >= 0) return formatted;
+    const firstDigitIndex = formatted.search(/\d/);
+    if (firstDigitIndex < 0) return `-${formatted}`;
+    return `${formatted.slice(0, firstDigitIndex)}-${formatted.slice(
+      firstDigitIndex,
+    )}`;
   } catch {
-    return `${value.toFixed(2)} ${code}`;
+    const sign = value < 0 ? "-" : "";
+    return `${code} ${sign}${Math.abs(value).toFixed(2)}`;
   }
 }
 
@@ -1478,6 +1584,11 @@ export default function GroupDetailPage() {
   const [editingInventoryId, setEditingInventoryId] = useState<number | null>(
     null,
   );
+  const [assignmentInventoryId, setAssignmentInventoryId] = useState<
+    number | null
+  >(null);
+  const [assignmentSaleDialog, setAssignmentSaleDialog] =
+    useState<AssignmentSaleDialogState | null>(null);
   const [inventoryDraft, setInventoryDraft] = useState<InventoryDraft>(() =>
     defaultInventoryDraft(undefined, { defaultTransferFeePct: 2.4 }),
   );
@@ -2030,6 +2141,8 @@ export default function GroupDetailPage() {
         meta?.pricingMode === "VENTA_TOTAL"
           ? Number(meta.saleTotalPrice || 0)
           : Number(meta?.saleUnitPrice || 0) * totalQty;
+      const saleUnit =
+        totalQty > 0 ? saleTotal / totalQty : Number(meta?.saleUnitPrice || 0);
       const transferFeePct =
         Number(
           meta?.transferFeePct != null
@@ -2060,6 +2173,7 @@ export default function GroupDetailPage() {
         costConfirmed,
         costBlocked,
         costAvailable,
+        saleUnit,
         saleTotal,
         transferFeePct,
         transferFeeAmount,
@@ -2075,6 +2189,30 @@ export default function GroupDetailPage() {
       inventoryFinancialRows.map((item) => [item.inventoryId, item] as const),
     );
   }, [inventoryFinancialRows]);
+
+  const assignmentInventory = useMemo(() => {
+    if (!assignmentInventoryId) return null;
+    return (
+      inventories.find(
+        (item) => item.id_travel_group_inventory === assignmentInventoryId,
+      ) ?? null
+    );
+  }, [assignmentInventoryId, inventories]);
+
+  const assignmentInventoryMetrics = assignmentInventoryId
+    ? (inventoryFinancialById.get(assignmentInventoryId) ?? null)
+    : null;
+
+  useEffect(() => {
+    if (
+      assignmentInventoryId != null &&
+      !inventories.some(
+        (item) => item.id_travel_group_inventory === assignmentInventoryId,
+      )
+    ) {
+      setAssignmentInventoryId(null);
+    }
+  }, [assignmentInventoryId, inventories]);
 
   const inventoryDraftPreview = useMemo(() => {
     const qtyTotal = Number(inventoryDraft.total_qty || 0);
@@ -3612,6 +3750,143 @@ export default function GroupDetailPage() {
       toast.error(msg);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function handleSelectInventoryForAssignment(item: GroupInventoryItem) {
+    setAssignmentSaleDialog(null);
+    setAssignmentInventoryId((prev) =>
+      prev === item.id_travel_group_inventory
+        ? null
+        : item.id_travel_group_inventory,
+    );
+  }
+
+  function openAssignmentSaleDialog(
+    item: PassengerItem,
+    mode: AssignmentSaleDialogState["mode"],
+  ) {
+    if (!assignmentInventoryId || !assignmentInventory) return;
+    const currentSale = getPassengerInventorySale(item, assignmentInventoryId);
+    const currency =
+      currentSale?.currency ||
+      assignmentInventoryMetrics?.currency ||
+      assignmentInventory?.currency ||
+      "ARS";
+    const defaultAmount =
+      currentSale?.amount ?? assignmentInventoryMetrics?.saleUnit ?? 0;
+    setAssignmentSaleDialog({
+      passenger: item,
+      mode,
+      inventoryId: assignmentInventoryId,
+      inventoryLabel: assignmentInventory.label,
+      currency,
+      value: defaultAmount > 0 ? defaultAmount.toFixed(2) : "",
+    });
+  }
+
+  async function submitInventoryAssignment(
+    item: PassengerItem,
+    method: "POST" | "PATCH" | "DELETE",
+    saleAmount?: number,
+    inventoryId = assignmentInventoryId,
+  ): Promise<boolean> {
+    if (!inventoryId) return false;
+    if (!item.id_travel_group_passenger) {
+      toast.error("El pasajero seleccionado es inválido.");
+      return false;
+    }
+    if (!item.client_id) {
+      toast.error("El pasajero seleccionado no tiene cliente vinculado.");
+      return false;
+    }
+
+    try {
+      setSubmitting(true);
+      setError(null);
+      await requestGroupApi(
+        `/api/groups/${encodeURIComponent(groupId)}/inventories/${inventoryId}/assign`,
+        {
+          method,
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            passengerId: item.id_travel_group_passenger,
+            ...(saleAmount != null ? { saleAmount } : {}),
+          }),
+        },
+        method === "POST"
+          ? "No pudimos asignar el servicio."
+          : method === "PATCH"
+            ? "No pudimos actualizar el valor de venta."
+            : "No pudimos anular la asignación.",
+      );
+      const passengerName = item.client
+        ? `${item.client.first_name} ${item.client.last_name}`.trim()
+        : `Cliente Nº${item.client_id}`;
+      toast.success(
+        method === "POST"
+          ? `Servicio asignado a ${passengerName}.`
+          : method === "PATCH"
+            ? `Valor actualizado para ${passengerName}.`
+            : `Asignación anulada para ${passengerName}.`,
+      );
+      await fetchAll();
+      if (
+        sectionFilter === "COBROS" &&
+        selectedCollectPassenger?.id_travel_group_passenger ===
+          item.id_travel_group_passenger
+      ) {
+        await refreshCollectData();
+      }
+      return true;
+    } catch (e) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : method === "POST"
+            ? "No pudimos asignar el servicio."
+            : method === "PATCH"
+              ? "No pudimos actualizar el valor de venta."
+              : "No pudimos anular la asignación.";
+      setError(msg);
+      toast.error(msg);
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleAssignInventoryToPassenger(item: PassengerItem) {
+    openAssignmentSaleDialog(item, "ASSIGN");
+  }
+
+  function handleUpdateInventoryAssignmentAmount(item: PassengerItem) {
+    openAssignmentSaleDialog(item, "UPDATE");
+  }
+
+  async function handleUnassignInventoryFromPassenger(item: PassengerItem) {
+    await submitInventoryAssignment(item, "DELETE");
+  }
+
+  async function handleSubmitAssignmentSaleDialog(
+    e: FormEvent<HTMLFormElement>,
+  ) {
+    e.preventDefault();
+    if (!assignmentSaleDialog) return;
+    const amount = parseMoneyInput(assignmentSaleDialog.value);
+    if (amount == null) {
+      toast.error("Ingresá un valor de venta válido.");
+      return;
+    }
+    const success = await submitInventoryAssignment(
+      assignmentSaleDialog.passenger,
+      assignmentSaleDialog.mode === "ASSIGN" ? "POST" : "PATCH",
+      amount,
+      assignmentSaleDialog.inventoryId,
+    );
+    if (success) {
+      setAssignmentSaleDialog(null);
     }
   }
 
@@ -5262,10 +5537,20 @@ export default function GroupDetailPage() {
                   const metrics = inventoryFinancialById.get(
                     item.id_travel_group_inventory,
                   );
+                  const isAssignmentSelected =
+                    assignmentInventoryId === item.id_travel_group_inventory;
+                  const assignDisabledReason =
+                    !metrics || metrics.saleTotal <= 0
+                      ? "Cargá una venta unitaria estimada para asignar."
+                      : "";
                   return (
                     <article
                       key={item.id_travel_group_inventory}
-                      className="rounded-2xl border border-sky-300/80 bg-white p-3 dark:border-sky-600/30 dark:bg-sky-950/10"
+                      className={`rounded-2xl border p-3 ${
+                        isAssignmentSelected
+                          ? "border-emerald-300/80 bg-emerald-50/70 dark:border-emerald-500/70 dark:bg-emerald-900/10"
+                          : "border-sky-300/80 bg-white dark:border-sky-600/30 dark:bg-sky-950/10"
+                      }`}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
@@ -5296,18 +5581,66 @@ export default function GroupDetailPage() {
                               {formatMoney(metrics.costTotal, metrics.currency)}
                             </span>
                             {metrics.saleTotal > 0 ? (
-                              <span className="rounded-full border border-emerald-300/80 bg-emerald-50/50 px-2 py-0.5 text-emerald-800 dark:border-emerald-500/70 dark:bg-emerald-900/10 dark:text-emerald-200">
-                                Venta estimada:{" "}
-                                {formatMoney(
-                                  metrics.saleTotal,
-                                  metrics.currency,
-                                )}
-                              </span>
+                              <>
+                                <span className="rounded-full border border-emerald-300/80 bg-emerald-50/50 px-2 py-0.5 text-emerald-800 dark:border-emerald-500/70 dark:bg-emerald-900/10 dark:text-emerald-200">
+                                  Venta unitaria estimada:{" "}
+                                  {formatMoney(
+                                    metrics.saleUnit,
+                                    metrics.currency,
+                                  )}
+                                </span>
+                                <span className="rounded-full border border-emerald-300/80 bg-emerald-50/50 px-2 py-0.5 text-emerald-800 dark:border-emerald-500/70 dark:bg-emerald-900/10 dark:text-emerald-200">
+                                  Venta estimada total:{" "}
+                                  {formatMoney(
+                                    metrics.saleTotal,
+                                    metrics.currency,
+                                  )}
+                                </span>
+                              </>
                             ) : null}
                           </>
                         ) : null}
                       </div>
-                      <div className="mt-2 flex justify-end gap-2">
+                      <div className="mt-2 flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSelectInventoryForAssignment(item)
+                          }
+                          disabled={
+                            submitting ||
+                            (Boolean(assignDisabledReason) &&
+                              !isAssignmentSelected)
+                          }
+                          className="inline-flex items-center justify-center gap-2 rounded-full border border-emerald-300 bg-emerald-50/80 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 hover:bg-emerald-100/80 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-500/70 dark:bg-emerald-900/15 dark:text-emerald-200"
+                          title={
+                            isAssignmentSelected
+                              ? "Cerrar modo asignación"
+                              : assignDisabledReason ||
+                                "Elegir pasajeros para este servicio"
+                          }
+                          aria-label={
+                            isAssignmentSelected
+                              ? "Cerrar modo asignación"
+                              : "Elegir pasajeros para este servicio"
+                          }
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={1.5}
+                            stroke="currentColor"
+                            className="size-4"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M12 4.5v15m7.5-7.5h-15"
+                            />
+                          </svg>
+                          {isAssignmentSelected ? "Asignando" : "Asignar"}
+                        </button>
                         <button
                           type="button"
                           onClick={() => startEditInventory(item)}
@@ -6059,27 +6392,90 @@ export default function GroupDetailPage() {
               </div>
             </CollapsiblePanel>
 
+            {assignmentInventory ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-300/80 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-500/60 dark:bg-emerald-900/15 dark:text-emerald-100">
+                <div>
+                  <p className="font-semibold">
+                    Asignando: {assignmentInventory.label}
+                  </p>
+                  <p className="text-xs text-emerald-800/80 dark:text-emerald-100/80">
+                    Base:{" "}
+                    {assignmentInventoryMetrics
+                      ? formatMoney(
+                          assignmentInventoryMetrics.saleUnit,
+                          assignmentInventoryMetrics.currency,
+                        )
+                      : "-"}
+                    . Usá la columna Acción para asignar, ajustar valor o anular
+                    este servicio por pasajero.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssignmentInventoryId(null)}
+                  className="rounded-full border border-emerald-300 bg-white/70 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-400 hover:bg-white dark:border-emerald-500/70 dark:bg-emerald-950/30 dark:text-emerald-100"
+                >
+                  Cerrar
+                </button>
+              </div>
+            ) : null}
+
             {filteredPassengers.length === 0 ? (
               <p className="mt-4 rounded-2xl border border-sky-300/70 bg-white px-4 py-3 text-sm text-slate-700 dark:border-sky-600/30 dark:bg-sky-950/10 dark:text-slate-300">
                 No hay pasajeros para los filtros actuales.
               </p>
             ) : passengerView === "TABLE" ? (
               <div className="mt-4 overflow-x-auto rounded-2xl border border-sky-300/70 bg-white shadow-sm shadow-slate-900/10 dark:border-sky-600/30 dark:bg-sky-950/10">
-                <table className="min-w-full text-left text-sm text-slate-800 dark:text-slate-100">
+                <table className="w-full min-w-[1080px] text-left text-sm text-slate-800 dark:text-slate-100">
                   <thead className="border-b border-sky-200/80 text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-sky-600/30 dark:text-slate-400">
                     <tr>
                       <th className="p-2">Pasajero</th>
                       {!isSingleDepartureMode ? (
                         <th className="p-2">Salida</th>
                       ) : null}
-                      <th className="p-2">Pendiente</th>
-                      <th className="p-2">Acción</th>
+                      <th className="p-2 text-right">Total venta</th>
+                      <th className="p-2 text-right">Pagos aplicados</th>
+                      <th className="p-2 text-right">Pendiente</th>
+                      <th className="p-2">
+                        {assignmentInventory ? "Asignación" : "Acción"}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredPassengers.map((item) => {
                       const isActive =
                         activePassengerId === item.id_travel_group_passenger;
+                      const financialDisplay = getPassengerFinancialDisplay(
+                        item.pending_payment,
+                      );
+                      const isAssignedToSelectedInventory =
+                        assignmentInventoryId != null &&
+                        Array.isArray(item.assigned_inventory_ids) &&
+                        item.assigned_inventory_ids.includes(
+                          assignmentInventoryId,
+                        );
+                      const assignedSale = getPassengerInventorySale(
+                        item,
+                        assignmentInventoryId,
+                      );
+                      const assignmentAvailableQty =
+                        assignmentInventoryMetrics?.availableQty ??
+                        (assignmentInventory
+                          ? Math.max(
+                              Number(assignmentInventory.total_qty || 0) -
+                                Number(assignmentInventory.assigned_qty || 0) -
+                                Number(assignmentInventory.blocked_qty || 0),
+                              0,
+                            )
+                          : 0);
+                      const assignmentDisabledReason = !item.client_id
+                        ? "El pasajero no tiene cliente vinculado."
+                        : ["CANCELADO", "CANCELADA"].includes(item.status)
+                          ? "No se puede asignar a un pasajero cancelado."
+                          : !isAssignedToSelectedInventory &&
+                              assignmentAvailableQty <= 0
+                            ? "No quedan cupos disponibles."
+                            : "";
                       return (
                         <tr
                           key={item.id_travel_group_passenger}
@@ -6107,67 +6503,135 @@ export default function GroupDetailPage() {
                                 : "-"}
                             </td>
                           ) : null}
-                          <td className="p-2 text-xs text-slate-700 dark:text-slate-300">
-                            {
-                              getPassengerPendingDisplay(item.pending_payment)
-                                .summary
-                            }
+                          <td className="p-2 text-right text-xs tabular-nums text-slate-700 dark:text-slate-300">
+                            {financialDisplay.saleTotal}
+                          </td>
+                          <td className="p-2 text-right text-xs tabular-nums text-slate-700 dark:text-slate-300">
+                            {financialDisplay.appliedPayments}
+                          </td>
+                          <td
+                            className="p-2 text-right text-xs tabular-nums text-slate-700 dark:text-slate-300"
+                            title={financialDisplay.pendingLabel}
+                          >
+                            {financialDisplay.pendingSummary}
                           </td>
                           <td className="p-2">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  focusPassengerPanel(
-                                    item.id_travel_group_passenger,
-                                  )
-                                }
-                                className={`${pillClass(isActive, "sky")} inline-flex items-center gap-1`}
-                                title={isActive ? "En edición" : "Gestionar"}
-                                aria-label={
-                                  isActive ? "En edición" : "Gestionar"
-                                }
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  strokeWidth={1.5}
-                                  stroke="currentColor"
-                                  className="size-4"
+                            {assignmentInventory ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isAssignedToSelectedInventory ? (
+                                  <span className="rounded-full border border-sky-300/70 bg-sky-50/70 px-2 py-1 text-[11px] font-semibold text-sky-800 dark:border-sky-600/40 dark:bg-sky-950/20 dark:text-sky-200">
+                                    Venta:{" "}
+                                    {assignedSale
+                                      ? formatMoney(
+                                          assignedSale.amount,
+                                          assignedSale.currency,
+                                        )
+                                      : "-"}
+                                  </span>
+                                ) : null}
+                                {isAssignedToSelectedInventory ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleUpdateInventoryAssignmentAmount(
+                                        item,
+                                      )
+                                    }
+                                    disabled={submitting}
+                                    className="inline-flex items-center justify-center rounded-full border border-sky-300 bg-sky-50/80 px-3 py-2 text-xs font-semibold text-sky-800 transition hover:border-sky-400 hover:bg-sky-100/80 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-600/40 dark:bg-sky-950/20 dark:text-sky-200"
+                                    title="Ajustar valor de venta"
+                                  >
+                                    Valor
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void (isAssignedToSelectedInventory
+                                      ? handleUnassignInventoryFromPassenger(
+                                          item,
+                                        )
+                                      : handleAssignInventoryToPassenger(item))
+                                  }
+                                  disabled={
+                                    submitting ||
+                                    Boolean(assignmentDisabledReason)
+                                  }
+                                  className={`inline-flex items-center justify-center rounded-full border px-4 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                                    isAssignedToSelectedInventory
+                                      ? "border-rose-300 bg-rose-100/90 text-rose-800 hover:border-rose-400 dark:border-rose-500/70 dark:bg-rose-900/15 dark:text-rose-200"
+                                      : "border-emerald-300 bg-emerald-50/80 text-emerald-800 hover:border-emerald-400 hover:bg-emerald-100/80 dark:border-emerald-500/70 dark:bg-emerald-900/15 dark:text-emerald-200"
+                                  }`}
+                                  title={
+                                    assignmentDisabledReason ||
+                                    (isAssignedToSelectedInventory
+                                      ? "Anular asignación"
+                                      : "Asignar servicio")
+                                  }
                                 >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
-                                  />
-                                </svg>
-                                {isActive ? "En edición" : "Gestionar"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleDeletePassenger(item)}
-                                disabled={submitting}
-                                className="grid size-8 place-items-center rounded-full border border-rose-300 bg-rose-100/90 text-rose-800 transition hover:border-rose-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-500/70 dark:bg-rose-900/15 dark:text-rose-200"
-                                title="Eliminar pasajero"
-                                aria-label="Eliminar pasajero"
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  strokeWidth={1.5}
-                                  stroke="currentColor"
-                                  className="size-4"
+                                  {isAssignedToSelectedInventory
+                                    ? "Anular asignado"
+                                    : "Asignar"}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    focusPassengerPanel(
+                                      item.id_travel_group_passenger,
+                                    )
+                                  }
+                                  className={`${pillClass(isActive, "sky")} inline-flex items-center gap-1`}
+                                  title={isActive ? "En edición" : "Gestionar"}
+                                  aria-label={
+                                    isActive ? "En edición" : "Gestionar"
+                                  }
                                 >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
-                                  />
-                                </svg>
-                              </button>
-                            </div>
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    strokeWidth={1.5}
+                                    stroke="currentColor"
+                                    className="size-4"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                                    />
+                                  </svg>
+                                  {isActive ? "En edición" : "Gestionar"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDeletePassenger(item)
+                                  }
+                                  disabled={submitting}
+                                  className="grid size-8 place-items-center rounded-full border border-rose-300 bg-rose-100/90 text-rose-800 transition hover:border-rose-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-500/70 dark:bg-rose-900/15 dark:text-rose-200"
+                                  title="Eliminar pasajero"
+                                  aria-label="Eliminar pasajero"
+                                >
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    strokeWidth={1.5}
+                                    stroke="currentColor"
+                                    className="size-4"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                                    />
+                                  </svg>
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       );
@@ -6386,6 +6850,87 @@ export default function GroupDetailPage() {
           </section>
         ) : null}
       </div>
+      {assignmentSaleDialog ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm">
+          <form
+            onSubmit={(e) => void handleSubmitAssignmentSaleDialog(e)}
+            className="w-full max-w-md rounded-2xl border border-sky-200 bg-white p-4 shadow-xl shadow-slate-950/20 dark:border-sky-700/50 dark:bg-slate-950"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assignment-sale-dialog-title"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3
+                  id="assignment-sale-dialog-title"
+                  className="text-base font-semibold text-slate-950 dark:text-slate-50"
+                >
+                  Valor de venta
+                </h3>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                  {assignmentSaleDialog.inventoryLabel}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAssignmentSaleDialog(null)}
+                disabled={submitting}
+                className="grid size-8 place-items-center rounded-full border border-slate-300 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
+                aria-label="Cerrar"
+                title="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+            <p className="mt-3 text-sm font-medium text-slate-800 dark:text-slate-100">
+              {assignmentSaleDialog.passenger.client
+                ? `${assignmentSaleDialog.passenger.client.first_name} ${assignmentSaleDialog.passenger.client.last_name}`
+                : `Cliente Nº${assignmentSaleDialog.passenger.client_id ?? "-"}`}
+            </p>
+            <label className="mt-4 flex flex-col gap-1 text-sm">
+              <span className="ml-1 font-medium text-slate-900 dark:text-slate-100">
+                Importe ({assignmentSaleDialog.currency})
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={assignmentSaleDialog.value}
+                onChange={(e) =>
+                  setAssignmentSaleDialog((prev) =>
+                    prev ? { ...prev, value: e.target.value } : prev,
+                  )
+                }
+                disabled={submitting}
+                autoFocus
+                className={FIELD_INPUT_CLASS}
+              />
+            </label>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAssignmentSaleDialog(null)}
+                disabled={submitting}
+                className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-400 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-500/70 dark:bg-emerald-900/15 dark:text-emerald-200"
+              >
+                {submitting ? (
+                  <Spinner label="Guardando..." />
+                ) : assignmentSaleDialog.mode === "ASSIGN" ? (
+                  "Asignar"
+                ) : (
+                  "Guardar valor"
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       <ToastContainer position="top-right" autoClose={3200} />
     </main>
   );

@@ -20,10 +20,28 @@ describe("passenger pending", () => {
     });
   });
 
-  it("falls back to installments when no detectable services", () => {
+  it("shows receipt-only balances as negative pending", () => {
     const result = computePassengerPendingValue({
       servicesByCurrency: {},
       receiptsByCurrency: { USD: 500 },
+      installmentsFallback: { amount: "1200", count: 2 },
+    });
+
+    expect(result.source).toBe("services_minus_receipts");
+    expect(result.amount).toBe("-500.00 USD");
+    expect(result.count).toBe(1);
+    expect(result.breakdown[0]).toMatchObject({
+      currency: "USD",
+      services: 0,
+      receipts: 500,
+      pending: -500,
+    });
+  });
+
+  it("falls back to installments when no services or receipts are available", () => {
+    const result = computePassengerPendingValue({
+      servicesByCurrency: {},
+      receiptsByCurrency: {},
       installmentsFallback: { amount: "1200", count: 2 },
     });
 

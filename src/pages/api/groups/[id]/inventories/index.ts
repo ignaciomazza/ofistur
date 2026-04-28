@@ -12,6 +12,7 @@ import {
   requireAuth,
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
+import { encodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
 
 type Body = {
   departure_id?: unknown;
@@ -154,7 +155,45 @@ export default async function handler(
           { id_travel_group_inventory: "desc" },
         ],
       });
-      return res.status(200).json({ items });
+      const serviceRefs = items.map((item) =>
+        String(encodeInventoryServiceId(item.id_travel_group_inventory)),
+      );
+      const assignedRows =
+        serviceRefs.length > 0
+          ? await prisma.travelGroupClientPayment.findMany({
+              where: {
+                id_agency: auth.id_agency,
+                travel_group_id: group.id_travel_group,
+                service_ref: { in: serviceRefs },
+                status: { not: "CANCELADA" },
+              },
+              select: {
+                service_ref: true,
+                travel_group_passenger_id: true,
+              },
+            })
+          : [];
+      const assignedByServiceRef = new Map<string, Set<number>>();
+      for (const row of assignedRows) {
+        const serviceRef = String(row.service_ref || "");
+        if (!serviceRef) continue;
+        const set = assignedByServiceRef.get(serviceRef) ?? new Set<number>();
+        set.add(row.travel_group_passenger_id);
+        assignedByServiceRef.set(serviceRef, set);
+      }
+      return res.status(200).json({
+        items: items.map((item) => {
+          const serviceRef = String(
+            encodeInventoryServiceId(item.id_travel_group_inventory),
+          );
+          const derivedAssigned =
+            assignedByServiceRef.get(serviceRef)?.size ?? 0;
+          return {
+            ...item,
+            assigned_qty: derivedAssigned,
+          };
+        }),
+      });
     } catch (error) {
       console.error("[groups][inventories][GET]", error);
       return groupApiError(

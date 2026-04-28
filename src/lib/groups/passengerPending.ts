@@ -47,10 +47,15 @@ const toSortedBreakdown = (
   const rows: PassengerPendingBreakdown[] = [];
   for (const currencyKey of currencies) {
     const currency = normalizeCurrency(currencyKey);
-    const services = round2(Math.max(0, Number(servicesByCurrency[currencyKey] || 0)));
-    const receipts = round2(Math.max(0, Number(receiptsByCurrency[currencyKey] || 0)));
-    const pending = round2(Math.max(0, services - receipts));
-    if (services <= PENDING_TOLERANCE && receipts <= PENDING_TOLERANCE) continue;
+    const services = round2(
+      Math.max(0, Number(servicesByCurrency[currencyKey] || 0)),
+    );
+    const receipts = round2(
+      Math.max(0, Number(receiptsByCurrency[currencyKey] || 0)),
+    );
+    const pending = round2(services - receipts);
+    if (services <= PENDING_TOLERANCE && receipts <= PENDING_TOLERANCE)
+      continue;
     rows.push({
       currency,
       services,
@@ -64,7 +69,9 @@ const toSortedBreakdown = (
 const formatAmountFromBreakdown = (
   breakdown: PassengerPendingBreakdown[],
 ): string => {
-  const pendingRows = breakdown.filter((row) => row.pending > PENDING_TOLERANCE);
+  const pendingRows = breakdown.filter(
+    (row) => Math.abs(row.pending) > PENDING_TOLERANCE,
+  );
   if (pendingRows.length === 0) return "0";
   if (pendingRows.length === 1) {
     return `${pendingRows[0].pending.toFixed(2)} ${pendingRows[0].currency}`;
@@ -84,8 +91,11 @@ export function computePassengerPendingValue(args: {
   const hasDetectableServices = Object.values(services).some(
     (value) => Number(value) > PENDING_TOLERANCE,
   );
+  const hasDetectableReceipts = Object.values(receipts).some(
+    (value) => Number(value) > PENDING_TOLERANCE,
+  );
 
-  if (!hasDetectableServices) {
+  if (!hasDetectableServices && !hasDetectableReceipts) {
     const fallbackCount = Number(args.installmentsFallback.count) || 0;
     return {
       amount: String(args.installmentsFallback.amount ?? "0"),
@@ -96,7 +106,9 @@ export function computePassengerPendingValue(args: {
   }
 
   const breakdown = toSortedBreakdown(services, receipts);
-  const pendingRows = breakdown.filter((row) => row.pending > PENDING_TOLERANCE);
+  const pendingRows = breakdown.filter(
+    (row) => Math.abs(row.pending) > PENDING_TOLERANCE,
+  );
   return {
     amount: formatAmountFromBreakdown(breakdown),
     count: pendingRows.length,
