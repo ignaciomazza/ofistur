@@ -50,6 +50,16 @@ export function isPlanKey(value: unknown): value is PlanKey {
   return value === "basico" || value === "medio" || value === "pro";
 }
 
+export function normalizePlanKey(value: unknown): PlanKey | null {
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase();
+  return isPlanKey(normalized) ? normalized : null;
+}
+
 export function normalizeUsersCount(value: number) {
   const safe = Number.isFinite(value) ? Math.floor(value) : 1;
   return Math.max(1, safe);

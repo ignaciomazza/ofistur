@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { isPlanKey, type PlanKey } from "@/lib/billing/pricing";
+import { normalizePlanKey, type PlanKey } from "@/lib/billing/pricing";
 import {
   canAccessFeatureByPlan,
   type PlanFeatureKey,
@@ -31,7 +31,7 @@ export async function resolveAgencyPlanInfo(
     return { planKey: null, hasPlan: false, ownerId };
   }
 
-  const planKey = isPlanKey(config.plan_key) ? config.plan_key : "basico";
+  const planKey = normalizePlanKey(config.plan_key) ?? "basico";
   return { planKey, hasPlan: true, ownerId };
 }
 

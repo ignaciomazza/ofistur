@@ -1,4 +1,4 @@
-import { isPlanKey, type PlanKey } from "@/lib/billing/pricing";
+import { normalizePlanKey, type PlanKey } from "@/lib/billing/pricing";
 
 export type PlanFeatureKey =
   | "calendar"
@@ -84,7 +84,7 @@ export function canAccessFeatureByPlan(
   feature: PlanFeatureKey,
 ): boolean {
   if (!hasPlan) return true;
-  const normalized = isPlanKey(planKey) ? planKey : "basico";
+  const normalized = normalizePlanKey(planKey) ?? "basico";
   const minPlan = PLAN_FEATURE_MIN[feature];
   return PLAN_RANK[normalized] >= PLAN_RANK[minPlan];
 }

@@ -60,10 +60,6 @@ async function resolveAuth(req: NextApiRequest): Promise<AuthContext | null> {
     const role = normalizeRole(p.role);
     const email = p.email;
 
-    if (id_user && id_agency) {
-      return { id_user, id_agency, role: role || "" };
-    }
-
     if (id_user || email) {
       const user = await prisma.user.findFirst({
         where: id_user ? { id_user } : { email },
@@ -73,9 +69,13 @@ async function resolveAuth(req: NextApiRequest): Promise<AuthContext | null> {
         return {
           id_user: user.id_user,
           id_agency: user.id_agency,
-          role: role || normalizeRole(user.role),
+          role: normalizeRole(user.role) || role,
         };
       }
+    }
+
+    if (id_user && id_agency) {
+      return { id_user, id_agency, role: role || "" };
     }
   } catch {
     return null;

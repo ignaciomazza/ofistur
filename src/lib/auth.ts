@@ -58,10 +58,6 @@ export async function resolveAuth(
     const role = normalizeRole(p.role);
     const email = p.email;
 
-    if (id_user && id_agency) {
-      return { id_user, id_agency, role, email: email ?? undefined };
-    }
-
     if (id_user || email) {
       const user = await prisma.user.findFirst({
         where: id_user ? { id_user } : { email },
@@ -71,10 +67,14 @@ export async function resolveAuth(
         return {
           id_user: user.id_user,
           id_agency: user.id_agency,
-          role: role || normalizeRole(user.role),
+          role: normalizeRole(user.role) || role,
           email: user.email ?? undefined,
         };
       }
+    }
+
+    if (id_user && id_agency) {
+      return { id_user, id_agency, role, email: email ?? undefined };
     }
   } catch {
     return null;

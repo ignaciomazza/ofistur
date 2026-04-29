@@ -44,3 +44,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+viajemos-cero-stress/PROVEEDORES.xlsx
+.gitignore
+viajemos-cero-stress/reportes/migrate-viajemos-cero-stress-agency-179-20260423-170147-apply.json
+viajemos-cero-stress/reportes/migrate-viajemos-cero-stress-agency-179-20260423-170047-dry-run.json
+.gitignore
+viajemos-cero-stress/reportes/migrate-viajemos-cero-stress-agency-179-20260423-172033-dry-run.json
+.gitignore
+scripts/migrate-viajemos-cero-stress.js
+.gitignore
+viajemos-cero-stress/reportes/migrate-viajemos-cero-stress-agency-179-20260423-171938-apply.json
+viajemos-cero-stress/OPERADORES3.xlsx

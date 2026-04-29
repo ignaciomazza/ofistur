@@ -3,6 +3,7 @@ import {
   canAccessRouteByPlan,
   resolvePlanFeatureFromRoute,
 } from "@/lib/planAccess";
+import { normalizePlanKey } from "@/lib/billing/pricing";
 
 describe("planAccess groups feature", () => {
   it("maps grouped routes to groups feature", () => {
@@ -15,6 +16,14 @@ describe("planAccess groups feature", () => {
     expect(canAccessRouteByPlan("basico", true, "/groups")).toBe(false);
     expect(canAccessRouteByPlan("medio", true, "/groups")).toBe(false);
     expect(canAccessRouteByPlan("pro", true, "/groups")).toBe(true);
+  });
+
+  it("normalizes plan keys before checking gated routes", () => {
+    expect(normalizePlanKey("Pro")).toBe("pro");
+    expect(normalizePlanKey(" BASICO ")).toBe("basico");
+    expect(canAccessRouteByPlan("Pro" as never, true, "/other-incomes")).toBe(
+      true,
+    );
   });
 
   it("preserves legacy behavior for agencies without billing plan", () => {

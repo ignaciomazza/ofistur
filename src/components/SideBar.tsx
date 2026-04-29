@@ -103,7 +103,12 @@ export default function SideBar({
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     const r = await fetchRoleFromApis();
-    setRole(r || "");
+    if (r) {
+      setRole(r);
+      document.cookie = `role=${r}; path=/;`;
+    } else {
+      setRole((prev) => prev || "");
+    }
     fetchingRef.current = false;
   }, []);
 
@@ -114,9 +119,9 @@ export default function SideBar({
     const fromCookie = normalizeRole(getCookie("role"));
     if (fromCookie) {
       setRole(fromCookie);
-      return;
     }
-    // Si no hay cookie, consultamos APIs
+    // La cookie acelera el primer render, pero puede quedar vieja si cambian el
+    // rol del usuario. Revalidamos contra la API.
     void refreshRole();
   }, [refreshRole]);
 
@@ -126,9 +131,8 @@ export default function SideBar({
       const cookieRole = normalizeRole(getCookie("role"));
       if (cookieRole) {
         if (cookieRole !== role) setRole(cookieRole);
-        return;
       }
-      if (!role) void refreshRole();
+      void refreshRole();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);

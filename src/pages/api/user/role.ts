@@ -77,12 +77,9 @@ export default async function handler(
     return res.status(401).json({ error: "Token inválido o expirado" });
   }
 
-  // ✅ Fast-path: si el JWT ya trae role, devolvémoslo sin ir a DB
-  if (payload.role) {
-    return res.status(200).json({ role: normalizeRole(payload.role) });
-  }
-
-  // Fallback: buscar por id_user o email
+  // El rol del JWT puede quedar viejo si se edita un usuario sin reloguearlo.
+  // Para los guards usamos la DB como fuente vigente y dejamos el JWT como
+  // fallback solo si el token no identifica al usuario.
   try {
     const id_user =
       Number(payload.id_user ?? payload.userId ?? payload.uid) || null;
@@ -101,6 +98,9 @@ export default async function handler(
         : null;
 
     if (!user) {
+      if (payload.role) {
+        return res.status(200).json({ role: normalizeRole(payload.role) });
+      }
       res.setHeader("x-auth-reason", "user-not-found");
       return res.status(404).json({ error: "Usuario no encontrado" });
     }

@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
 import { jwtVerify, type JWTPayload } from "jose";
 import { getFinanceSectionGrants } from "@/lib/accessControl";
-import { canAccessFinanceSection } from "@/utils/permissions";
+import { canAccessFinanceSection, normalizeRole } from "@/utils/permissions";
 import {
   normalizeReceiptVerificationRules,
   pickReceiptVerificationRule,
@@ -62,37 +62,25 @@ async function getUserFromAuth(
     const p = payload as TokenPayload;
 
     const id_user = Number(p.id_user ?? p.userId ?? p.uid) || undefined;
-    const id_agency = Number(p.id_agency ?? p.agencyId ?? p.aid) || undefined;
-    const role = (p.role || "") as string | undefined;
+    const tokenAgencyId =
+      Number(p.id_agency ?? p.agencyId ?? p.aid) || undefined;
+    const tokenRole = normalizeRole(p.role);
     const email = p.email;
 
-    if (!id_user && email) {
-      const u = await prisma.user.findUnique({
-        where: { email },
+    if (id_user || email) {
+      const u = await prisma.user.findFirst({
+        where: id_user ? { id_user } : { email },
         select: { id_user: true, id_agency: true, role: true, email: true },
       });
       if (u)
         return {
           id_user: u.id_user,
           id_agency: u.id_agency,
-          role: u.role,
+          role: normalizeRole(u.role) || tokenRole,
           email: u.email,
         };
     }
-    if (id_user && !id_agency) {
-      const u = await prisma.user.findUnique({
-        where: { id_user },
-        select: { id_agency: true, role: true, email: true },
-      });
-      if (u)
-        return {
-          id_user,
-          id_agency: u.id_agency,
-          role: role ?? u.role,
-          email: email ?? u.email ?? undefined,
-        };
-    }
-    return { id_user, id_agency, role, email };
+    return { id_user, id_agency: tokenAgencyId, role: tokenRole, email };
   } catch {
     return null;
   }
