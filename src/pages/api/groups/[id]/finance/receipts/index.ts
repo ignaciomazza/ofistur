@@ -21,11 +21,15 @@ import {
 } from "@/lib/groups/inventoryServiceRefs";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
 import {
+  normalizeGroupReceiptPdfItems,
   normalizeGroupReceiptStoredPayments,
+  readGroupReceiptPdfItemsFromMetadata,
   readGroupReceiptPaymentsFromMetadata,
   resolveGroupReceiptVerificationState,
+  withGroupReceiptPdfItemsInMetadata,
   withGroupReceiptPaymentsInMetadata,
 } from "@/lib/groups/groupReceiptMetadata";
+import { settleGroupReceiptClientPayments } from "@/lib/groups/groupReceiptPaymentSettlement";
 
 type ReceiptRow = {
   id_travel_group_receipt: number;
@@ -76,6 +80,7 @@ function buildReceiptResponse(
     metadata: row.metadata,
   });
   const payments = readGroupReceiptPaymentsFromMetadata(row.metadata);
+  const pdfItems = readGroupReceiptPdfItemsFromMetadata(row.metadata);
 
   return {
     id_receipt: row.id_travel_group_receipt,
@@ -98,6 +103,7 @@ function buildReceiptResponse(
       row.counter_amount == null ? null : toAmountNumber(row.counter_amount),
     counter_currency: row.counter_currency,
     payments,
+    pdf_items: pdfItems,
     verification_status: verificationState.status,
     verification_status_source: verificationState.source,
     verified_at: verificationState.verifiedAt
@@ -260,6 +266,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     base_currency?: unknown;
     counter_amount?: unknown;
     counter_currency?: unknown;
+    pdf_items?: unknown;
   };
 
   const passengerId = parseOptionalPositiveInt(body.passengerId);
@@ -362,6 +369,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   const normalizedPayments = normalizeGroupReceiptStoredPayments(
     Array.isArray(body.payments) ? body.payments : [],
   );
+  const pdfItems = normalizeGroupReceiptPdfItems(body.pdf_items);
   if (
     hasPayments &&
     Array.isArray(body.payments) &&
@@ -508,7 +516,10 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     finalServiceIds = validation.normalizedServiceIds;
   }
 
-  const metadata = withGroupReceiptPaymentsInMetadata({}, normalizedPayments);
+  const metadata = withGroupReceiptPdfItemsInMetadata(
+    withGroupReceiptPaymentsInMetadata({}, normalizedPayments),
+    pdfItems,
+  );
   const [hasVerificationStatus, hasVerifiedAt, hasVerifiedBy] = await Promise.all([
     hasSchemaColumn("TravelGroupReceipt", "verification_status"),
     hasSchemaColumn("TravelGroupReceipt", "verified_at"),
@@ -602,7 +613,23 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         }
         NULL::INTEGER AS "booking_id"
     `);
-    return rows[0];
+    const createdReceipt = rows[0];
+    await settleGroupReceiptClientPayments(tx, {
+      idAgency: ctx.auth.id_agency,
+      groupId: ctx.group.id_travel_group,
+      passengerId: passenger.id_travel_group_passenger,
+      clientIds: finalClientIds,
+      receiptId: createdReceipt.id_travel_group_receipt,
+      issueDate,
+      paidByUserId: ctx.auth.id_user,
+      amount,
+      amountCurrency,
+      paymentFeeAmount,
+      baseAmount,
+      baseCurrency,
+      payments: normalizedPayments,
+    });
+    return createdReceipt;
   });
 
   return res.status(201).json({

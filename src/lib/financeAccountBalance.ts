@@ -117,6 +117,7 @@ export async function computeExpectedAccountBalanceAtDate(
         select: {
           amount: true,
           account_id: true,
+          payment_currency: true,
         },
       },
     },
@@ -128,18 +129,21 @@ export async function computeExpectedAccountBalanceAtDate(
     const receiptCurrency = toUpperCurrency(
       hasCounter ? receipt.counter_currency : receipt.amount_currency || receipt.currency,
     );
-    if (receiptCurrency !== targetCurrency) continue;
 
     const payments = Array.isArray(receipt.payments) ? receipt.payments : [];
     if (payments.length > 0) {
       for (const payment of payments) {
-        if (payment.account_id === accountId) {
+        const paymentCurrency = toUpperCurrency(
+          payment.payment_currency || receiptCurrency,
+        );
+        if (payment.account_id === accountId && paymentCurrency === targetCurrency) {
           expected += toNum(payment.amount);
         }
       }
       continue;
     }
 
+    if (receiptCurrency !== targetCurrency) continue;
     if (receipt.account_id === accountId) {
       expected += hasCounter
         ? toNum(receipt.counter_amount)

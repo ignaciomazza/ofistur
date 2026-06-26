@@ -70,6 +70,14 @@ const Field: React.FC<{
   </div>
 );
 
+type FieldConfig = {
+  name: keyof OperatorFormData;
+  label: string;
+  type?: string;
+  required?: boolean;
+  placeholder?: string;
+};
+
 export default function OperatorForm({
   formData,
   handleChange,
@@ -81,7 +89,7 @@ export default function OperatorForm({
   const inputClass =
     "w-full rounded-2xl border border-sky-200 bg-white/50 p-2 px-3 outline-none shadow-sm shadow-sky-950/10 backdrop-blur placeholder:font-light placeholder:tracking-wide dark:bg-sky-100/10 dark:border-sky-200/60 dark:text-white";
 
-  const identityFields = [
+  const identityFields: FieldConfig[] = [
     {
       name: "name",
       label: "Nombre comercial",
@@ -96,7 +104,6 @@ export default function OperatorForm({
     {
       name: "tax_id",
       label: "CUIT",
-      required: true,
       placeholder: "Ej: 30-12345678-9",
     },
     {
@@ -106,19 +113,18 @@ export default function OperatorForm({
     },
   ];
 
-  const contactFields = [
+  const contactFields: FieldConfig[] = [
     {
       name: "email",
       label: "Email",
       type: "email",
-      required: true,
       placeholder: "contacto@operador.com",
     },
     { name: "phone", label: "Teléfono", type: "tel", placeholder: "11 1234 5678" },
     { name: "website", label: "Sitio web", type: "url", placeholder: "https://..." },
   ];
 
-  const locationFields = [
+  const locationFields: FieldConfig[] = [
     { name: "address", label: "Dirección", placeholder: "Calle y número" },
     { name: "postal_code", label: "Código Postal", placeholder: "CP" },
     { name: "city", label: "Localidad", placeholder: "Ciudad" },

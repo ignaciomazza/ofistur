@@ -8,7 +8,10 @@ import ReceiptStandaloneDocument, {
   type ReceiptStandalonePdfData,
 } from "@/services/receipts/ReceiptStandaloneDocument";
 import { groupApiError } from "@/lib/groups/apiErrors";
-import { readGroupReceiptPaymentsFromMetadata } from "@/lib/groups/groupReceiptMetadata";
+import {
+  readGroupReceiptPaymentsFromMetadata,
+  readGroupReceiptPdfItemsFromMetadata,
+} from "@/lib/groups/groupReceiptMetadata";
 import {
   parseOptionalPositiveInt,
   requireGroupFinanceContext,
@@ -268,6 +271,7 @@ export default async function handler(
   type PdfServiceLine = {
     id: number;
     description: string;
+    dateLabel?: string | null;
     departureDate: Date | null;
     returnDate: Date | null;
   };
@@ -302,6 +306,16 @@ export default async function handler(
       };
     })
     .filter((item): item is PdfServiceLine => item !== null);
+  const pdfItemsPayload = readGroupReceiptPdfItemsFromMetadata(receipt.metadata);
+  const manualServicesForPdf = pdfItemsPayload.items.map((item, idx) => ({
+    id: -(idx + 1),
+    description: item.description,
+    dateLabel: item.date_label || null,
+    departureDate: null,
+    returnDate: null,
+  }));
+  const effectiveServicesForPdf =
+    manualServicesForPdf.length > 0 ? manualServicesForPdf : servicesForPdf;
 
   const clientIds =
     Array.isArray(receipt.client_ids) && receipt.client_ids.length > 0
@@ -398,7 +412,8 @@ export default async function handler(
         },
       ];
     })(),
-    services: servicesForPdf,
+    services: effectiveServicesForPdf,
+    manualFreeText: pdfItemsPayload.freeText,
     base_amount:
       receipt.base_amount == null ? null : toNumber(receipt.base_amount),
     base_currency: receipt.base_currency,

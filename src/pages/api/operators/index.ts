@@ -4,8 +4,13 @@ import { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
 import { getNextAgencyCounter } from "@/lib/agencyCounters";
 import { resolveAuth } from "@/lib/auth";
+import { canManageOperators } from "@/lib/operatorAccess";
 
-const MANAGER_ROLES = new Set(["desarrollador", "gerente", "administrativo"]);
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
 
 export default async function handler(
   req: NextApiRequest,
@@ -13,7 +18,6 @@ export default async function handler(
 ) {
   const auth = await resolveAuth(req);
   if (!auth) return res.status(401).json({ error: "Unauthorized" });
-  const canManage = MANAGER_ROLES.has(auth.role);
 
   const rawAgency = Array.isArray(req.query.agencyId)
     ? req.query.agencyId[0]
@@ -38,21 +42,22 @@ export default async function handler(
     }
   } else if (req.method === "POST") {
     const {
-      name,
-      email,
-      phone,
-      website,
-      address,
-      postal_code,
-      city,
-      state,
-      country,
-      vat_status,
-      legal_name,
-      tax_id,
       id_agency,
     } = req.body;
+    const name = cleanString(req.body.name);
+    const email = cleanString(req.body.email);
+    const phone = cleanString(req.body.phone);
+    const website = cleanString(req.body.website);
+    const address = cleanString(req.body.address);
+    const postal_code = cleanString(req.body.postal_code);
+    const city = cleanString(req.body.city);
+    const state = cleanString(req.body.state);
+    const country = cleanString(req.body.country);
+    const vat_status = cleanString(req.body.vat_status);
+    const legal_name = cleanString(req.body.legal_name);
+    const tax_id = cleanString(req.body.tax_id);
 
+    const canManage = await canManageOperators(auth);
     if (!canManage) {
       return res.status(403).json({ error: "Sin permisos" });
     }
@@ -63,25 +68,32 @@ export default async function handler(
     }
 
     // Required fields
-    if (!name || !email || !tax_id) {
+    if (!name) {
       return res.status(400).json({
-        error: "Los campos 'name', 'email' y 'tax_id' son obligatorios.",
+        error: "El nombre comercial es obligatorio.",
       });
     }
 
     try {
+      const duplicateClauses = [
+        email ? { email } : null,
+        tax_id ? { tax_id } : null,
+      ].filter(Boolean) as Array<{ email: string } | { tax_id: string }>;
+
       // Check duplicates within the same agency
-      const duplicate = await prisma.operator.findFirst({
-        where: {
-          id_agency: auth.id_agency,
-          OR: [{ email }, { tax_id }],
-        },
-      });
-      if (duplicate) {
-        return res.status(400).json({
-          error:
-            "Ya existe un operador con el mismo email o tax_id en esta agencia.",
+      if (duplicateClauses.length > 0) {
+        const duplicate = await prisma.operator.findFirst({
+          where: {
+            id_agency: auth.id_agency,
+            OR: duplicateClauses,
+          },
         });
+        if (duplicate) {
+          return res.status(400).json({
+            error:
+              "Ya existe un operador con el mismo email o CUIT en esta agencia.",
+          });
+        }
       }
 
       const newOperator = await prisma.$transaction(async (tx) => {

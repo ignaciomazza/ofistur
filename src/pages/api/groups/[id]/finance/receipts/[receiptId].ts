@@ -17,10 +17,17 @@ import {
   resolveInventorySaleUnitPrice,
 } from "@/lib/groups/inventoryServiceRefs";
 import {
+  normalizeGroupReceiptPdfItems,
   normalizeGroupReceiptStoredPayments,
+  readGroupReceiptPdfItemsFromMetadata,
   readGroupReceiptPaymentsFromMetadata,
+  withGroupReceiptPdfItemsInMetadata,
   withGroupReceiptPaymentsInMetadata,
 } from "@/lib/groups/groupReceiptMetadata";
+import {
+  releaseGroupReceiptClientPayments,
+  settleGroupReceiptClientPayments,
+} from "@/lib/groups/groupReceiptPaymentSettlement";
 
 async function findReceipt(
   agencyId: number,
@@ -31,6 +38,8 @@ async function findReceipt(
     Array<{
       id_travel_group_receipt: number;
       travel_group_passenger_id: number;
+      client_id: number;
+      client_ids: number[] | null;
       service_refs: number[] | null;
       metadata: Prisma.JsonValue | null;
       booking_id: number | null;
@@ -39,6 +48,8 @@ async function findReceipt(
     SELECT
       r."id_travel_group_receipt",
       r."travel_group_passenger_id",
+      r."client_id",
+      r."client_ids",
       r."service_refs",
       r."metadata",
       p."booking_id"
@@ -99,6 +110,7 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
     clientIds?: unknown;
     serviceIds?: unknown;
     payments?: unknown;
+    pdf_items?: unknown;
   };
 
   const conceptRaw =
@@ -161,6 +173,12 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
         .map((item) => parseOptionalPositiveInt(item))
         .filter((item): item is number => !!item)
     : [];
+  const finalClientIds =
+    clientIds.length > 0
+      ? Array.from(new Set(clientIds))
+      : Array.isArray(existing.client_ids) && existing.client_ids.length > 0
+        ? existing.client_ids
+        : [existing.client_id].filter((item): item is number => !!item);
   const serviceIdsRaw = Array.isArray(body.serviceIds)
     ? body.serviceIds
     : null;
@@ -196,6 +214,10 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
   const effectivePayments = hasPayments
     ? normalizedPayments
     : readGroupReceiptPaymentsFromMetadata(existing.metadata);
+  const hasPdfItems = Object.prototype.hasOwnProperty.call(body, "pdf_items");
+  const effectivePdfItems = hasPdfItems
+    ? normalizeGroupReceiptPdfItems(body.pdf_items)
+    : readGroupReceiptPdfItemsFromMetadata(existing.metadata);
 
   let finalServiceIds = Array.from(
     new Set(
@@ -334,34 +356,59 @@ async function handlePatch(req: NextApiRequest, res: NextApiResponse) {
     }
     finalServiceIds = validation.normalizedServiceIds;
   }
-  const nextMetadata = withGroupReceiptPaymentsInMetadata(
-    existing.metadata,
-    effectivePayments,
+  const nextMetadata = withGroupReceiptPdfItemsInMetadata(
+    withGroupReceiptPaymentsInMetadata(existing.metadata, effectivePayments),
+    effectivePdfItems,
   );
 
-  await prisma.$executeRaw(Prisma.sql`
-    UPDATE "TravelGroupReceipt"
-    SET "issue_date" = ${issueDate},
-        "amount" = ${amount},
-        "amount_string" = ${amountString},
-        "amount_currency" = ${amountCurrency},
-        "concept" = ${concept},
-        "currency" = ${currency},
-        "payment_method" = ${paymentMethod},
-        "payment_fee_amount" = ${paymentFeeAmount},
-        "account" = ${account},
-        "base_amount" = ${baseAmount},
-        "base_currency" = ${baseCurrency},
-        "counter_amount" = ${counterAmount},
-        "counter_currency" = ${counterCurrency},
-        "client_ids" = ${clientIds},
-        "service_refs" = ${finalServiceIds},
-        "metadata" = ${nextMetadata}::jsonb,
-        "updated_at" = NOW()
-    WHERE "id_travel_group_receipt" = ${receiptId}
-      AND "id_agency" = ${ctx.auth.id_agency}
-      AND "travel_group_id" = ${ctx.group.id_travel_group}
-  `);
+  await prisma.$transaction(async (tx) => {
+    await releaseGroupReceiptClientPayments(tx, {
+      idAgency: ctx.auth.id_agency,
+      groupId: ctx.group.id_travel_group,
+      receiptId,
+      reason: "Recibo de grupal editado",
+    });
+
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE "TravelGroupReceipt"
+      SET "issue_date" = ${issueDate},
+          "amount" = ${amount},
+          "amount_string" = ${amountString},
+          "amount_currency" = ${amountCurrency},
+          "concept" = ${concept},
+          "currency" = ${currency},
+          "payment_method" = ${paymentMethod},
+          "payment_fee_amount" = ${paymentFeeAmount},
+          "account" = ${account},
+          "base_amount" = ${baseAmount},
+          "base_currency" = ${baseCurrency},
+          "counter_amount" = ${counterAmount},
+          "counter_currency" = ${counterCurrency},
+          "client_ids" = ${finalClientIds},
+          "service_refs" = ${finalServiceIds},
+          "metadata" = ${nextMetadata}::jsonb,
+          "updated_at" = NOW()
+      WHERE "id_travel_group_receipt" = ${receiptId}
+        AND "id_agency" = ${ctx.auth.id_agency}
+        AND "travel_group_id" = ${ctx.group.id_travel_group}
+    `);
+
+    await settleGroupReceiptClientPayments(tx, {
+      idAgency: ctx.auth.id_agency,
+      groupId: ctx.group.id_travel_group,
+      passengerId: existing.travel_group_passenger_id,
+      clientIds: finalClientIds,
+      receiptId,
+      issueDate,
+      paidByUserId: ctx.auth.id_user,
+      amount,
+      amountCurrency,
+      paymentFeeAmount,
+      baseAmount,
+      baseCurrency,
+      payments: effectivePayments,
+    });
+  });
 
   return res.status(200).json({ success: true, id_receipt: receiptId });
 }
@@ -390,12 +437,21 @@ async function handleDelete(req: NextApiRequest, res: NextApiResponse) {
     });
   }
 
-  await prisma.$executeRaw(Prisma.sql`
-    DELETE FROM "TravelGroupReceipt"
-    WHERE "id_travel_group_receipt" = ${receiptId}
-      AND "id_agency" = ${ctx.auth.id_agency}
-      AND "travel_group_id" = ${ctx.group.id_travel_group}
-  `);
+  await prisma.$transaction(async (tx) => {
+    await releaseGroupReceiptClientPayments(tx, {
+      idAgency: ctx.auth.id_agency,
+      groupId: ctx.group.id_travel_group,
+      receiptId,
+      reason: "Recibo de grupal eliminado",
+    });
+
+    await tx.$executeRaw(Prisma.sql`
+      DELETE FROM "TravelGroupReceipt"
+      WHERE "id_travel_group_receipt" = ${receiptId}
+        AND "id_agency" = ${ctx.auth.id_agency}
+        AND "travel_group_id" = ${ctx.group.id_travel_group}
+    `);
+  });
 
   return res.status(204).end();
 }

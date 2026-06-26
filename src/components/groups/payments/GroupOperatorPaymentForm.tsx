@@ -986,7 +986,6 @@ export default function GroupOperatorPaymentForm({
     () => toPositiveInt(operatorId),
     [operatorId],
   );
-  const [amount, setAmount] = useState<string>("");
   const [currency, setCurrency] = useState<string>("");
   const [paymentLines, setPaymentLines] = useState<PaymentLineDraft[]>([
     {
@@ -1225,11 +1224,25 @@ export default function GroupOperatorPaymentForm({
     }
     return Array.from(set);
   }, [paymentLines]);
+  const selectedPaymentCurrencies = useMemo(() => {
+    const set = new Set<string>();
+    for (const line of paymentLines) {
+      const code = normalizeCurrencyCodeLoose(line.payment_currency);
+      if (code) set.add(code);
+    }
+    return Array.from(set);
+  }, [paymentLines]);
 
   const hasMixedPaymentCurrencies = paymentCurrenciesInUse.length > 1;
   const effectivePaymentCurrency =
     paymentCurrenciesInUse[0] ||
     normalizeCurrencyCodeLoose(lockedSvcCurrency || currencyOptions[0] || "ARS");
+  const conversionPaymentCurrencies =
+    paymentCurrenciesInUse.length > 0
+      ? paymentCurrenciesInUse
+      : selectedPaymentCurrencies;
+  const conversionPaymentCurrency =
+    conversionPaymentCurrencies[0] || effectivePaymentCurrency;
   const creditAmountNum = useMemo(
     () =>
       round2(
@@ -1249,9 +1262,8 @@ export default function GroupOperatorPaymentForm({
   );
 
   useEffect(() => {
-    setAmount(paymentsTotalNum > 0 ? String(paymentsTotalNum) : "");
     setCurrency(effectivePaymentCurrency);
-  }, [paymentLines, paymentsTotalNum, effectivePaymentCurrency]);
+  }, [effectivePaymentCurrency]);
 
   const addPaymentLine = useCallback(() => {
     setPaymentLines((prev) => [
@@ -1464,26 +1476,17 @@ export default function GroupOperatorPaymentForm({
 
   const showConversionSection = useMemo(() => {
     if (action !== "create") return false;
-    if (hasMixedPaymentCurrencies || paymentCurrenciesInUse.length !== 1) {
+    if (conversionPaymentCurrencies.length !== 1) {
       return false;
     }
     if (selectedCurrencies.length === 0) return false;
-    return selectedCurrencies.some((c) => c !== effectivePaymentCurrency);
+    return selectedCurrencies.some((c) => c !== conversionPaymentCurrency);
   }, [
     action,
-    effectivePaymentCurrency,
-    hasMixedPaymentCurrencies,
-    paymentCurrenciesInUse.length,
+    conversionPaymentCurrencies.length,
+    conversionPaymentCurrency,
     selectedCurrencies,
   ]);
-  const hasConversionData = useMemo(
-    () =>
-      [baseAmount, baseCurrency, counterAmount, counterCurrency].some(
-        (v) => String(v || "").trim() !== "",
-      ),
-    [baseAmount, baseCurrency, counterAmount, counterCurrency],
-  );
-
   useEffect(() => {
     if (!showConversionSection) {
       setConversionEnabled(false);
@@ -1496,24 +1499,27 @@ export default function GroupOperatorPaymentForm({
     const selectedBaseCurrency = selectedCurrencies[0] || "";
     setBaseCurrency((v) => v || selectedBaseCurrency);
     setBaseAmount((v) => {
-      const seed = v || amount || "";
+      const seed = v || (suggestedAmount > 0 ? String(suggestedAmount) : "");
       if (!seed) return "";
       return formatMoneyInput(
         seed,
-        selectedBaseCurrency || effectivePaymentCurrency,
+        selectedBaseCurrency || conversionPaymentCurrency,
       );
     });
-    setCounterCurrency(effectivePaymentCurrency || "");
+    setCounterCurrency(conversionPaymentCurrency || "");
     setCounterAmount((v) =>
       v
-        ? formatMoneyInput(v, effectivePaymentCurrency || "")
-        : "",
+        ? formatMoneyInput(v, conversionPaymentCurrency || "")
+        : paymentsTotalNum > 0
+          ? formatMoneyInput(String(paymentsTotalNum), conversionPaymentCurrency)
+          : "",
     );
   }, [
-    amount,
-    effectivePaymentCurrency,
+    conversionPaymentCurrency,
+    paymentsTotalNum,
     selectedCurrencies,
     showConversionSection,
+    suggestedAmount,
   ]);
 
   const toggleService = (svc: Service) => {
@@ -1690,18 +1696,18 @@ export default function GroupOperatorPaymentForm({
 
   /* ========= Validaciones ========= */
   const validateConversion = (): { ok: boolean; msg?: string } => {
-    if (!showConversionSection || !conversionEnabled || !hasConversionData)
+    if (!showConversionSection || !conversionEnabled)
       return { ok: true };
     const bAmt = parseAmountInput(baseAmount) ?? 0;
     const cAmt = parseAmountInput(counterAmount) ?? 0;
     if (bAmt <= 0)
-      return { ok: false, msg: "Ingresá un Valor base válido (> 0)." };
+      return { ok: false, msg: "Ingresá un monto válido en moneda del servicio." };
     if (!baseCurrency)
-      return { ok: false, msg: "Elegí la moneda del Valor base." };
+      return { ok: false, msg: "Elegí la moneda del servicio." };
     if (cAmt <= 0)
-      return { ok: false, msg: "Ingresá un Contravalor válido (> 0)." };
+      return { ok: false, msg: "Ingresá un monto pagado válido." };
     if (!counterCurrency)
-      return { ok: false, msg: "Elegí la moneda del Contravalor." };
+      return { ok: false, msg: "Elegí la moneda pagada." };
     return { ok: true };
   };
 
@@ -2212,7 +2218,7 @@ export default function GroupOperatorPaymentForm({
         if (contextId) payload.booking_id = contextId;
       }
 
-      if (showConversionSection && conversionEnabled && hasConversionData) {
+      if (showConversionSection && conversionEnabled) {
         const bAmt = parseAmountInput(baseAmount) ?? 0;
         const cAmt = parseAmountInput(counterAmount) ?? 0;
         payload.base_amount = bAmt > 0 ? bAmt : undefined;
@@ -3176,8 +3182,8 @@ export default function GroupOperatorPaymentForm({
               {/* CONVERSIÓN */}
               {action === "create" && showConversionSection && (
                 <Section
-                  title="Conversión (opcional)"
-                  desc="Visible porque la moneda del pago difiere de la moneda de los servicios."
+                  title="Convertir moneda"
+                  desc="Equivalencia manual entre lo pagado y la moneda del servicio."
                   headerRight={
                     <button
                       type="button"
@@ -3202,7 +3208,7 @@ export default function GroupOperatorPaymentForm({
                 >
                   {conversionEnabled && (
                     <>
-                      <Field id="base" label="Valor base">
+                      <Field id="base" label="Monto en moneda del servicio">
                         <div className="flex flex-col gap-2 sm:flex-row">
                           <input
                             inputMode="decimal"
@@ -3253,7 +3259,7 @@ export default function GroupOperatorPaymentForm({
                         )}
                       </Field>
 
-                      <Field id="counter" label="Contravalor">
+                      <Field id="counter" label="Monto pagado">
                         <div className="flex flex-col gap-2 sm:flex-row">
                           <input
                             inputMode="decimal"
@@ -3305,8 +3311,8 @@ export default function GroupOperatorPaymentForm({
                       </Field>
 
                       <div className="text-xs text-slate-500 dark:text-slate-400 md:col-span-2">
-                        Se guarda el valor y contravalor <b>sin tipo de cambio</b>.
-                        Útil si pagás en una moneda pero el acuerdo está en otra.
+                        Se guarda la equivalencia manual; no recalcula ni actualiza
+                        tipos de cambio.
                       </div>
                     </>
                   )}

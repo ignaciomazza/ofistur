@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  normalizeGroupReceiptPdfItems,
   normalizeGroupReceiptStoredPayments,
+  readGroupReceiptPdfItemsFromMetadata,
   resolveGroupReceiptVerificationState,
+  withGroupReceiptPdfItemsInMetadata,
   withGroupReceiptVerificationInMetadata,
 } from "@/lib/groups/groupReceiptMetadata";
 
@@ -79,5 +82,57 @@ describe("group receipt metadata helpers", () => {
       payment_method_id: 10,
       account_id: 20,
     });
+  });
+
+  it("stores manual pdf items in metadata without dropping other keys", () => {
+    const metadata = withGroupReceiptPdfItemsInMetadata(
+      { foo: "bar", payments: [{ amount: 100 }] },
+      {
+        enabled: true,
+        items: [
+          { description: " Hotel + excursiones ", date_label: " 10/04 - 14/04 " },
+          { description: "   " },
+        ],
+        freeText: " Observaciones del recibo ",
+      },
+    );
+
+    expect(metadata.foo).toBe("bar");
+    expect(metadata.payments).toEqual([{ amount: 100 }]);
+    expect(metadata.pdf_items).toEqual({
+      version: 1,
+      items: [{ description: "Hotel + excursiones", date_label: "10/04 - 14/04" }],
+      free_text: "Observaciones del recibo",
+    });
+    expect(readGroupReceiptPdfItemsFromMetadata(metadata)).toEqual({
+      enabled: true,
+      items: [{ description: "Hotel + excursiones", date_label: "10/04 - 14/04" }],
+      freeText: "Observaciones del recibo",
+    });
+  });
+
+  it("respects explicit disabled pdf items and clears stored metadata", () => {
+    const normalized = normalizeGroupReceiptPdfItems({
+      enabled: false,
+      items: [{ description: "No debe persistir" }],
+      freeText: "No debe persistir",
+    });
+
+    expect(normalized).toEqual({
+      enabled: false,
+      items: [],
+      freeText: "",
+    });
+
+    const metadata = withGroupReceiptPdfItemsInMetadata(
+      {
+        pdf_items: {
+          version: 1,
+          items: [{ description: "Anterior" }],
+        },
+      },
+      normalized,
+    );
+    expect(metadata.pdf_items).toBeUndefined();
   });
 });

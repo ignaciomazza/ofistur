@@ -41,6 +41,11 @@ type IvaLine = {
   Importe: number;
 };
 
+type ReceiverDoc = {
+  docTipo: number;
+  docNro: number;
+};
+
 function shouldMockFiscalIssue(): boolean {
   const mode = String(process.env.BILLING_FISCAL_ISSUER_MODE || "").trim().toUpperCase();
   if (mode === "MOCK") return true;
@@ -145,6 +150,28 @@ function buildAfipAmounts(amountArs: number, cbteTipo: number): {
   };
 }
 
+function normalizeCuitNumber(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const digits = value.replace(/\D/g, "");
+  if (!/^\d{11}$/.test(digits)) return null;
+  if (/^0+$/.test(digits)) return null;
+  return Number(digits);
+}
+
+function resolveReceiverDoc(taxId: unknown): ReceiverDoc {
+  const cuit = normalizeCuitNumber(taxId);
+  if (cuit) {
+    return {
+      docTipo: 80,
+      docNro: cuit,
+    };
+  }
+  return {
+    docTipo: 99,
+    docNro: 0,
+  };
+}
+
 async function emitMock(chargeId: number, amountArs: number): Promise<EmitResult> {
   const now = Date.now();
   const ptoVta = parseIntEnv("BILLING_AFIP_PTO_VTA", 1);
@@ -173,6 +200,9 @@ async function emitWithAfip(params: {
     id_agency: number;
     amount_ars_paid: unknown;
     amount_ars_due: unknown;
+    agency?: {
+      tax_id?: string | null;
+    } | null;
   };
 }): Promise<EmitResult> {
   const { charge, issuerAgencyId, amountArsOverride } = params;
@@ -200,14 +230,15 @@ async function emitWithAfip(params: {
   if (!todayKey) throw new Error("No se pudo resolver fecha local para AFIP");
   const cbteFch = todayKey.replace(/-/g, "");
   const amounts = buildAfipAmounts(amountArs, cbteTipo);
+  const receiverDoc = resolveReceiverDoc(charge.agency?.tax_id);
 
   const payload = {
     CantReg: 1,
     PtoVta: ptoVta,
     CbteTipo: cbteTipo,
     Concepto: 1,
-    DocTipo: 99,
-    DocNro: 0,
+    DocTipo: receiverDoc.docTipo,
+    DocNro: receiverDoc.docNro,
     CbteDesde: nextVoucher,
     CbteHasta: nextVoucher,
     CbteFch: cbteFch,
@@ -230,6 +261,8 @@ async function emitWithAfip(params: {
       response: created,
       metadata: {
         issuer_agency_id: effectiveIssuerAgencyId,
+        receiver_doc_tipo: receiverDoc.docTipo,
+        receiver_doc_nro: receiverDoc.docNro,
       },
     }),
   ) as Prisma.InputJsonValue;
@@ -259,6 +292,11 @@ export async function issueFiscalForCharge(
       amount_ars_due: true,
       amount_ars_paid: true,
       paid_at: true,
+      agency: {
+        select: {
+          tax_id: true,
+        },
+      },
     },
   });
 

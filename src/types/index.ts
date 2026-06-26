@@ -363,6 +363,15 @@ export interface Receipt {
   base_currency?: Currency | string | null;
   counter_amount?: number | string | null;
   counter_currency?: Currency | string | null;
+  pdf_items?: {
+    enabled?: boolean;
+    items?: Array<{
+      description?: string | null;
+      date_label?: string | null;
+    }>;
+    freeText?: string | null;
+    free_text?: string | null;
+  } | null;
   verification_status?: string | null;
   verified_at?: string | null;
   verified_by?: number | null;

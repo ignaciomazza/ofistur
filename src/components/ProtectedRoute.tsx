@@ -7,9 +7,12 @@ import Spinner from "./Spinner";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FINANCE_SECTIONS,
+  canAccessBookingComponent,
   canAccessFinanceSection,
+  normalizeBookingComponentRules,
   normalizeFinanceSectionRules,
   normalizeRole,
+  type BookingComponentKey,
   type FinanceSectionKey,
 } from "@/utils/permissions";
 import { canAccessRouteByPlan } from "@/lib/planAccess";
@@ -91,10 +94,18 @@ export default function ProtectedRoute({
     () => matchFinanceSection(pathname),
     [pathname],
   );
+  const isOperatorsRoute = pathname === "/operators";
+  const needsFinanceAccess = !!financeKey || isOperatorsRoute;
+  const needsBookingComponentAccess =
+    isOperatorsRoute || financeKey === "operator_payments";
   const [financeSections, setFinanceSections] = useState<FinanceSectionKey[]>(
     [],
   );
   const [financeReady, setFinanceReady] = useState(false);
+  const [bookingComponents, setBookingComponents] = useState<
+    BookingComponentKey[]
+  >([]);
+  const [bookingReady, setBookingReady] = useState(false);
   const [planKey, setPlanKey] = useState<PlanKey | null>(null);
   const [hasPlan, setHasPlan] = useState(false);
   const [planReady, setPlanReady] = useState(false);
@@ -182,7 +193,10 @@ export default function ProtectedRoute({
   }, [loading, token]);
 
   useEffect(() => {
-    if (!token || !financeKey) return;
+    if (!token || !needsFinanceAccess) {
+      setFinanceReady(true);
+      return;
+    }
     let alive = true;
     setFinanceReady(false);
 
@@ -209,7 +223,41 @@ export default function ProtectedRoute({
     return () => {
       alive = false;
     };
-  }, [financeKey, token]);
+  }, [needsFinanceAccess, token]);
+
+  useEffect(() => {
+    if (!token || !needsBookingComponentAccess) {
+      setBookingComponents([]);
+      setBookingReady(true);
+      return;
+    }
+    let alive = true;
+    setBookingReady(false);
+
+    (async () => {
+      try {
+        const res = await fetch("/api/bookings/permissions", {
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          if (alive) setBookingComponents([]);
+          return;
+        }
+        const payload = (await res.json()) as { rules?: unknown };
+        const rules = normalizeBookingComponentRules(payload?.rules);
+        if (alive) setBookingComponents(rules[0]?.components ?? []);
+      } catch {
+        if (alive) setBookingComponents([]);
+      } finally {
+        if (alive) setBookingReady(true);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [needsBookingComponentAccess, token]);
 
   useEffect(() => {
     if (loading || !token) return;
@@ -230,18 +278,53 @@ export default function ProtectedRoute({
         allowed: allowedRoles,
       });
       if (allowedRoles.length > 0 && !allowedRoles.includes(normalizedRole)) {
-        dlog("role not allowed -> push /profile");
-        router.push("/profile");
-        return;
+        if (isOperatorsRoute) {
+          if (!financeReady || !bookingReady) return;
+          const canManageOperators =
+            canAccessFinanceSection(
+              normalizedRole,
+              financeSections,
+              "operator_payments",
+            ) ||
+            canAccessFinanceSection(
+              normalizedRole,
+              financeSections,
+              "operators_insights",
+            ) ||
+            canAccessBookingComponent(
+              normalizedRole,
+              bookingComponents,
+              "operator_payments",
+            );
+          if (canManageOperators) {
+            dlog("operators route allowed by explicit grant");
+          } else {
+            dlog("role not allowed -> push /profile");
+            router.push("/profile");
+            return;
+          }
+        } else {
+          dlog("role not allowed -> push /profile");
+          router.push("/profile");
+          return;
+        }
       }
 
       if (financeKey) {
         if (!financeReady) return;
-        const canAccess = canAccessFinanceSection(
+        let canAccess = canAccessFinanceSection(
           normalizedRole,
           financeSections,
           financeKey,
         );
+        if (!canAccess && financeKey === "operator_payments") {
+          if (!bookingReady) return;
+          canAccess = canAccessBookingComponent(
+            normalizedRole,
+            bookingComponents,
+            "operator_payments",
+          );
+        }
         if (!canAccess) {
           dlog("finance section not allowed -> push /profile");
           router.push("/profile");
@@ -271,9 +354,12 @@ export default function ProtectedRoute({
     financeKey,
     financeReady,
     financeSections,
+    bookingReady,
+    bookingComponents,
     hasPlan,
     planKey,
     planReady,
+    isOperatorsRoute,
   ]);
 
   const handleModalAccept = () => {

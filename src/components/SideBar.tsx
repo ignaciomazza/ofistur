@@ -7,7 +7,10 @@ import { canAccessRouteByPlan } from "@/lib/planAccess";
 import type { PlanKey } from "@/lib/billing/pricing";
 import {
   FINANCE_SECTIONS,
+  canAccessBookingComponent,
+  normalizeBookingComponentRules,
   normalizeFinanceSectionRules,
+  type BookingComponentKey,
   type FinanceSectionKey,
 } from "@/utils/permissions";
 
@@ -94,6 +97,9 @@ export default function SideBar({
   const [financeSections, setFinanceSections] = useState<FinanceSectionKey[]>(
     [],
   );
+  const [bookingComponents, setBookingComponents] = useState<
+    BookingComponentKey[]
+  >([]);
   const [planKey, setPlanKey] = useState<PlanKey | null>(null);
   const [hasPlan, setHasPlan] = useState(false);
 
@@ -156,6 +162,31 @@ export default function SideBar({
         if (alive) setFinanceSections(rules[0]?.sections ?? []);
       } catch {
         if (alive) setFinanceSections([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/bookings/permissions", {
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          if (alive) setBookingComponents([]);
+          return;
+        }
+        const payload = (await res.json()) as { rules?: unknown };
+        const rules = normalizeBookingComponentRules(payload?.rules);
+        if (alive) setBookingComponents(rules[0]?.components ?? []);
+      } catch {
+        if (alive) setBookingComponents([]);
       }
     })();
     return () => {
@@ -275,8 +306,17 @@ export default function SideBar({
       const route = financeRouteMap.get(key);
       if (route) set.add(route);
     }
+    const canUseOperatorPayments =
+      financeSections.includes("operator_payments") ||
+      canAccessBookingComponent(role, bookingComponents, "operator_payments");
+    if (canUseOperatorPayments || financeSections.includes("operators_insights")) {
+      set.add("/operators");
+    }
+    if (canUseOperatorPayments) {
+      set.add("/operators/payments");
+    }
     return set;
-  }, [financeRouteMap, financeSections]);
+  }, [bookingComponents, financeRouteMap, financeSections, role]);
 
   const hasAccess = useCallback(
     (route: string): boolean => {

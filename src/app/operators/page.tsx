@@ -119,8 +119,8 @@ export default function OperatorsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.email || !formData.tax_id) {
-      toast.error("Falta completar campos!");
+    if (!formData.name.trim()) {
+      toast.error("El nombre comercial es obligatorio.");
       return;
     }
 
@@ -198,17 +198,17 @@ export default function OperatorsPage() {
   const startEditingOperator = (operator: Operator) => {
     setFormData({
       name: operator.name,
-      email: operator.email,
-      phone: operator.phone,
-      website: operator.website,
-      address: operator.address,
-      postal_code: operator.postal_code,
-      city: operator.city,
-      state: operator.state,
-      country: operator.country,
-      vat_status: operator.vat_status,
-      legal_name: operator.legal_name,
-      tax_id: operator.tax_id,
+      email: operator.email || "",
+      phone: operator.phone || "",
+      website: operator.website || "",
+      address: operator.address || "",
+      postal_code: operator.postal_code || "",
+      city: operator.city || "",
+      state: operator.state || "",
+      country: operator.country || "",
+      vat_status: operator.vat_status || "",
+      legal_name: operator.legal_name || "",
+      tax_id: operator.tax_id || "",
       registration_date: operator.registration_date,
       id_agency: operator.id_agency,
       credit_balance: operator.credit_balance || 0,

@@ -3,6 +3,10 @@ import {
   DEFAULT_RECEIPT_ADJUSTMENT_LABEL,
   normalizeReceiptAdjustmentLabel,
 } from "@/utils/receipts/paymentAdjustments";
+import {
+  normalizeReceiptPdfManualItems,
+  type ReceiptPdfManualItem,
+} from "@/utils/receipts/pdfItemsPayload";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -122,6 +126,61 @@ export function withGroupReceiptPaymentsInMetadata(
     ...metadata,
     payments,
   };
+}
+
+export type GroupReceiptPdfItemsPayload = {
+  enabled: boolean;
+  items: ReceiptPdfManualItem[];
+  freeText: string;
+};
+
+export function normalizeGroupReceiptPdfItems(
+  raw: unknown,
+): GroupReceiptPdfItemsPayload {
+  if (!isRecord(raw)) {
+    return { enabled: false, items: [], freeText: "" };
+  }
+
+  const items = normalizeReceiptPdfManualItems(raw.items);
+  const freeTextRaw = raw.freeText ?? raw.free_text;
+  const freeText = typeof freeTextRaw === "string" ? freeTextRaw.trim() : "";
+  const explicitEnabled =
+    typeof raw.enabled === "boolean" ? raw.enabled : undefined;
+  const enabled = explicitEnabled ?? (items.length > 0 || freeText.length > 0);
+
+  return {
+    enabled,
+    items: enabled ? items : [],
+    freeText: enabled ? freeText : "",
+  };
+}
+
+export function readGroupReceiptPdfItemsFromMetadata(
+  metadataRaw: unknown,
+): GroupReceiptPdfItemsPayload {
+  const metadata = asGroupReceiptMetadata(metadataRaw);
+  return normalizeGroupReceiptPdfItems(metadata.pdf_items);
+}
+
+export function withGroupReceiptPdfItemsInMetadata(
+  metadataRaw: unknown,
+  pdfItems: unknown,
+): Record<string, unknown> {
+  const metadata = asGroupReceiptMetadata(metadataRaw);
+  const normalized = normalizeGroupReceiptPdfItems(pdfItems);
+  const next = { ...metadata };
+
+  if (normalized.enabled && (normalized.items.length > 0 || normalized.freeText)) {
+    next.pdf_items = {
+      version: 1,
+      items: normalized.items,
+      ...(normalized.freeText ? { free_text: normalized.freeText } : {}),
+    };
+  } else {
+    delete next.pdf_items;
+  }
+
+  return next;
 }
 
 export type GroupReceiptVerificationSource = "columns" | "metadata";

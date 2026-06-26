@@ -38,6 +38,7 @@ import {
   DEFAULT_RECEIPT_ADJUSTMENT_LABEL,
   normalizeReceiptAdjustmentLabel,
 } from "@/utils/receipts/paymentAdjustments";
+import { normalizeReceiptPdfManualItems } from "@/utils/receipts/pdfItemsPayload";
 import type { GroupFinanceContextOption } from "@/components/groups/finance/contextTypes";
 
 import { useFinancePicks } from "@/hooks/receipts/useFinancePicks";
@@ -93,6 +94,19 @@ type PaymentDraft = {
   // ✅ cuenta crédito (CreditAccount)
   credit_account_id: number | null;
 };
+
+type ManualPdfItemDraft = {
+  key: string;
+  description: string;
+  date_label: string;
+};
+
+type InitialGroupReceiptPdfItems = {
+  enabled?: boolean;
+  items?: unknown;
+  freeText?: unknown;
+  free_text?: unknown;
+} | null;
 
 type ReceiptForDebt = {
   id_receipt?: number | null;
@@ -302,6 +316,7 @@ export interface ReceiptFormProps {
   lockClientSelection?: boolean;
   lockedClientLabel?: string | null;
   initialPayments?: ReceiptPaymentLine[];
+  initialPdfItems?: InitialGroupReceiptPdfItems;
 
   onSubmit: (payload: ReceiptPayload) => Promise<SubmitResult> | SubmitResult;
   onCancel?: () => void;
@@ -325,6 +340,27 @@ async function safeJson<T>(res: Response): Promise<T | null> {
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
+
+const normalizeInitialGroupReceiptPdfItems = (
+  raw: InitialGroupReceiptPdfItems | undefined,
+) => {
+  if (!isRecord(raw)) {
+    return { enabled: false, items: [], freeText: "" };
+  }
+
+  const items = normalizeReceiptPdfManualItems(raw.items);
+  const freeTextRaw = raw.freeText ?? raw.free_text;
+  const freeText = typeof freeTextRaw === "string" ? freeTextRaw.trim() : "";
+  const explicitEnabled =
+    typeof raw.enabled === "boolean" ? raw.enabled : undefined;
+  const enabled = explicitEnabled ?? (items.length > 0 || freeText.length > 0);
+
+  return {
+    enabled,
+    items: enabled ? items : [],
+    freeText: enabled ? freeText : "",
+  };
+};
 
 export default function GroupReceiptForm({
   token,
@@ -356,6 +392,7 @@ export default function GroupReceiptForm({
   lockClientSelection = false,
   lockedClientLabel = null,
   initialPayments = [],
+  initialPdfItems = null,
   onSubmit,
   onCancel,
   enableAttachAction = false,
@@ -1117,17 +1154,74 @@ export default function GroupReceiptForm({
   ]);
 
   /* ===== Detalle de pago para PDF ===== */
+  const initialPdfItemsPayload = useMemo(
+    () => normalizeInitialGroupReceiptPdfItems(initialPdfItems),
+    [initialPdfItems],
+  );
   const [paymentDescription, setPaymentDescriptionState] = useState(
     initialPaymentDescription,
   );
   const [paymentDescriptionDirty, setPaymentDescriptionDirty] = useState(
     Boolean(initialPaymentDescription),
   );
+  const [manualPdfItemsEnabled, setManualPdfItemsEnabled] = useState(
+    initialPdfItemsPayload.enabled,
+  );
+  const [manualPdfItems, setManualPdfItems] = useState<ManualPdfItemDraft[]>(
+    () =>
+      initialPdfItemsPayload.items.map((item) => ({
+        key: uid(),
+        description: item.description,
+        date_label: item.date_label || "",
+      })),
+  );
+  const [manualPdfFreeText, setManualPdfFreeText] = useState(
+    initialPdfItemsPayload.freeText,
+  );
 
   const handlePaymentDescriptionChange = useCallback((v: string) => {
     setPaymentDescriptionState(v);
     setPaymentDescriptionDirty(true);
   }, []);
+  const addManualPdfItem = useCallback(() => {
+    setManualPdfItems((prev) => [
+      ...prev,
+      { key: uid(), description: "", date_label: "" },
+    ]);
+  }, []);
+  const removeManualPdfItem = useCallback((key: string) => {
+    setManualPdfItems((prev) => prev.filter((item) => item.key !== key));
+  }, []);
+  const setManualPdfItemDescription = useCallback(
+    (key: string, value: string) => {
+      setManualPdfItems((prev) =>
+        prev.map((item) =>
+          item.key === key ? { ...item, description: value } : item,
+        ),
+      );
+    },
+    [],
+  );
+  const setManualPdfItemDateLabel = useCallback(
+    (key: string, value: string) => {
+      setManualPdfItems((prev) =>
+        prev.map((item) =>
+          item.key === key ? { ...item, date_label: value } : item,
+        ),
+      );
+    },
+    [],
+  );
+  const normalizedManualPdfItems = useMemo(
+    () =>
+      normalizeReceiptPdfManualItems(
+        manualPdfItems.map((item) => ({
+          description: item.description,
+          date_label: item.date_label,
+        })),
+      ),
+    [manualPdfItems],
+  );
 
   const getFilteredAccountsByCurrency = useCallback(
     (currencyCode: string) =>
@@ -1249,6 +1343,14 @@ export default function GroupReceiptForm({
   ]);
 
   /* ===== Conversión (opcional) ===== */
+  const [conversionEnabled, setConversionEnabled] = useState(
+    Boolean(
+      initialBaseAmount != null ||
+        initialBaseCurrency ||
+        initialCounterAmount != null ||
+        initialCounterCurrency,
+    ),
+  );
   const [baseAmount, setBaseAmount] = useState(
     initialBaseAmount != null ? String(initialBaseAmount) : "",
   );
@@ -1442,7 +1544,7 @@ export default function GroupReceiptForm({
       ? normalizeCurrencyCodeLoose(baseCurrency)
       : null;
 
-    if (baseCur && baseVal != null && baseVal > 0) {
+    if (conversionEnabled && baseCur && baseVal != null && baseVal > 0) {
       const feeInBaseCurrency = paymentsFeeByCurrency[baseCur] || 0;
       const val = round2(baseVal + feeInBaseCurrency);
       if (val > 0) acc[baseCur] = val;
@@ -1466,6 +1568,7 @@ export default function GroupReceiptForm({
   }, [
     baseAmount,
     baseCurrency,
+    conversionEnabled,
     paymentLines,
     paymentLineFeeByKey,
     paymentsFeeByCurrency,
@@ -1593,9 +1696,9 @@ export default function GroupReceiptForm({
   }, [lockedCurrency]);
 
   useEffect(() => {
-    if (!currencyOverride) return;
+    if (!conversionEnabled) return;
     setCounterCurrency((prev) => prev || effectiveCurrency);
-  }, [currencyOverride, effectiveCurrency]);
+  }, [conversionEnabled, effectiveCurrency]);
 
   /* ===== Attach search ===== */
   const attachSearchEnabled = attachEnabled && action === "attach";
@@ -1692,7 +1795,7 @@ export default function GroupReceiptForm({
 
     const total =
       paymentsTotalNum ||
-      (currencyOverride ? 0 : suggestions?.base || 0);
+      (conversionEnabled ? 0 : suggestions?.base || 0);
     if (!total || total <= 0)
       e.amount = "El total es inválido. Cargá importes o usá el sugerido.";
     if (!effectiveCurrency)
@@ -1701,7 +1804,7 @@ export default function GroupReceiptForm({
     const issueDateOk = /^\d{4}-\d{2}-\d{2}$/.test(issueDate);
     if (!issueDateOk) e.issue_date = "Elegí la fecha del recibo.";
     const baseNum = parseAmountInput(baseAmount);
-    if (baseAmount.trim() !== "") {
+    if (conversionEnabled && baseAmount.trim() !== "") {
       if (!baseNum || baseNum <= 0) {
         e.base = "Ingresá un valor base válido.";
       } else if (!baseCurrency) {
@@ -1721,7 +1824,7 @@ export default function GroupReceiptForm({
     }
 
     const counterNum = parseAmountInput(counterAmount);
-    if (counterAmount.trim() !== "") {
+    if (conversionEnabled && counterAmount.trim() !== "") {
       if (!counterNum || counterNum <= 0) {
         e.counter = "Ingresá un contravalor válido.";
       } else if (!counterCurrency) {
@@ -1737,6 +1840,14 @@ export default function GroupReceiptForm({
     }
 
     if (!amountWords.trim()) e.amountWords = "Ingresá el importe en palabras.";
+    if (
+      manualPdfItemsEnabled &&
+      normalizedManualPdfItems.length === 0 &&
+      !manualPdfFreeText.trim()
+    ) {
+      e.pdf_items =
+        "Cargá al menos un ítem manual, un texto libre, o desactivá la carga manual del PDF.";
+    }
     setErrors(e);
     if (Object.keys(e).length > 0) {
       notifyFirstValidationError(e);
@@ -1843,7 +1954,7 @@ export default function GroupReceiptForm({
 
     if (
       (!finalAmount || finalAmount <= 0) &&
-      !currencyOverride &&
+      !conversionEnabled &&
       suggestions?.base != null
     ) {
       finalAmount = suggestions.base;
@@ -1892,8 +2003,8 @@ export default function GroupReceiptForm({
     const hasMixedPayments = paymentCurrenciesForPayload.length > 1;
     const baseAmountValid = baseAmountNum != null && baseAmountNum > 0;
     const counterAmountValid = counterAmountNum != null && counterAmountNum > 0;
-    const baseReady = baseAmountValid && !!baseCurrency;
-    const useConversion = currencyOverride && baseReady;
+    const baseReady = conversionEnabled && baseAmountValid && !!baseCurrency;
+    const useConversion = conversionEnabled && baseReady;
     const payloadAmount =
       hasMixedPayments && baseReady ? (baseAmountNum as number) : finalAmount;
     const payloadAmountCurrency =
@@ -1904,12 +2015,12 @@ export default function GroupReceiptForm({
     const payloadBaseAmount = baseReady ? baseAmountNum : undefined;
     const payloadBaseCurrency = baseReady ? baseCurrency || undefined : undefined;
 
-    const payloadCounterAmount = counterAmountValid
+    const payloadCounterAmount = conversionEnabled && counterAmountValid
       ? counterAmountNum
       : useConversion && !hasMixedPayments
         ? finalAmount
         : undefined;
-    const payloadCounterCurrency = counterAmountValid
+    const payloadCounterCurrency = conversionEnabled && counterAmountValid
       ? counterCurrency || undefined
       : useConversion && !hasMixedPayments
         ? effectiveCurrency
@@ -1958,6 +2069,11 @@ export default function GroupReceiptForm({
       account_id: primaryPayment?.account_id ?? undefined,
 
       payments: normalizedPayments,
+      pdf_items: {
+        enabled: manualPdfItemsEnabled,
+        items: normalizedManualPdfItems,
+        freeText: manualPdfFreeText,
+      },
 
       currency: normalizedPaymentDescription,
 
@@ -2191,6 +2307,8 @@ export default function GroupReceiptForm({
                   currencies={currenciesTyped}
                   effectiveCurrency={effectiveCurrency}
                   currencyOverride={currencyOverride}
+                  conversionEnabled={conversionEnabled}
+                  setConversionEnabled={setConversionEnabled}
                   suggestions={suggestions}
                   applySuggestedAmounts={applySuggestedAmounts}
                   formatNum={formatNum}
@@ -2223,6 +2341,15 @@ export default function GroupReceiptForm({
                   }
                   paymentDescription={paymentDescription}
                   setPaymentDescription={handlePaymentDescriptionChange}
+                  manualPdfItemsEnabled={manualPdfItemsEnabled}
+                  setManualPdfItemsEnabled={setManualPdfItemsEnabled}
+                  manualPdfItems={manualPdfItems}
+                  manualPdfFreeText={manualPdfFreeText}
+                  addManualPdfItem={addManualPdfItem}
+                  removeManualPdfItem={removeManualPdfItem}
+                  setManualPdfItemDescription={setManualPdfItemDescription}
+                  setManualPdfItemDateLabel={setManualPdfItemDateLabel}
+                  setManualPdfFreeText={setManualPdfFreeText}
                   concept={concept}
                   setConcept={setConcept}
                   baseAmount={baseAmount}

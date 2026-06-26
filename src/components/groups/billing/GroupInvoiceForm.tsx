@@ -984,15 +984,20 @@ export default function GroupInvoiceForm({
     const totalInput = manualTotalsDraft.total ?? 0;
 
     const ivaSum = Number((iva21 + iva10).toFixed(2));
+    const taxableBase = Number((base21 + base10).toFixed(2));
     const baseSum = Number((base21 + base10 + exempt).toFixed(2));
     const totalFromParts = Number((baseSum + ivaSum).toFixed(2));
     const total = totalInput > 0 ? totalInput : totalFromParts;
     const neto = Number((total - ivaSum).toFixed(2));
+    const onlyTotalLoaded =
+      totalInput > 0 && taxableBase <= 0 && ivaSum <= 0 && exempt <= 0;
 
     return {
       total,
       ivaSum,
       neto,
+      taxableBase,
+      onlyTotalLoaded,
     };
   }, [manualTotalsDraft]);
 
@@ -2541,11 +2546,23 @@ export default function GroupInvoiceForm({
                       <span>{manualFormatter.format(manualPreview.neto)}</span>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                      <span>Neto gravado ARCA</span>
+                      <span>
+                        {manualFormatter.format(manualPreview.taxableBase)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
                       <span>IVA</span>
                       <span>
                         {manualFormatter.format(manualPreview.ivaSum)}
                       </span>
                     </div>
+                    {manualPreview.onlyTotalLoaded && (
+                      <div className="mt-2 text-amber-700 dark:text-amber-200">
+                        Con solo importe total, ARCA recibe neto gravado 0.
+                        Cargá base/IVA si corresponde gravado.
+                      </div>
+                    )}
                   </div>
 
                   {selectedClientsCount > 1 && (

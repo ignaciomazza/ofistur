@@ -117,6 +117,15 @@ export type ReceiptPayload = {
   account_id?: number;
 
   payments?: ReceiptPaymentLine[];
+  pdf_items?: {
+    enabled?: boolean;
+    items?: Array<{
+      description?: string | null;
+      date_label?: string | null;
+    }>;
+    freeText?: string | null;
+    free_text?: string | null;
+  };
 
   // excedente para cuenta crédito/corriente del pax
   allow_client_credit_excess?: boolean;

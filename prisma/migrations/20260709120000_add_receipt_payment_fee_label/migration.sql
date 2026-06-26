@@ -1,2 +1,2 @@
 ALTER TABLE "ReceiptPayment"
-ADD COLUMN "fee_label" TEXT;
+ADD COLUMN IF NOT EXISTS "fee_label" TEXT;

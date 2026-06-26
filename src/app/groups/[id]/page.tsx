@@ -6026,6 +6026,7 @@ export default function GroupDetailPage() {
                       </p>
                     ) : (
                       <GroupReceiptForm
+                        key={`collect-receipt-${selectedCollectPassenger.id_travel_group_passenger}-${editingCollectReceipt?.id_receipt ?? "new"}`}
                         token={token}
                         groupId={groupId}
                         groupPassengerId={
@@ -6074,6 +6075,7 @@ export default function GroupDetailPage() {
                         initialPaymentDescription={
                           editingCollectReceipt?.currency || ""
                         }
+                        initialPdfItems={editingCollectReceipt?.pdf_items ?? null}
                         initialFeeAmount={
                           editingCollectReceipt?.payment_fee_amount != null
                             ? toAmountNumber(

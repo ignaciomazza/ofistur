@@ -54,6 +54,7 @@ describe("issueFiscalForCharge", () => {
       amount_ars_due: 1000,
       amount_ars_paid: null,
       paid_at: new Date("2026-05-06T12:00:00Z"),
+      agency: { tax_id: "30-71794593-6" },
     });
     mocks.prisma.agencyBillingFiscalDocument.findUnique.mockResolvedValue(null);
     mocks.prisma.agencyBillingFiscalDocument.upsert.mockResolvedValue({
@@ -103,6 +104,8 @@ describe("issueFiscalForCharge", () => {
     );
     const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
     expect(payload.ImpTotConc).toBe(0);
+    expect(payload.DocTipo).toBe(80);
+    expect(payload.DocNro).toBe(30717945936);
     expect(payload.ImpNeto).toBeCloseTo(826.45, 2);
     expect(payload.ImpIVA).toBeCloseTo(173.55, 2);
     expect(payload.Iva).toEqual([
@@ -138,6 +141,29 @@ describe("issueFiscalForCharge", () => {
       4,
       6,
     );
+  });
+
+  it("falls back to consumidor final when the charged agency has no valid CUIT", async () => {
+    mocks.prisma.agencyBillingCharge.findUnique.mockResolvedValueOnce({
+      id_charge: 10,
+      id_agency: 99,
+      status: "PAID",
+      amount_ars_due: 1000,
+      amount_ars_paid: null,
+      paid_at: new Date("2026-05-06T12:00:00Z"),
+      agency: { tax_id: "" },
+    });
+
+    const result = await issueFiscalForCharge({
+      chargeId: 10,
+      issuerAgencyId: 1,
+      amountArsOverride: 1000,
+    });
+
+    expect(result.ok).toBe(true);
+    const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
+    expect(payload.DocTipo).toBe(99);
+    expect(payload.DocNro).toBe(0);
   });
 
   it("fails before numbering when the configured billing point is not enabled", async () => {
