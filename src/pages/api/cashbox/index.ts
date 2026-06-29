@@ -10,6 +10,7 @@ import {
   startOfDayUtcFromDateKeyInBuenosAires,
   toDateKeyInBuenosAiresLegacySafe,
 } from "@/lib/buenosAiresDate";
+import { readGroupReceiptPaymentsFromMetadata } from "@/lib/groups/groupReceiptMetadata";
 
 /* =========================================================
  * Tipos de dominio para Cashbox
@@ -267,6 +268,28 @@ function decimalToNumber(value: DecimalLike | null | undefined): number {
 
 const round2 = (value: number) =>
   Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+function normalizeCashboxCurrencyCode(value: unknown): string {
+  const code = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  if (!code) return "ARS";
+  if (code === "PES") return "ARS";
+  if (code === "DOL" || code === "U$S") return "USD";
+  return code;
+}
+
+function compactPersonName(
+  value?: {
+    first_name?: string | null;
+    last_name?: string | null;
+    company_name?: string | null;
+  } | null,
+): string | null {
+  if (!value) return null;
+  const personal = `${value.first_name ?? ""} ${value.last_name ?? ""}`.trim();
+  return personal || value.company_name?.trim() || null;
+}
 
 function toCashboxDateIso(value: Date | null | undefined): string {
   if (!value || !Number.isFinite(value.getTime()))
@@ -740,6 +763,185 @@ async function getMonthlyMovements(
         null,
     };
   });
+
+  const groupReceipts = await prisma.travelGroupReceipt.findMany({
+    where: {
+      id_agency: agencyId,
+      issue_date: {
+        gte: from,
+        lte: to,
+      },
+    },
+    select: {
+      id_travel_group_receipt: true,
+      agency_travel_group_receipt_id: true,
+      travel_group_id: true,
+      client_id: true,
+      client_ids: true,
+      issue_date: true,
+      amount: true,
+      amount_currency: true,
+      concept: true,
+      currency: true,
+      payment_method: true,
+      account: true,
+      counter_amount: true,
+      counter_currency: true,
+      metadata: true,
+    },
+  });
+
+  const groupReceiptGroupIds = Array.from(
+    new Set(
+      groupReceipts
+        .map((receipt) => receipt.travel_group_id)
+        .filter((id) => Number.isFinite(id) && id > 0),
+    ),
+  );
+  const groupReceiptClientIds = Array.from(
+    new Set(
+      groupReceipts.flatMap((receipt) => {
+        const fromArray = Array.isArray(receipt.client_ids)
+          ? receipt.client_ids
+          : [];
+        return [receipt.client_id, ...fromArray]
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0);
+      }),
+    ),
+  );
+
+  const [groupReceiptGroups, groupReceiptClients] = await Promise.all([
+    groupReceiptGroupIds.length
+      ? prisma.travelGroup.findMany({
+          where: {
+            id_agency: agencyId,
+            id_travel_group: { in: groupReceiptGroupIds },
+          },
+          select: {
+            id_travel_group: true,
+            agency_travel_group_id: true,
+            name: true,
+          },
+        })
+      : Promise.resolve([]),
+    groupReceiptClientIds.length
+      ? prisma.client.findMany({
+          where: {
+            id_agency: agencyId,
+            id_client: { in: groupReceiptClientIds },
+          },
+          select: {
+            id_client: true,
+            first_name: true,
+            last_name: true,
+            company_name: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const groupReceiptGroupById = new Map(
+    groupReceiptGroups.map((group) => [group.id_travel_group, group]),
+  );
+  const groupReceiptClientNameById = new Map(
+    groupReceiptClients.map((client) => [
+      client.id_client,
+      compactPersonName(client),
+    ]),
+  );
+
+  const groupReceiptMovements: CashboxMovement[] = groupReceipts.flatMap(
+    (receipt) => {
+      const group = groupReceiptGroupById.get(receipt.travel_group_id);
+      const bookingLabel = group
+        ? `Grupal N° ${group.agency_travel_group_id ?? group.id_travel_group}${group.name ? ` • ${group.name}` : ""}`
+        : `Grupal #${receipt.travel_group_id}`;
+      const clientIds = Array.from(
+        new Set(
+          [
+            receipt.client_id,
+            ...(Array.isArray(receipt.client_ids) ? receipt.client_ids : []),
+          ]
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0),
+        ),
+      );
+      const clientNames = Array.from(
+        new Set(
+          clientIds
+            .map((id) => groupReceiptClientNameById.get(id) || null)
+            .filter((name): name is string => !!name),
+        ),
+      );
+      const clientName = clientNames.length ? clientNames.join(", ") : null;
+      const baseDescription =
+        receipt.concept?.trim() ||
+        `Recibo grupal ${receipt.agency_travel_group_receipt_id ?? receipt.id_travel_group_receipt}`;
+      const storedPayments = readGroupReceiptPaymentsFromMetadata(
+        receipt.metadata,
+      ).filter((payment) => Number(payment.amount) > 0);
+
+      if (storedPayments.length > 0) {
+        return storedPayments.map((payment, index) => ({
+          id: `group_receipt:${receipt.id_travel_group_receipt}:payment:${index + 1}`,
+          date: toCashboxDateIso(receipt.issue_date),
+          type: "income" as const,
+          source: "receipt" as const,
+          description:
+            storedPayments.length > 1
+              ? `${baseDescription} (pago ${index + 1})`
+              : baseDescription,
+          currency: normalizeCashboxCurrencyCode(payment.payment_currency),
+          amount: decimalToNumber(payment.amount),
+          clientName,
+          bookingLabel,
+          dueDate: null,
+          paymentMethod:
+            (payment.payment_method_id &&
+              methodNameById?.get(payment.payment_method_id)) ||
+            payment.payment_method ||
+            receipt.payment_method ||
+            null,
+          account:
+            (payment.account_id && accountNameById?.get(payment.account_id)) ||
+            payment.account ||
+            receipt.account ||
+            null,
+          counterpartyName: clientName,
+        }));
+      }
+
+      const hasCounter =
+        receipt.counter_amount != null && receipt.counter_currency;
+      const currency = normalizeCashboxCurrencyCode(
+        hasCounter
+          ? receipt.counter_currency
+          : receipt.amount_currency || receipt.currency,
+      );
+      const amount = hasCounter
+        ? decimalToNumber(receipt.counter_amount)
+        : decimalToNumber(receipt.amount);
+
+      return [
+        {
+          id: `group_receipt:${receipt.id_travel_group_receipt}`,
+          date: toCashboxDateIso(receipt.issue_date),
+          type: "income" as const,
+          source: "receipt" as const,
+          description: baseDescription,
+          currency,
+          amount,
+          clientName,
+          bookingLabel,
+          dueDate: null,
+          paymentMethod: receipt.payment_method ?? null,
+          account: receipt.account ?? null,
+          counterpartyName: clientName,
+        },
+      ];
+    },
+  );
 
   /* ----------------------------
    * 2) INGRESOS: Ingresos
@@ -1301,6 +1503,7 @@ async function getMonthlyMovements(
 
   return [
     ...receiptMovements,
+    ...groupReceiptMovements,
     ...otherIncomeMovements,
     ...investmentMovements,
     ...groupOperatorPaymentMovements,

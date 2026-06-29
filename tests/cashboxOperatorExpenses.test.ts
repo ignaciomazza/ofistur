@@ -30,6 +30,39 @@ const groupOperatorPayment = {
   account: "Banco",
 };
 
+const groupReceipt = {
+  id_travel_group_receipt: 701,
+  agency_travel_group_receipt_id: 44,
+  travel_group_id: 77,
+  client_id: 301,
+  client_ids: [301],
+  issue_date: new Date("2026-04-12T15:00:00.000Z"),
+  amount: new Prisma.Decimal("1000"),
+  amount_currency: "ARS",
+  concept: "Cobro grupal mixto",
+  currency: "ARS",
+  payment_method: "Transferencia",
+  account: "Banco",
+  counter_amount: null,
+  counter_currency: null,
+  metadata: {
+    payments: [
+      {
+        amount: 1000,
+        payment_currency: "ARS",
+        payment_method: "Transferencia",
+        account: "Banco",
+      },
+      {
+        amount: 50,
+        payment_currency: "USD",
+        payment_method: "Efectivo",
+        account: "Caja USD",
+      },
+    ],
+  },
+};
+
 let investmentFindManyCalls = 0;
 
 const prismaMock = {
@@ -56,7 +89,13 @@ const prismaMock = {
   travelGroupOperatorPayment: {
     findMany: vi.fn(async () => []),
   },
+  travelGroupReceipt: {
+    findMany: vi.fn(async () => []),
+  },
   operator: {
+    findMany: vi.fn(async () => []),
+  },
+  client: {
     findMany: vi.fn(async () => []),
   },
   travelGroup: {
@@ -150,18 +189,29 @@ describe("cashbox operator expenses", () => {
     prismaMock.travelGroupOperatorPayment.findMany
       .mockReset()
       .mockImplementation(async () => [groupOperatorPayment]);
+    prismaMock.travelGroupReceipt.findMany
+      .mockReset()
+      .mockImplementation(async () => [groupReceipt]);
     prismaMock.operator.findMany
       .mockReset()
-      .mockImplementation(async () => [{ id_operator: 501, name: "Operador Grupal" }]);
-    prismaMock.travelGroup.findMany
-      .mockReset()
       .mockImplementation(async () => [
-        {
-          id_travel_group: 77,
-          agency_travel_group_id: 9001,
-          name: "Europa Abril",
-        },
+        { id_operator: 501, name: "Operador Grupal" },
       ]);
+    prismaMock.client.findMany.mockReset().mockImplementation(async () => [
+      {
+        id_client: 301,
+        first_name: "Cliente",
+        last_name: "Grupal",
+        company_name: null,
+      },
+    ]);
+    prismaMock.travelGroup.findMany.mockReset().mockImplementation(async () => [
+      {
+        id_travel_group: 77,
+        agency_travel_group_id: 9001,
+        name: "Europa Abril",
+      },
+    ]);
   });
 
   it("includes operator payments even when they are hidden from the investments view", async () => {
@@ -198,6 +248,58 @@ describe("cashbox operator expenses", () => {
         source: "investment",
         categoryName: "Pago a operador grupal",
         operatorName: "Operador Grupal",
+      }),
+    );
+  });
+
+  it("includes split travel group receipts in the main cashbox", async () => {
+    const { default: handler } = await import("@/pages/api/cashbox/index");
+
+    const req = {
+      method: "GET",
+      query: { year: "2026", month: "4" },
+      cookies: { token: "token" },
+      headers: {},
+    };
+    const res = createResponse();
+
+    await handler(req as never, res as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ ok: true });
+    const data = (
+      res.body as {
+        data?: { movements?: unknown[]; totalsByCurrency?: unknown[] };
+      }
+    ).data;
+    expect(data?.movements).toContainEqual(
+      expect.objectContaining({
+        id: "group_receipt:701:payment:1",
+        type: "income",
+        source: "receipt",
+        amount: 1000,
+        currency: "ARS",
+        paymentMethod: "Transferencia",
+        account: "Banco",
+        clientName: "Cliente Grupal",
+      }),
+    );
+    expect(data?.movements).toContainEqual(
+      expect.objectContaining({
+        id: "group_receipt:701:payment:2",
+        type: "income",
+        source: "receipt",
+        amount: 50,
+        currency: "USD",
+        paymentMethod: "Efectivo",
+        account: "Caja USD",
+        bookingLabel: "Grupal N° 9001 • Europa Abril",
+      }),
+    );
+    expect(data?.totalsByCurrency).toContainEqual(
+      expect.objectContaining({
+        currency: "USD",
+        income: 50,
       }),
     );
   });

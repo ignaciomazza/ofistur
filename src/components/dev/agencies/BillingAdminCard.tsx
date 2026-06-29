@@ -308,6 +308,13 @@ function fileNameFromContentDisposition(
   }
 }
 
+function canDownloadChargeFiscal(charge: Charge) {
+  return (
+    normalizeFiscalStatus(charge.fiscal_document?.status) === "ISSUED" &&
+    Boolean(charge.fiscal_document?.afip_number)
+  );
+}
+
 function activeAdjustments(adjustments: Adjustment[], date: Date) {
   return adjustments.filter((adj) => {
     if (!adj.active) return false;
@@ -423,6 +430,9 @@ export default function BillingAdminCard({ agencyId }: Props) {
     number | null
   >(null);
   const [downloadingReceiptChargeId, setDownloadingReceiptChargeId] = useState<
+    number | null
+  >(null);
+  const [downloadingFiscalChargeId, setDownloadingFiscalChargeId] = useState<
     number | null
   >(null);
 
@@ -1283,6 +1293,47 @@ export default function BillingAdminCard({ agencyId }: Props) {
       toast.error(e instanceof Error ? e.message : "Error descargando recibo");
     } finally {
       setDownloadingReceiptChargeId(null);
+    }
+  }
+
+  async function downloadChargeFiscalPdf(charge: Charge) {
+    if (!token) return;
+    setDownloadingFiscalChargeId(charge.id_charge);
+    try {
+      const res = await authFetch(
+        `/api/dev/agencies/${agencyId}/billing/charges/${charge.id_charge}/fiscal-pdf`,
+        {},
+        token,
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "No se pudo generar la factura.");
+      }
+
+      const blob = await res.blob();
+      const fiscalNumber =
+        charge.fiscal_document?.afip_number ||
+        charge.agency_billing_charge_id ||
+        charge.id_charge;
+      const fallbackName = `factura_afip_${fiscalNumber}.pdf`;
+      const fileName = fileNameFromContentDisposition(
+        res.headers.get("content-disposition"),
+        fallbackName,
+      );
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      toast.error(e instanceof Error ? e.message : "Error descargando factura");
+    } finally {
+      setDownloadingFiscalChargeId(null);
     }
   }
 
@@ -2413,6 +2464,20 @@ export default function BillingAdminCard({ agencyId }: Props) {
                           ? "Generando recibo..."
                           : "Recibo PDF"}
                       </button>
+                      {canDownloadChargeFiscal(charge) && (
+                        <button
+                          type="button"
+                          onClick={() => downloadChargeFiscalPdf(charge)}
+                          disabled={
+                            downloadingFiscalChargeId === charge.id_charge
+                          }
+                          className="rounded-full bg-white/0 px-3 py-1 text-xs text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:text-white dark:ring-white/10"
+                        >
+                          {downloadingFiscalChargeId === charge.id_charge
+                            ? "Generando factura..."
+                            : "Factura PDF"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => issueChargeFiscal(charge)}
@@ -2772,6 +2837,20 @@ export default function BillingAdminCard({ agencyId }: Props) {
                           ? "Generando recibo..."
                           : "Recibo PDF"}
                       </button>
+                      {canDownloadChargeFiscal(charge) && (
+                        <button
+                          type="button"
+                          onClick={() => downloadChargeFiscalPdf(charge)}
+                          disabled={
+                            downloadingFiscalChargeId === charge.id_charge
+                          }
+                          className="rounded-full bg-white/0 px-3 py-1 text-xs text-sky-950 shadow-sm ring-1 ring-sky-950/10 transition-transform hover:scale-95 active:scale-90 disabled:opacity-60 dark:text-white dark:ring-white/10"
+                        >
+                          {downloadingFiscalChargeId === charge.id_charge
+                            ? "Generando factura..."
+                            : "Factura PDF"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => issueChargeFiscal(charge)}
