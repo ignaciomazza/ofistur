@@ -2,7 +2,7 @@
 
 import { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
-import { getNextAgencyCounter } from "@/lib/agencyCounters";
+import { getNextAvailableAgencyOperatorId } from "@/lib/agencyOperatorId";
 import { resolveAuth } from "@/lib/auth";
 import { canManageOperators } from "@/lib/operatorAccess";
 
@@ -97,10 +97,9 @@ export default async function handler(
       }
 
       const newOperator = await prisma.$transaction(async (tx) => {
-        const agencyOperatorId = await getNextAgencyCounter(
+        const agencyOperatorId = await getNextAvailableAgencyOperatorId(
           tx,
           auth.id_agency,
-          "operator",
         );
         return tx.operator.create({
           data: {

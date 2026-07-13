@@ -218,6 +218,10 @@ export default function MyEarningsPage() {
   );
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
+  const [appliedRange, setAppliedRange] = useState({
+    from: defaultFrom,
+    to: defaultTo,
+  });
   const [dateField, setDateField] = useState<"creation" | "departure">(
     "creation",
   );
@@ -317,6 +321,7 @@ export default function MyEarningsPage() {
           filteredTotals[code] = v;
       }
       setTotalsByCurrency(filteredTotals);
+      setAppliedRange({ from, to });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Error desconocido");
     } finally {
@@ -327,14 +332,16 @@ export default function MyEarningsPage() {
   // Llamada inicial UNA vez, sin desactivar eslint
   const didRunInitial = useRef(false);
   useEffect(() => {
-    if (!didRunInitial.current) {
-      didRunInitial.current = true;
-      void loadAll();
-    }
-  }, [loadAll]);
+    if (!token || didRunInitial.current) return;
+    didRunInitial.current = true;
+    void loadAll();
+  }, [token, loadAll]);
 
   /* Series por moneda con meses faltantes en 0 */
-  const monthsRange = useMemo(() => buildMonthsRange(from, to), [from, to]);
+  const monthsRange = useMemo(
+    () => buildMonthsRange(appliedRange.from, appliedRange.to),
+    [appliedRange],
+  );
 
   const dataByCurrency = useMemo(() => {
     const map: Record<

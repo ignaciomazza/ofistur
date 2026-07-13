@@ -21,6 +21,10 @@ import {
   startOfDayUtcFromDateKeyInBuenosAires,
   toDateKeyInBuenosAiresLegacySafe,
 } from "@/lib/buenosAiresDate";
+import {
+  calculateBookingCommissionBase,
+  calculateServiceCommissionBase,
+} from "@/lib/earnings/commissionMath";
 
 /* ============ Auth helpers ============ */
 type TokenPayload = JWTPayload & {
@@ -614,7 +618,6 @@ export default async function handler(
         const sale = Number(total) || 0;
         const cost = Number(costTotals[cur] || 0);
         const taxes = Number(taxTotals[cur] || 0);
-        const commissionBeforeFee = Math.max(sale - cost - taxes, 0);
         const fee =
           sale * (Number.isFinite(agencyFeePct) ? agencyFeePct : 0.024);
         const serviceAdjustments =
@@ -629,10 +632,14 @@ export default async function handler(
           cost,
         ).total;
         const iibb = grossIncomeTaxByBooking.get(bid)?.[cur] || 0;
-        baseByCur[cur] = Math.max(
-          commissionBeforeFee - fee - adjustments - iibb,
-          0,
-        );
+        baseByCur[cur] = calculateBookingCommissionBase({
+          sale,
+          cost,
+          taxes,
+          fee,
+          adjustments,
+          grossIncomeTax: iibb,
+        });
       }
 
       commissionBaseByBooking.set(bid, baseByCur);
@@ -730,10 +737,12 @@ export default async function handler(
       const dbCommission = Number(svc.totalCommissionWithoutVAT ?? 0);
       const extraCosts = Number(svc.extra_costs_amount ?? 0);
       const extraTaxes = Number(svc.extra_taxes_amount ?? 0);
-      const commissionBase = Math.max(
-        dbCommission - fee - extraCosts - extraTaxes,
-        0,
-      );
+      const commissionBase = calculateServiceCommissionBase({
+        commissionWithoutVat: dbCommission,
+        fee,
+        extraCosts,
+        extraTaxes,
+      });
 
       const rule = resolveRule(ownerId, createdAt);
       const overrides = sanitizeCommissionOverrides(

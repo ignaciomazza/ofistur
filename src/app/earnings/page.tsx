@@ -70,6 +70,7 @@ interface EarningsResponse {
       paidTotal: number;
       debtTotal: number;
       commissionTotal: number;
+      commissionVatTotal?: number;
       paymentRate: number;
     }
   >;
@@ -373,6 +374,7 @@ const AgencyCommissionSummary: React.FC<AgencyCommissionSummaryProps> = ({
           const agency = data.totals?.agencyShare?.[cur] || 0;
           const commissionTotal = stats?.commissionTotal ?? seller + leader + agency;
           const commissionVat =
+            stats?.commissionVatTotal ??
             Math.max(commissionTotal, 0) * COMMISSION_VAT_TOTAL_RATE;
           const nonOperatorExpenseTotal = Number(
             nonOperatorExpenseByCurrency[cur] || 0,
@@ -777,7 +779,10 @@ export default function EarningsPage() {
       const comisionDelRango = toSafeNumber(
         stats?.commissionTotal ?? seller + leader + agency,
       );
-      const ivaComisiones = Math.max(comisionDelRango, 0) * COMMISSION_VAT_TOTAL_RATE;
+      const ivaComisiones = toSafeNumber(
+        stats?.commissionVatTotal ??
+          Math.max(comisionDelRango, 0) * COMMISSION_VAT_TOTAL_RATE,
+      );
       const gastosMes = toSafeNumber(nonOperatorExpenseByCurrency[cur]);
       const gananciaTotal = comisionDelRango - gastosMes;
       const tasaPagoPorcentaje = Math.round(toSafeNumber(stats?.paymentRate) * 100);

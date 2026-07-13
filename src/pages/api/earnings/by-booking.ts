@@ -17,6 +17,10 @@ import {
   resolveCommissionForContext,
   sanitizeCommissionOverrides,
 } from "@/utils/commissionOverrides";
+import {
+  calculateBookingCommissionBase,
+  calculateServiceCommissionBase,
+} from "@/lib/earnings/commissionMath";
 
 function normalizeSaleTotals(
   input: unknown,
@@ -263,7 +267,6 @@ export default async function handler(
         const sale = Number(total) || 0;
         const cost = Number(costTotals[cur] || 0);
         const taxes = Number(taxTotals[cur] || 0);
-        const commissionBeforeFee = sale - cost - taxes;
         const fee =
           sale * (Number.isFinite(agencyFeePct) ? agencyFeePct : 0.024);
         const combinedAdjustments = [
@@ -276,10 +279,14 @@ export default async function handler(
           cost,
         );
         const iibb = grossIncomeTaxTotals[cur] || 0;
-        commissionBaseByCurrency[cur] = Math.max(
-          commissionBeforeFee - fee - adjustments.total - iibb,
-          0,
-        );
+        commissionBaseByCurrency[cur] = calculateBookingCommissionBase({
+          sale,
+          cost,
+          taxes,
+          fee,
+          adjustments: adjustments.total,
+          grossIncomeTax: iibb,
+        });
       }
     } else {
       // Base por moneda (mismo cálculo de /api/earnings)
@@ -297,7 +304,15 @@ export default async function handler(
         const dbCommission = Number(s.totalCommissionWithoutVAT ?? 0);
         const extraCosts = Number(s.extra_costs_amount ?? 0);
         const extraTaxes = Number(s.extra_taxes_amount ?? 0);
-        inc(cur, Math.max(dbCommission - fee - extraCosts - extraTaxes, 0));
+        inc(
+          cur,
+          calculateServiceCommissionBase({
+            commissionWithoutVat: dbCommission,
+            fee,
+            extraCosts,
+            extraTaxes,
+          }),
+        );
       }
     }
 
@@ -374,7 +389,12 @@ export default async function handler(
         const dbCommission = Number(s.totalCommissionWithoutVAT ?? 0);
         const extraCosts = Number(s.extra_costs_amount ?? 0);
         const extraTaxes = Number(s.extra_taxes_amount ?? 0);
-        const base = Math.max(dbCommission - fee - extraCosts - extraTaxes, 0);
+        const base = calculateServiceCommissionBase({
+          commissionWithoutVat: dbCommission,
+          fee,
+          extraCosts,
+          extraTaxes,
+        });
         const { sellerPct } = resolveCommissionForContext({
           rule,
           overrides: custom,

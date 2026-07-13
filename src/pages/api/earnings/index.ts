@@ -20,6 +20,12 @@ import {
   startOfDayUtcFromDateKeyInBuenosAires,
   toDateKeyInBuenosAiresLegacySafe,
 } from "@/lib/buenosAiresDate";
+import {
+  calculateAgencyShare,
+  calculateBookingCommissionBase,
+  calculateCommissionVatTotal,
+  calculateServiceCommissionBase,
+} from "@/lib/earnings/commissionMath";
 
 interface EarningItem {
   currency: string;
@@ -69,6 +75,7 @@ interface EarningsResponse {
       paidTotal: number;
       debtTotal: number;
       commissionTotal: number;
+      commissionVatTotal: number;
       paymentRate: number;
     }
   >;
@@ -337,6 +344,8 @@ export default async function handler(
         cost_price: true,
         other_taxes: true,
         totalCommissionWithoutVAT: true,
+        vatOnCommission21: true,
+        vatOnCommission10_5: true,
         transfer_fee_amount: true,
         transfer_fee_pct: true,
         extra_costs_amount: true,
@@ -381,6 +390,7 @@ export default async function handler(
     const fallbackSaleTotalsByBooking = new Map<number, Record<string, number>>();
     const costTotalsByBooking = new Map<number, Record<string, number>>();
     const taxTotalsByBooking = new Map<number, Record<string, number>>();
+    const commissionVatTotalsByBooking = new Map<number, Record<string, number>>();
     const grossIncomeTaxByBooking = new Map<number, Record<string, number>>();
     const serviceAdjustmentsByBookingCurrency = new Map<
       number,
@@ -411,6 +421,12 @@ export default async function handler(
         bid,
         cur,
         Number(svc.other_taxes) || 0,
+      );
+      addByBooking(
+        commissionVatTotalsByBooking,
+        bid,
+        cur,
+        calculateCommissionVatTotal(svc),
       );
       addByBooking(
         grossIncomeTaxByBooking,
@@ -1050,6 +1066,7 @@ export default async function handler(
           paidTotal: 0,
           debtTotal: 0,
           commissionTotal: 0,
+          commissionVatTotal: 0,
           paymentRate: 0,
         };
       }
@@ -1058,6 +1075,7 @@ export default async function handler(
     saleTotalsByBooking.forEach((totalsByCur, bid) => {
       if (!allowedBookingIds.has(bid)) return;
       const paid = receiptsMap.get(bid) || {};
+      const commissionVatByCur = commissionVatTotalsByBooking.get(bid) || {};
       for (const [cur, total] of Object.entries(totalsByCur)) {
         if (!validBookingCurrency.has(`${bid}-${cur}`)) continue;
         const sale = Number(total) || 0;
@@ -1066,6 +1084,9 @@ export default async function handler(
         statsByCurrency[cur].saleTotal += sale;
         statsByCurrency[cur].paidTotal += paidAmt;
         statsByCurrency[cur].debtTotal += sale - paidAmt;
+        statsByCurrency[cur].commissionVatTotal += Number(
+          commissionVatByCur[cur] || 0,
+        );
       }
     });
 
@@ -1176,7 +1197,6 @@ export default async function handler(
         const sale = Number(total) || 0;
         const cost = Number(costTotals[cur] || 0);
         const taxes = Number(taxTotals[cur] || 0);
-        const commissionBeforeFee = Math.max(sale - cost - taxes, 0);
         const fee =
           sale * (Number.isFinite(agencyFeePct) ? agencyFeePct : 0.024);
         const serviceAdjustments =
@@ -1192,10 +1212,14 @@ export default async function handler(
         ).total;
         const iibb =
           grossIncomeTaxByBooking.get(bid)?.[cur] || 0;
-        baseByCur[cur] = Math.max(
-          commissionBeforeFee - fee - adjustments - iibb,
-          0,
-        );
+        baseByCur[cur] = calculateBookingCommissionBase({
+          sale,
+          cost,
+          taxes,
+          fee,
+          adjustments,
+          grossIncomeTax: iibb,
+        });
       }
 
       commissionBaseByBooking.set(bid, baseByCur);
@@ -1231,10 +1255,11 @@ export default async function handler(
           (sum, pct) => sum + commissionBase * (pct / 100),
           0,
         );
-        const agencyShareAmt = Math.max(
-          0,
-          commissionBase - sellerComm - leaderComm,
-        );
+        const agencyShareAmt = calculateAgencyShare({
+          commissionBase,
+          sellerCommission: sellerComm,
+          leaderCommission: leaderComm,
+        });
         const debtForBooking = debtByBooking.get(bid)?.[cur] ?? 0;
 
         const added = addRow(
@@ -1303,10 +1328,12 @@ export default async function handler(
       const dbCommission = Number(svc.totalCommissionWithoutVAT ?? 0);
       const extraCosts = Number(svc.extra_costs_amount ?? 0);
       const extraTaxes = Number(svc.extra_taxes_amount ?? 0);
-      const commissionBase = Math.max(
-        dbCommission - fee - extraCosts - extraTaxes,
-        0,
-      );
+      const commissionBase = calculateServiceCommissionBase({
+        commissionWithoutVat: dbCommission,
+        fee,
+        extraCosts,
+        extraTaxes,
+      });
 
       // regla efectiva por fecha de creación de la reserva
       const rule = resolveRule(sellerId, bookingCreatedAt);
@@ -1329,10 +1356,11 @@ export default async function handler(
         (sum, pct) => sum + commissionBase * (pct / 100),
         0,
       );
-      const agencyShareAmt = Math.max(
-        0,
-        commissionBase - sellerComm - leaderComm,
-      );
+      const agencyShareAmt = calculateAgencyShare({
+        commissionBase,
+        sellerCommission: sellerComm,
+        leaderCommission: leaderComm,
+      });
 
       const debtForBooking = debtByBooking.get(bid)?.[cur] ?? 0;
 
@@ -1485,15 +1513,9 @@ export default async function handler(
               sale,
               paid,
               pending,
-              sellerCommission: round2(
-                Math.max(Number(serviceCommissions.seller || 0), 0),
-              ),
-              leaderCommission: round2(
-                Math.max(Number(serviceCommissions.leader || 0), 0),
-              ),
-              agencyCommission: round2(
-                Math.max(Number(serviceCommissions.agency || 0), 0),
-              ),
+              sellerCommission: round2(Number(serviceCommissions.seller || 0)),
+              leaderCommission: round2(Number(serviceCommissions.leader || 0)),
+              agencyCommission: round2(Number(serviceCommissions.agency || 0)),
             };
           });
 
