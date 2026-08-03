@@ -8,6 +8,7 @@ import {
   computeManualTotals,
   type ManualTotalsInput,
 } from "@/services/afip/manualTotals";
+import { logArca } from "@/services/arca/logger";
 
 export type CreditNoteWithItems = CreditNote & {
   items: CreditNoteItem[];
@@ -225,6 +226,14 @@ export async function createCreditNote(
     (voucherData.MonId as string) || (orig.currency as string) || "PES";
 
   // 7) Emitir NC en AFIP (usa el AFIP del usuario del request y el CUIT real para el QR)
+  logArca("info", "Credit note issuance requested", {
+    agencyId: orig.id_agency,
+    invoiceId,
+    creditNoteType: tipoNota,
+    associatedSalesPoint: originalPtoVta,
+    associatedVoucherType: originalCbteTipo,
+    associatedVoucherNumber: originalNumero,
+  });
   const resp = await createCreditNoteVoucher(
     req,
     tipoNota,
@@ -239,6 +248,12 @@ export async function createCreditNote(
   );
 
   if (!resp.success || !resp.details) {
+    logArca("warn", "Credit note authorization failed", {
+      agencyId: orig.id_agency,
+      invoiceId,
+      creditNoteType: tipoNota,
+      message: resp.message,
+    });
     return {
       success: false,
       message: resp.message ?? "Error al emitir nota de crédito en AFIP.",
@@ -247,6 +262,18 @@ export async function createCreditNote(
 
   const det = resp.details as Prisma.JsonObject;
   const qrBase64 = resp.qrBase64;
+  const ptoVta = Number(det.PtoVta ?? 0);
+  const cbteTipo = Number(det.CbteTipo ?? tipoNota);
+  const creditNumber = String(det.CbteDesde ?? "");
+
+  logArca("info", "Credit note authorized", {
+    agencyId: orig.id_agency,
+    invoiceId,
+    salesPoint: ptoVta,
+    voucherType: cbteTipo,
+    voucherNumber: creditNumber,
+    cae: det.CAE,
+  });
 
   // 8) Preparar descripciones para los ítems locales (no afectan AFIP)
   //    Usamos el mismo orden que en ivaLines para asignar textos referenciales.
@@ -263,7 +290,7 @@ export async function createCreditNote(
   }
 
   // 9) Guardar NC + ítems en DB (transacción)
-  const { note, items } = await prisma.$transaction(async (tx) => {
+  const savePromise = prisma.$transaction(async (tx) => {
     const agencyCreditNoteId = await getNextAgencyCounter(
       tx,
       orig.id_agency,
@@ -273,7 +300,9 @@ export async function createCreditNote(
       data: {
         agency_credit_note_id: agencyCreditNoteId,
         id_agency: orig.id_agency,
-        credit_number: String(det.CbteDesde as number),
+        credit_number: creditNumber,
+        pto_vta: ptoVta,
+        cbte_tipo: cbteTipo,
         issue_date: new Date(),
         total_amount: Number(det.ImpTotal || 0),
         currency: afipCurrency,
@@ -317,6 +346,27 @@ export async function createCreditNote(
     );
 
     return { note, items };
+  });
+
+  const { note, items } = await savePromise.catch((error: unknown) => {
+    logArca("error", "Credit note local persistence failed", {
+      agencyId: orig.id_agency,
+      invoiceId,
+      salesPoint: ptoVta,
+      voucherType: cbteTipo,
+      voucherNumber: creditNumber,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  });
+
+  logArca("info", "Credit note persisted", {
+    agencyId: orig.id_agency,
+    invoiceId,
+    creditNoteId: note.id_credit_note,
+    salesPoint: ptoVta,
+    voucherType: cbteTipo,
+    voucherNumber: creditNumber,
   });
 
   return {

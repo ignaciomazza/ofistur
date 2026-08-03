@@ -876,6 +876,8 @@ model CreditNote {
   id_credit_note        Int              @id @default(autoincrement())
   agency_credit_note_id Int
   credit_number         String           @unique
+  pto_vta               Int              @default(0)
+  cbte_tipo             Int              @default(0)
   issue_date            DateTime         @default(now())
   total_amount          Float
   currency              String
@@ -890,6 +892,7 @@ model CreditNote {
   items                 CreditNoteItem[]
 
   @@unique([id_agency, agency_credit_note_id], name: "agency_credit_note_id_unique")
+  @@unique([id_agency, pto_vta, cbte_tipo, credit_number], name: "agency_credit_note_voucher_unique")
   @@index([id_agency])
 }
 
