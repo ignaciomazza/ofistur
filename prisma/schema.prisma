@@ -875,7 +875,7 @@ model InvoiceItem {
 model CreditNote {
   id_credit_note        Int              @id @default(autoincrement())
   agency_credit_note_id Int
-  credit_number         String           @unique
+  credit_number         String
   pto_vta               Int              @default(0)
   cbte_tipo             Int              @default(0)
   issue_date            DateTime         @default(now())
