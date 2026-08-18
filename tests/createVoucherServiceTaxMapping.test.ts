@@ -47,7 +47,10 @@ vi.mock("qrcode", () => ({
   },
 }));
 
-import { createVoucherService } from "@/services/afip/createVoucherService";
+import {
+  createVoucherService,
+  recoverPreparedVoucherService,
+} from "@/services/afip/createVoucherService";
 
 const serviceDateFrom = new Date("2026-05-01T12:00:00Z");
 const serviceDateTo = new Date("2026-05-10T12:00:00Z");
@@ -82,7 +85,9 @@ describe("createVoucherService tax mapping", () => {
     mocks.getAgencyCUITFromRequest.mockResolvedValue(20401234567);
     mocks.getAgencyIdFromRequest.mockResolvedValue(10);
     mocks.resolveSalesPoint.mockResolvedValue(3);
-    mocks.agencyArcaConfigFindUnique.mockResolvedValue({ selectedSalesPoint: null });
+    mocks.agencyArcaConfigFindUnique.mockResolvedValue({
+      selectedSalesPoint: null,
+    });
     mocks.qrToDataUrl.mockResolvedValue("data:image/png;base64,qr");
 
     mocks.afipClient.ElectronicBilling.getServerStatus.mockResolvedValue({
@@ -114,7 +119,8 @@ describe("createVoucherService tax mapping", () => {
     );
 
     expect(response.success).toBe(true);
-    const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
+    const payload =
+      mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
     expect(payload.ImpTotal).toBe(6030);
     expect(payload.ImpNeto).toBe(0);
     expect(payload.ImpIVA).toBe(0);
@@ -136,7 +142,8 @@ describe("createVoucherService tax mapping", () => {
     );
 
     expect(response.success).toBe(true);
-    const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
+    const payload =
+      mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
     expect(payload.ImpTotal).toBe(1000);
     expect(payload.ImpNeto).toBe(0);
     expect(payload.ImpIVA).toBe(0);
@@ -151,14 +158,21 @@ describe("createVoucherService tax mapping", () => {
       6,
       "12345678",
       96,
-      [baseServiceDetail({ sale_price: 1200, nonComputable: 200, exempt: 1000 })],
+      [
+        baseServiceDetail({
+          sale_price: 1200,
+          nonComputable: 200,
+          exempt: 1000,
+        }),
+      ],
       "PES",
       undefined,
       "2026-05-10",
     );
 
     expect(response.success).toBe(true);
-    const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
+    const payload =
+      mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
     expect(payload.ImpTotal).toBe(1200);
     expect(payload.ImpNeto).toBe(0);
     expect(payload.ImpIVA).toBe(0);
@@ -186,7 +200,8 @@ describe("createVoucherService tax mapping", () => {
     );
 
     expect(response.success).toBe(true);
-    const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
+    const payload =
+      mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
     expect(payload.ImpTotal).toBe(6560);
     expect(payload.ImpNeto).toBe(1044.35);
     expect(payload.ImpIVA).toBe(219.31);
@@ -199,11 +214,23 @@ describe("createVoucherService tax mapping", () => {
     const scenarios = [
       {
         name: "gravado 21",
-        services: [baseServiceDetail({ sale_price: 1210, taxableBase21: 1000, tax_21: 210 })],
+        services: [
+          baseServiceDetail({
+            sale_price: 1210,
+            taxableBase21: 1000,
+            tax_21: 210,
+          }),
+        ],
       },
       {
         name: "gravado 10.5",
-        services: [baseServiceDetail({ sale_price: 1105, taxableBase10_5: 1000, tax_105: 105 })],
+        services: [
+          baseServiceDetail({
+            sale_price: 1105,
+            taxableBase10_5: 1000,
+            tax_105: 105,
+          }),
+        ],
       },
       {
         name: "mixto",
@@ -219,11 +246,23 @@ describe("createVoucherService tax mapping", () => {
       },
       {
         name: "no gravado + exento",
-        services: [baseServiceDetail({ sale_price: 2000, nonComputable: 500, exempt: 1500 })],
+        services: [
+          baseServiceDetail({
+            sale_price: 2000,
+            nonComputable: 500,
+            exempt: 1500,
+          }),
+        ],
       },
       {
         name: "legacy base iva0",
-        services: [baseServiceDetail({ sale_price: 1300, taxableBase21: 1300, tax_21: 0 })],
+        services: [
+          baseServiceDetail({
+            sale_price: 1300,
+            taxableBase21: 1300,
+            tax_21: 0,
+          }),
+        ],
       },
       {
         name: "manual total-only",
@@ -248,23 +287,110 @@ describe("createVoucherService tax mapping", () => {
       );
 
       expect(response.success, scenario.name).toBe(true);
-      const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
+      const payload =
+        mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
       const impTotal = Number(payload.ImpTotal || 0);
       const impNeto = Number(payload.ImpNeto || 0);
       const impIva = Number(payload.ImpIVA || 0);
       const impTotConc = Number(payload.ImpTotConc || 0);
       const impOpEx = Number(payload.ImpOpEx || 0);
 
-      expect(Math.abs(impTotal - (impNeto + impIva + impTotConc + impOpEx)) <= 0.01, scenario.name).toBe(
-        true,
-      );
+      expect(
+        Math.abs(impTotal - (impNeto + impIva + impTotConc + impOpEx)) <= 0.01,
+        scenario.name,
+      ).toBe(true);
 
       const ivaLines = Array.isArray(payload.Iva) ? payload.Iva : [];
       const hasZeroTaxLine = ivaLines.some(
         (line: { BaseImp?: number; Importe?: number }) =>
-          Number(line.BaseImp || 0) > 0 && Math.abs(Number(line.Importe || 0)) <= 0.01,
+          Number(line.BaseImp || 0) > 0 &&
+          Math.abs(Number(line.Importe || 0)) <= 0.01,
       );
       expect(hasZeroTaxLine, scenario.name).toBe(false);
+    }
+  });
+
+  it("persists lifecycle checkpoints on both sides of the irreversible ARCA call", async () => {
+    const onPrepared = vi.fn();
+    const onAuthorized = vi.fn();
+
+    const response = await createVoucherService(
+      reqStub,
+      6,
+      "12345678",
+      96,
+      [baseServiceDetail({ sale_price: 1000, exempt: 1000 })],
+      "PES",
+      undefined,
+      "2026-05-10",
+      undefined,
+      { onPrepared, onAuthorized },
+    );
+
+    expect(response.success).toBe(true);
+    expect(onPrepared).toHaveBeenCalledTimes(1);
+    expect(onAuthorized).toHaveBeenCalledTimes(1);
+    expect(onPrepared.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.afipClient.ElectronicBilling.createVoucher.mock
+        .invocationCallOrder[0],
+    );
+    expect(onAuthorized.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.afipClient.ElectronicBilling.createVoucher.mock
+        .invocationCallOrder[0],
+    );
+    expect(onAuthorized).toHaveBeenCalledWith(
+      expect.objectContaining({
+        PtoVta: 3,
+        CbteTipo: 6,
+        CbteDesde: 121,
+        CAE: "12345678901234",
+      }),
+    );
+  });
+
+  it("recovers an already authorized prepared voucher without issuing it again", async () => {
+    mocks.afipClient.ElectronicBilling.getVoucherInfo.mockResolvedValueOnce({
+      Concepto: 2,
+      DocTipo: 96,
+      DocNro: 12345678,
+      CbteDesde: 121,
+      CbteHasta: 121,
+      CbteFch: 20260510,
+      ImpTotal: 1000,
+      MonId: "PES",
+      MonCotiz: 1,
+      CodAutorizacion: "12345678901234",
+      FchVto: "20260531",
+    });
+
+    const recovered = await recoverPreparedVoucherService(reqStub, {
+      PtoVta: 3,
+      CbteTipo: 6,
+      CbteDesde: 121,
+      CbteHasta: 121,
+      CbteFch: 20260510,
+      Concepto: 2,
+      DocTipo: 96,
+      DocNro: 12345678,
+      ImpTotal: 1000,
+      MonId: "PES",
+      MonCotiz: 1,
+    });
+
+    expect(recovered.status).toBe("AUTHORIZED");
+    expect(
+      mocks.afipClient.ElectronicBilling.createVoucher,
+    ).not.toHaveBeenCalled();
+    if (recovered.status === "AUTHORIZED") {
+      expect(recovered.details).toEqual(
+        expect.objectContaining({
+          PtoVta: 3,
+          CbteTipo: 6,
+          CbteDesde: 121,
+          CAE: "12345678901234",
+        }),
+      );
+      expect(recovered.qrBase64).toBe("data:image/png;base64,qr");
     }
   });
 });

@@ -81,6 +81,7 @@ model Agency {
   Receipt                      Receipt[]
   otherIncomes                 OtherIncome[]
   invoices                     Invoice[]
+  invoiceIssuanceAttempts      InvoiceIssuanceAttempt[]
   creditNotes                  CreditNote[]
   services                     Service[]
   operatorDues                 OperatorDue[]
@@ -233,6 +234,7 @@ model Client {
   bookings                   Booking[]               @relation("BookingClients")
   titular_bookings           Booking[]               @relation("Titular")
   invoices                   Invoice[]               @relation("ClientInvoices")
+  invoiceIssuanceAttempts    InvoiceIssuanceAttempt[]
   ClientPayment              ClientPayment[]
   creditAccounts             CreditAccount[]
   files                      FileAsset[]             @relation("ClientFiles")
@@ -278,6 +280,7 @@ model Booking {
   return_date                     DateTime
   pax_count                       Int
   invoices                        Invoice[]                     @relation("BookingInvoices")
+  invoiceIssuanceAttempts         InvoiceIssuanceAttempt[]
   Receipt                         Receipt[]                     @relation("BookingReceipt")
   investments                     Investment[]                  @relation("BookingInvestments")
   investmentAllocations           InvestmentServiceAllocation[]
@@ -846,10 +849,43 @@ model Invoice {
   client            Client        @relation("ClientInvoices", fields: [client_id], references: [id_client])
   credit_notes      CreditNote[]
   InvoiceItem       InvoiceItem[]
+  issuanceAttempt   InvoiceIssuanceAttempt? @relation("InvoiceIssuanceAttemptInvoice")
 
   @@unique([id_agency, agency_invoice_id], name: "agency_invoice_id_unique")
   @@unique([id_agency, pto_vta, cbte_tipo, invoice_number], name: "agency_invoice_voucher_unique")
   @@index([id_agency])
+}
+
+model InvoiceIssuanceAttempt {
+  id_invoice_issuance_attempt Int      @id @default(autoincrement())
+  id_agency                   Int
+  request_key                 String
+  item_key                    String
+  request_hash                String
+  active_key                  String?
+  status                      String   @default("PENDING")
+  booking_id                  Int
+  client_id                   Int
+  currency                    String
+  cbte_tipo                   Int
+  prepared_payload            Json?
+  authorized_payload          Json?
+  qr_base64                   String?
+  invoice_id                  Int?     @unique
+  error_message               String?
+  created_at                  DateTime @default(now())
+  updated_at                  DateTime @updatedAt
+
+  agency  Agency   @relation(fields: [id_agency], references: [id_agency], onDelete: Cascade)
+  booking Booking  @relation(fields: [booking_id], references: [id_booking], onDelete: Cascade)
+  client  Client   @relation(fields: [client_id], references: [id_client], onDelete: Cascade)
+  invoice Invoice? @relation("InvoiceIssuanceAttemptInvoice", fields: [invoice_id], references: [id_invoice], onDelete: SetNull)
+
+  @@unique([id_agency, request_key, item_key], name: "agency_invoice_issuance_item_unique")
+  @@unique([id_agency, active_key], name: "agency_invoice_issuance_active_unique")
+  @@index([id_agency, status, updated_at])
+  @@index([booking_id])
+  @@index([client_id])
 }
 
 model InvoiceItem {

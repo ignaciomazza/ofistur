@@ -5,7 +5,7 @@ import {
   isLockedGroupStatus,
   parseDepartureWhereInput,
   parseGroupWhereInput,
-  parseOptionalString,
+  parseOptionalStringPatch,
   requireAuth,
   toJsonInput,
   toDistinctPositiveInts,
@@ -223,13 +223,14 @@ export default async function handler(
     departure = null;
   }
 
-  const note = parseOptionalString(body.note, 1000);
-  if (note === undefined) {
+  const notePatch = parseOptionalStringPatch(body.note, 1000);
+  if (!notePatch.valid) {
     return groupApiError(res, 400, "La nota enviada es inválida.", {
       code: "GROUP_PASSENGER_NOTE_INVALID",
       solution: "Ingresá una nota de hasta 1000 caracteres o dejala vacía.",
     });
   }
+  const note = notePatch.value;
   const metadataInput =
     body.metadata !== undefined ? toJsonInput(body.metadata) : undefined;
   if (metadataInput === undefined && body.metadata !== undefined) {
@@ -461,7 +462,7 @@ export default async function handler(
           departure === undefined
             ? undefined
             : departure?.id_travel_group_departure ?? null,
-        note: note ?? null,
+        note: notePatch.provided ? note ?? null : undefined,
       },
     });
   } catch (error) {

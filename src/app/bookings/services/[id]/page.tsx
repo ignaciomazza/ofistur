@@ -94,6 +94,37 @@ function normalizeIdList(value: unknown): number[] {
   return out;
 }
 
+function createInvoiceRequestKey(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `invoice-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+}
+
+function invoiceRequestStorageKey(bookingId: number): string {
+  return `ofistur:invoice-request:${bookingId}`;
+}
+
+function readStoredInvoiceRequestKey(bookingId: number): string | null {
+  try {
+    return window.localStorage.getItem(invoiceRequestStorageKey(bookingId));
+  } catch {
+    return null;
+  }
+}
+
+function storeInvoiceRequestKey(bookingId: number, value: string | null): void {
+  try {
+    const key = invoiceRequestStorageKey(bookingId);
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // El estado durable del servidor sigue protegiendo el intento actual.
+  }
+}
+
 function normalizeCurrencyCode(value: unknown): string {
   const code = String(value ?? "")
     .trim()
@@ -318,6 +349,7 @@ export default function ServicesPage() {
   const [invoiceLoading, setInvoiceLoading] = useState(false);
 
   const mountedRef = useRef(true);
+  const invoiceRequestKeyRef = useRef<string | null>(null);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -1118,7 +1150,15 @@ export default function ServicesPage() {
       },
     );
 
+    const requestKey =
+      invoiceRequestKeyRef.current ??
+      readStoredInvoiceRequestKey(booking.id_booking) ??
+      createInvoiceRequestKey();
+    invoiceRequestKeyRef.current = requestKey;
+    storeInvoiceRequestKey(booking.id_booking, requestKey);
+
     const payload = {
+      idempotencyKey: requestKey,
       bookingId: booking.id_booking,
       services: invoiceFormData.services.map((s) => Number(s)),
       clientIds: normalizedClients.map((entry) => entry.clientId),
@@ -1166,17 +1206,41 @@ export default function ServicesPage() {
         }
         throw new Error(getInvoiceErrorToast(message));
       }
-      const result = await res.json();
-      if ((result as { success?: boolean }).success) {
-        setInvoices((prev) => [
-          ...prev,
-          ...((result as { invoices?: Invoice[] }).invoices ?? []),
-        ]);
-        toast.success("Factura creada exitosamente!");
-      } else {
-        toast.error(
-          getInvoiceErrorToast((result as { message?: string }).message),
+      const result = (await res.json()) as {
+        success?: boolean;
+        complete?: boolean;
+        message?: string;
+        requestKey?: string;
+        invoices?: Invoice[];
+      };
+      if (result.success) {
+        const receivedInvoices = result.invoices ?? [];
+        setInvoices((prev) => {
+          const byId = new Map(
+            prev.map((invoice) => [invoice.id_invoice, invoice]),
+          );
+          receivedInvoices.forEach((invoice) => {
+            byId.set(invoice.id_invoice, invoice);
+          });
+          return Array.from(byId.values());
+        });
+        invoiceRequestKeyRef.current = result.complete
+          ? null
+          : result.requestKey || requestKey;
+        storeInvoiceRequestKey(
+          booking.id_booking,
+          invoiceRequestKeyRef.current,
         );
+        if (result.complete) {
+          toast.success("Facturación completada correctamente.");
+        } else {
+          toast.warning(
+            result.message ||
+              "La facturación quedó incompleta. Reintentá para continuar sin duplicar lo ya emitido.",
+          );
+        }
+      } else {
+        toast.error(getInvoiceErrorToast(result.message));
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error servidor.";

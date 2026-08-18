@@ -2,7 +2,24 @@
 import prisma from "@/lib/prisma";
 import { getNextAgencyCounter } from "@/lib/agencyCounters";
 import type { NextApiRequest } from "next";
-import { createVoucherService } from "@/services/afip/createVoucherService";
+import {
+  createVoucherService,
+  recoverPreparedVoucherService,
+} from "@/services/afip/createVoucherService";
+import {
+  INVOICE_ATTEMPT_STATUS,
+  buildInvoiceAttemptHash,
+  claimInvoiceAttempt,
+  ensureInvoiceAttempt,
+  isInvoiceAttemptFresh,
+  markInvoiceAttemptAuthorized,
+  markInvoiceAttemptFailed,
+  markInvoiceAttemptForReview,
+  markInvoiceAttemptPrepared,
+  normalizeInvoiceRequestKey,
+  reloadInvoiceAttempt,
+  resetInvoiceAttempt,
+} from "@/services/invoiceIssuanceAttempts";
 import {
   buildInvoiceNumber,
   buildInvoiceNumberLegacy,
@@ -11,7 +28,12 @@ import {
   splitManualTotalsByShares,
   type ManualTotalsInput,
 } from "@/services/afip/manualTotals";
-import type { Invoice, InvoiceItem, Prisma } from "@prisma/client";
+import type {
+  Invoice,
+  InvoiceIssuanceAttempt,
+  InvoiceItem,
+  Prisma,
+} from "@prisma/client";
 import { toDateKeyInBuenosAiresLegacySafe } from "@/lib/buenosAiresDate";
 
 export type InvoiceWithItems = Invoice & { InvoiceItem: InvoiceItem[] };
@@ -89,15 +111,36 @@ interface InvoiceRequestBody {
   customItems?: InvoiceCustomItem[];
   invoiceDate?: string;
   manualTotals?: ManualTotalsInput;
+  idempotencyKey?: string;
 }
 
 interface CreateResult {
   success: boolean;
   message?: string;
   invoices?: InvoiceWithItems[];
+  complete?: boolean;
+  plannedCount?: number;
+  completedCount?: number;
+  requestKey?: string;
 }
 
+type AttemptRecoveryDecision =
+  | {
+      kind: "AUTHORIZED";
+      attempt: InvoiceIssuanceAttempt;
+      details: RawVoucherDetails;
+      qrBase64: string;
+    }
+  | { kind: "RETRY"; attempt: InvoiceIssuanceAttempt }
+  | { kind: "STOP"; message: string };
+
 const round2 = (value: number) => Number(value.toFixed(2));
+
+function isJsonObject(
+  value: Prisma.JsonValue | null,
+): value is Prisma.JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 const SERVICE_SPLIT_KEYS: Array<keyof ServiceDetail> = [
   "sale_price",
@@ -145,8 +188,9 @@ function splitServiceDetailsByShares(
   shares: number[],
 ): ServiceDetail[][] {
   const normalized = normalizeShares(shares);
-  const out: ServiceDetail[][] = Array.from({ length: normalized.length }, () =>
-    [],
+  const out: ServiceDetail[][] = Array.from(
+    { length: normalized.length },
+    () => [],
   );
 
   source.forEach((svc) => {
@@ -267,11 +311,21 @@ export async function createInvoices(
     customItems = [],
     invoiceDate,
     manualTotals,
+    idempotencyKey,
   } = data;
 
   if (!clientIds.length) {
     return { success: false, message: "Debe haber al menos un pax." };
   }
+  if (new Set(clientIds).size !== clientIds.length) {
+    return {
+      success: false,
+      message:
+        "No se puede facturar dos veces al mismo pax en una sola operación.",
+    };
+  }
+
+  const requestKey = normalizeInvoiceRequestKey(idempotencyKey);
 
   const paxDataByClient = new Map<number, PaxDataInput>();
   paxData.forEach((p) => {
@@ -339,7 +393,10 @@ export async function createInvoices(
     };
   });
 
-  const splitDetailsByClient = splitServiceDetailsByShares(serviceDetails, shares);
+  const splitDetailsByClient = splitServiceDetailsByShares(
+    serviceDetails,
+    shares,
+  );
   const mapCurrency = (m: string) =>
     m === "ARS" ? "PES" : m === "USD" ? "DOL" : m;
 
@@ -356,7 +413,15 @@ export async function createInvoices(
   }
 
   const invoicesResult: InvoiceWithItems[] = [];
+  const invoiceResultIds = new Set<number>();
   const errorMessages = new Set<string>();
+  const plannedCount = clientIds.length * currencies.size;
+
+  const addInvoiceResult = (invoice: InvoiceWithItems) => {
+    if (invoiceResultIds.has(invoice.id_invoice)) return;
+    invoiceResultIds.add(invoice.id_invoice);
+    invoicesResult.push(invoice);
+  };
 
   const manualTotalsByClient = manualTotals
     ? splitManualTotalsByShares(manualTotals, shares)
@@ -387,7 +452,8 @@ export async function createInvoices(
       const paxPostalCode = String(pax.postal_code ?? "").trim();
       const paxCommercialAddress = String(pax.commercial_address ?? "").trim();
 
-      if (overrideDni && !client.dni_number) updateData.dni_number = overrideDni;
+      if (overrideDni && !client.dni_number)
+        updateData.dni_number = overrideDni;
       if (overrideCuit && !client.tax_id) updateData.tax_id = overrideCuit;
       if (paxCompanyName && !client.company_name) {
         updateData.company_name = paxCompanyName;
@@ -432,8 +498,8 @@ export async function createInvoices(
 
       const isFactB = tipoFactura === 6;
       const docNumber = isFactB
-        ? normalizeDni(client.dni_number) ?? overrideDni
-        : normalizeCuit(client.tax_id) ?? overrideCuit;
+        ? (normalizeDni(client.dni_number) ?? overrideDni)
+        : (normalizeCuit(client.tax_id) ?? overrideCuit);
       const docType = isFactB ? 96 : 80;
       if (!docNumber) {
         errorMessages.add(
@@ -444,25 +510,296 @@ export async function createInvoices(
         continue;
       }
 
-      const resp = await createVoucherService(
-        req,
+      const itemKey = `${idx}:${cid}:${afipCurrency}`;
+      const fiscalFingerprint = {
+        bookingId,
+        clientId: cid,
         tipoFactura,
-        docNumber,
         docType,
-        svcs,
-        afipCurrency,
-        exchangeRate,
-        invoiceDate,
-        manualTotalsByClient ? manualTotalsByClient[idx] : undefined,
-      );
-      if (!resp.success || !resp.details) {
+        docNumber,
+        currency: afipCurrency,
+        exchangeRate: exchangeRate ?? null,
+        invoiceDate: invoiceDate ?? null,
+        share: shares[idx],
+        manualTotals: manualTotalsByClient?.[idx] ?? null,
+        services: svcs.map((svc) => ({
+          id_service: svc.id_service,
+          sale_price: svc.sale_price,
+          taxableBase21: svc.taxableBase21,
+          commission21: svc.commission21,
+          tax_21: svc.tax_21,
+          vatOnCommission21: svc.vatOnCommission21,
+          taxableBase10_5: svc.taxableBase10_5,
+          commission10_5: svc.commission10_5,
+          tax_105: svc.tax_105,
+          vatOnCommission10_5: svc.vatOnCommission10_5,
+          taxableCardInterest: svc.taxableCardInterest,
+          vatOnCardInterest: svc.vatOnCardInterest,
+          nonComputable: svc.nonComputable,
+          exempt: svc.exempt,
+          departure_date: svc.departure_date.toISOString(),
+          return_date: svc.return_date.toISOString(),
+        })),
+      };
+      const requestHash = buildInvoiceAttemptHash({
+        ...fiscalFingerprint,
+        itemKey,
+        descriptions: {
+          description21,
+          description10_5,
+          descriptionNonComputable,
+        },
+        customItems: customItemsByClient[idx] ?? [],
+        services: svcs.map((svc) => ({
+          ...svc,
+          departure_date: svc.departure_date.toISOString(),
+          return_date: svc.return_date.toISOString(),
+        })),
+      });
+      const activeKey = buildInvoiceAttemptHash(fiscalFingerprint);
+
+      const ensuredAttempt = await ensureInvoiceAttempt({
+        agencyId: booking.id_agency,
+        requestKey,
+        itemKey,
+        requestHash,
+        activeKey,
+        bookingId,
+        clientId: cid,
+        currency: afipCurrency,
+        voucherType: tipoFactura,
+      });
+      let attempt = ensuredAttempt.attempt;
+      if (!ensuredAttempt.hashMatches) {
         errorMessages.add(
-          resp.message || "No se pudo emitir la factura en AFIP.",
+          "Los datos de esta facturación cambiaron después de iniciarla. Cerrá y volvé a abrir el formulario para comenzar una operación nueva.",
         );
         continue;
       }
 
-      const details = resp.details as RawVoucherDetails;
+      if (attempt.invoice_id) {
+        const existingInvoice = await prisma.invoice.findUnique({
+          where: { id_invoice: attempt.invoice_id },
+          include: { InvoiceItem: true },
+        });
+        if (existingInvoice) {
+          addInvoiceResult(existingInvoice);
+          continue;
+        }
+        const message =
+          "El intento figura finalizado pero su factura local no está disponible. Requiere revisión.";
+        await markInvoiceAttemptForReview(
+          attempt.id_invoice_issuance_attempt,
+          message,
+        );
+        errorMessages.add(message);
+        continue;
+      }
+
+      const recoverAttempt = async (
+        current: InvoiceIssuanceAttempt,
+        allowRetryWhenAbsent: boolean,
+      ): Promise<AttemptRecoveryDecision> => {
+        if (!isJsonObject(current.prepared_payload)) {
+          const message =
+            "El intento interrumpido no tiene datos suficientes para consultar ARCA de forma segura.";
+          await markInvoiceAttemptForReview(
+            current.id_invoice_issuance_attempt,
+            message,
+          );
+          return { kind: "STOP", message };
+        }
+
+        const recovered = await recoverPreparedVoucherService(
+          req,
+          current.prepared_payload,
+        );
+        if (recovered.status === "AUTHORIZED") {
+          await markInvoiceAttemptAuthorized(
+            current.id_invoice_issuance_attempt,
+            recovered.details,
+            recovered.qrBase64,
+          );
+          return {
+            kind: "AUTHORIZED",
+            attempt: await reloadInvoiceAttempt(
+              current.id_invoice_issuance_attempt,
+            ),
+            details: recovered.details,
+            qrBase64: recovered.qrBase64,
+          };
+        }
+        if (recovered.status === "NOT_FOUND") {
+          if (allowRetryWhenAbsent) {
+            await resetInvoiceAttempt(current.id_invoice_issuance_attempt);
+            return {
+              kind: "RETRY",
+              attempt: await reloadInvoiceAttempt(
+                current.id_invoice_issuance_attempt,
+              ),
+            };
+          }
+          const message =
+            "ARCA no autorizó este comprobante. Podés reintentar la operación con la misma selección.";
+          await markInvoiceAttemptFailed(
+            current.id_invoice_issuance_attempt,
+            message,
+          );
+          return { kind: "STOP", message };
+        }
+
+        const message = recovered.message;
+        if (recovered.status === "CONFLICT") {
+          await markInvoiceAttemptForReview(
+            current.id_invoice_issuance_attempt,
+            message,
+          );
+        }
+        return { kind: "STOP", message };
+      };
+
+      let authorizedDetails: RawVoucherDetails | null = null;
+      let authorizedQrBase64: string | null = null;
+
+      if (
+        attempt.status === INVOICE_ATTEMPT_STATUS.AUTHORIZED &&
+        isJsonObject(attempt.authorized_payload) &&
+        attempt.qr_base64
+      ) {
+        authorizedDetails = attempt.authorized_payload;
+        authorizedQrBase64 = attempt.qr_base64;
+      } else if (
+        attempt.status === INVOICE_ATTEMPT_STATUS.PROCESSING ||
+        attempt.status === INVOICE_ATTEMPT_STATUS.AUTHORIZED
+      ) {
+        if (
+          attempt.status === INVOICE_ATTEMPT_STATUS.PROCESSING &&
+          isInvoiceAttemptFresh(attempt)
+        ) {
+          errorMessages.add(
+            "La emisión todavía está en curso. Esperá unos segundos y reintentá; no vuelvas a crear otra operación.",
+          );
+          continue;
+        }
+        const recovered = await recoverAttempt(attempt, true);
+        if (recovered.kind === "STOP") {
+          errorMessages.add(recovered.message);
+          continue;
+        }
+        attempt = recovered.attempt;
+        if (recovered.kind === "AUTHORIZED") {
+          authorizedDetails = recovered.details;
+          authorizedQrBase64 = recovered.qrBase64;
+        }
+      } else if (attempt.status === INVOICE_ATTEMPT_STATUS.PREPARING) {
+        if (isInvoiceAttemptFresh(attempt)) {
+          errorMessages.add(
+            "La emisión todavía se está preparando. Esperá unos segundos y reintentá.",
+          );
+          continue;
+        }
+        await resetInvoiceAttempt(attempt.id_invoice_issuance_attempt);
+        attempt = await reloadInvoiceAttempt(
+          attempt.id_invoice_issuance_attempt,
+        );
+      } else if (
+        attempt.status === INVOICE_ATTEMPT_STATUS.REVIEW_REQUIRED ||
+        attempt.status === INVOICE_ATTEMPT_STATUS.PERSISTED
+      ) {
+        errorMessages.add(
+          attempt.error_message ||
+            "La emisión quedó pendiente de revisión antes de poder continuar.",
+        );
+        continue;
+      }
+
+      if (!authorizedDetails || !authorizedQrBase64) {
+        const claimed = await claimInvoiceAttempt(
+          attempt.id_invoice_issuance_attempt,
+        );
+        if (!claimed) {
+          errorMessages.add(
+            "Otro proceso ya está atendiendo esta misma emisión. Esperá unos segundos y reintentá.",
+          );
+          continue;
+        }
+
+        const resp = await createVoucherService(
+          req,
+          tipoFactura,
+          docNumber,
+          docType,
+          svcs,
+          afipCurrency,
+          exchangeRate,
+          invoiceDate,
+          manualTotalsByClient ? manualTotalsByClient[idx] : undefined,
+          {
+            onPrepared: async (payload) => {
+              await markInvoiceAttemptPrepared(
+                attempt.id_invoice_issuance_attempt,
+                payload,
+              );
+            },
+            onAuthorized: async (payload) => {
+              await markInvoiceAttemptAuthorized(
+                attempt.id_invoice_issuance_attempt,
+                payload,
+              );
+            },
+          },
+        );
+
+        if (resp.success && resp.details && resp.qrBase64) {
+          authorizedDetails = resp.details as RawVoucherDetails;
+          authorizedQrBase64 = resp.qrBase64;
+          await markInvoiceAttemptAuthorized(
+            attempt.id_invoice_issuance_attempt,
+            authorizedDetails,
+            authorizedQrBase64,
+          );
+        } else {
+          const current = await reloadInvoiceAttempt(
+            attempt.id_invoice_issuance_attempt,
+          );
+          if (
+            current.status === INVOICE_ATTEMPT_STATUS.AUTHORIZED &&
+            isJsonObject(current.authorized_payload) &&
+            current.qr_base64
+          ) {
+            authorizedDetails = current.authorized_payload;
+            authorizedQrBase64 = current.qr_base64;
+          } else if (
+            current.status === INVOICE_ATTEMPT_STATUS.PROCESSING ||
+            current.status === INVOICE_ATTEMPT_STATUS.AUTHORIZED
+          ) {
+            const recovered = await recoverAttempt(current, false);
+            if (recovered.kind === "AUTHORIZED") {
+              authorizedDetails = recovered.details;
+              authorizedQrBase64 = recovered.qrBase64;
+            } else {
+              errorMessages.add(
+                recovered.kind === "STOP"
+                  ? recovered.message
+                  : resp.message || "No se pudo emitir la factura en ARCA.",
+              );
+              continue;
+            }
+          } else {
+            const message =
+              resp.message || "No se pudo emitir la factura en ARCA.";
+            await markInvoiceAttemptFailed(
+              current.id_invoice_issuance_attempt,
+              message,
+            );
+            errorMessages.add(message);
+            continue;
+          }
+        }
+      }
+
+      const details = authorizedDetails;
+      const qrBase64 = authorizedQrBase64;
       const ptoVta = Number(details.PtoVta ?? 0);
       const cbteTipo = Number(details.CbteTipo ?? tipoFactura);
       const rawNumber = details.CbteDesde?.toString() ?? "";
@@ -470,26 +807,44 @@ export async function createInvoices(
         buildInvoiceNumber(ptoVta, cbteTipo, rawNumber) || rawNumber;
       const legacyNumber = buildInvoiceNumberLegacy(ptoVta, rawNumber);
 
-      if (rawNumber) {
-        const duplicate = await prisma.invoice.findFirst({
+      if (!ptoVta || !cbteTipo || !rawNumber) {
+        const message =
+          "ARCA autorizó el comprobante pero devolvió una identidad incompleta. Requiere revisión.";
+        await markInvoiceAttemptForReview(
+          attempt.id_invoice_issuance_attempt,
+          message,
+        );
+        errorMessages.add(message);
+        continue;
+      }
+
+      const duplicate = await prisma.invoice.findFirst({
+        where: {
+          id_agency: booking.id_agency,
+          pto_vta: ptoVta,
+          cbte_tipo: cbteTipo,
+          OR: [
+            { invoice_number: rawNumber },
+            { invoice_number: legacyNumber },
+            { invoice_number: formattedNumber },
+          ],
+        },
+        include: { InvoiceItem: true },
+      });
+      if (duplicate) {
+        await prisma.invoiceIssuanceAttempt.update({
           where: {
-            id_agency: booking.id_agency,
-            pto_vta: ptoVta,
-            cbte_tipo: cbteTipo,
-            OR: [
-              { invoice_number: rawNumber },
-              { invoice_number: legacyNumber },
-              { invoice_number: formattedNumber },
-            ],
+            id_invoice_issuance_attempt: attempt.id_invoice_issuance_attempt,
           },
-          select: { id_invoice: true, invoice_number: true },
+          data: {
+            status: INVOICE_ATTEMPT_STATUS.PERSISTED,
+            active_key: null,
+            invoice_id: duplicate.id_invoice,
+            error_message: null,
+          },
         });
-        if (duplicate) {
-          errorMessages.add(
-            "Ya existe una factura con el mismo número para ese punto de venta y tipo.",
-          );
-          continue;
-        }
+        addInvoiceResult(duplicate);
+        continue;
       }
 
       const payloadAfip: Prisma.JsonObject = {
@@ -498,7 +853,7 @@ export async function createInvoices(
           CAE: details.CAE as string,
           CAEFchVto: details.CAEFchVto as string,
         },
-        qrBase64: resp.qrBase64!,
+        qrBase64,
         description21,
         description10_5,
         descriptionNonComputable,
@@ -518,9 +873,8 @@ export async function createInvoices(
         })),
       };
 
-      let created: InvoiceWithItems | null = null;
       try {
-        created = await prisma.$transaction(async (tx) => {
+        const created = await prisma.$transaction(async (tx) => {
           const agencyInvoiceId = await getNextAgencyCounter(
             tx,
             booking.id_agency,
@@ -568,31 +922,95 @@ export async function createInvoices(
             ),
           );
 
+          await tx.invoiceIssuanceAttempt.update({
+            where: {
+              id_invoice_issuance_attempt: attempt.id_invoice_issuance_attempt,
+            },
+            data: {
+              status: INVOICE_ATTEMPT_STATUS.PERSISTED,
+              active_key: null,
+              invoice_id: inv.id_invoice,
+              error_message: null,
+            },
+          });
+
           return tx.invoice.findUnique({
             where: { id_invoice: inv.id_invoice },
             include: { InvoiceItem: true },
           });
         });
+        if (created) addInvoiceResult(created);
       } catch (err) {
         if (isPrismaUniqueError(err)) {
-          errorMessages.add(
-            "La factura ya existe para ese punto de venta y tipo.",
-          );
-          continue;
+          const existingInvoice = await prisma.invoice.findFirst({
+            where: {
+              id_agency: booking.id_agency,
+              pto_vta: ptoVta,
+              cbte_tipo: cbteTipo,
+              OR: [
+                { invoice_number: rawNumber },
+                { invoice_number: legacyNumber },
+                { invoice_number: formattedNumber },
+              ],
+            },
+            include: { InvoiceItem: true },
+          });
+          if (existingInvoice) {
+            await prisma.invoiceIssuanceAttempt.update({
+              where: {
+                id_invoice_issuance_attempt:
+                  attempt.id_invoice_issuance_attempt,
+              },
+              data: {
+                status: INVOICE_ATTEMPT_STATUS.PERSISTED,
+                active_key: null,
+                invoice_id: existingInvoice.id_invoice,
+                error_message: null,
+              },
+            });
+            addInvoiceResult(existingInvoice);
+            continue;
+          }
         }
-        throw err;
+        console.error("[invoices] Authorized voucher persistence failed", {
+          agencyId: booking.id_agency,
+          bookingId,
+          clientId: cid,
+          salesPoint: ptoVta,
+          voucherType: cbteTipo,
+          voucherNumber: rawNumber,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        errorMessages.add(
+          "ARCA autorizó una factura que todavía no pudo guardarse en Ofistur. Reintentá la misma operación para recuperarla sin volver a emitir.",
+        );
       }
-
-      if (created) invoicesResult.push(created);
     }
   }
 
-  if (!invoicesResult.length) {
-    const firstError = Array.from(errorMessages).find(Boolean);
+  const completedCount = invoicesResult.length;
+  const complete = completedCount === plannedCount && errorMessages.size === 0;
+  const firstError = Array.from(errorMessages).find(Boolean);
+
+  if (!completedCount) {
     return {
       success: false,
+      complete: false,
+      plannedCount,
+      completedCount,
+      requestKey,
       message: firstError || "No se generó ninguna factura.",
     };
   }
-  return { success: true, invoices: invoicesResult };
+  return {
+    success: true,
+    complete,
+    plannedCount,
+    completedCount,
+    requestKey,
+    message: complete
+      ? undefined
+      : `Se completaron ${completedCount} de ${plannedCount} facturas. ${firstError ?? "Reintentá la misma operación para continuar."}`,
+    invoices: invoicesResult,
+  };
 }

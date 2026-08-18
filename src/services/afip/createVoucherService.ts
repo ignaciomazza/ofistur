@@ -24,6 +24,21 @@ interface VoucherResponse {
   qrBase64?: string;
 }
 
+export interface VoucherLifecycleHooks {
+  onPrepared?: (voucherData: Prisma.JsonObject) => Promise<void>;
+  onAuthorized?: (details: Prisma.JsonObject) => Promise<void>;
+}
+
+export type VoucherRecoveryResponse =
+  | {
+      status: "AUTHORIZED";
+      details: Prisma.JsonObject;
+      qrBase64: string;
+    }
+  | { status: "NOT_FOUND" }
+  | { status: "CONFLICT"; message: string }
+  | { status: "ERROR"; message: string };
+
 interface IVAEntry {
   Id: number;
   BaseImp: number;
@@ -34,6 +49,191 @@ type ServerStatus = { AppServer: string; DbServer: string; AuthServer: string };
 type LastInfo = { CbteFch?: string | number } | null;
 
 const round2 = (value: number): number => Number(value.toFixed(2));
+
+function jsonNumber(value: Prisma.JsonValue | undefined): number {
+  return Number(value ?? Number.NaN);
+}
+
+function jsonString(value: Prisma.JsonValue | undefined): string {
+  return String(value ?? "").trim();
+}
+
+function sameMoney(
+  left: Prisma.JsonValue | undefined,
+  right: unknown,
+): boolean {
+  const a = Number(left);
+  const b = Number(right);
+  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.01;
+}
+
+function sameNumberWhenReturned(
+  prepared: Prisma.JsonObject,
+  existing: Record<string, unknown>,
+  key: string,
+  tolerance = 0,
+): boolean {
+  if (existing[key] === undefined || existing[key] === null) return true;
+  const left = Number(prepared[key]);
+  const right = Number(existing[key]);
+  return (
+    Number.isFinite(left) &&
+    Number.isFinite(right) &&
+    Math.abs(left - right) <= tolerance
+  );
+}
+
+function voucherMatchesPrepared(
+  prepared: Prisma.JsonObject,
+  existing: Record<string, unknown>,
+): boolean {
+  return (
+    jsonNumber(prepared.DocTipo) === Number(existing.DocTipo) &&
+    jsonNumber(prepared.DocNro) === Number(existing.DocNro) &&
+    jsonNumber(prepared.CbteFch) === Number(existing.CbteFch) &&
+    jsonString(prepared.MonId).toUpperCase() ===
+      String(existing.MonId ?? "")
+        .trim()
+        .toUpperCase() &&
+    sameMoney(prepared.ImpTotal, existing.ImpTotal) &&
+    sameNumberWhenReturned(prepared, existing, "Concepto") &&
+    sameNumberWhenReturned(prepared, existing, "FchServDesde") &&
+    sameNumberWhenReturned(prepared, existing, "FchServHasta") &&
+    sameNumberWhenReturned(prepared, existing, "FchVtoPago") &&
+    sameNumberWhenReturned(prepared, existing, "ImpTotConc", 0.01) &&
+    sameNumberWhenReturned(prepared, existing, "ImpOpEx", 0.01) &&
+    sameNumberWhenReturned(prepared, existing, "ImpNeto", 0.01) &&
+    sameNumberWhenReturned(prepared, existing, "ImpIVA", 0.01) &&
+    sameNumberWhenReturned(prepared, existing, "MonCotiz", 0.000001) &&
+    sameNumberWhenReturned(
+      prepared,
+      existing,
+      "CondicionIVAReceptorId",
+    )
+  );
+}
+
+async function generateVoucherQrBase64(
+  agencyCUIT: number,
+  details: Prisma.JsonObject,
+  qrDate?: string,
+): Promise<string> {
+  const authorizationCode =
+    details.CAE ?? details.CodAutorizacion ?? details.CodAut;
+  const qrPayload = {
+    ver: 1,
+    fecha: qrDate ?? String(details.CbteFch ?? ""),
+    cuit: agencyCUIT,
+    ptoVta: Number(details.PtoVta),
+    tipoCmp: Number(details.CbteTipo),
+    nroCmp: Number(details.CbteDesde),
+    importe: Number(details.ImpTotal),
+    moneda: String(details.MonId),
+    ctz: Number(details.MonCotiz),
+    tipoDocRec: Number(details.DocTipo),
+    nroDocRec: Number(details.DocNro),
+    tipoCodAut: "E",
+    codAut: Number(authorizationCode),
+  };
+
+  if (!qrPayload.fecha || !Number.isFinite(qrPayload.codAut)) {
+    throw new Error("No se pudo reconstruir el QR del comprobante autorizado.");
+  }
+
+  return qrcode.toDataURL(
+    `https://www.afip.gob.ar/fe/qr/?p=${Buffer.from(
+      JSON.stringify(qrPayload),
+    ).toString("base64")}`,
+  );
+}
+
+export async function recoverPreparedVoucherService(
+  req: NextApiRequest,
+  prepared: Prisma.JsonObject,
+): Promise<VoucherRecoveryResponse> {
+  try {
+    const ptoVta = jsonNumber(prepared.PtoVta);
+    const cbteTipo = jsonNumber(prepared.CbteTipo);
+    const voucherNumber = jsonNumber(prepared.CbteDesde);
+    if (
+      !Number.isInteger(ptoVta) ||
+      ptoVta <= 0 ||
+      !Number.isInteger(cbteTipo) ||
+      cbteTipo <= 0 ||
+      !Number.isInteger(voucherNumber) ||
+      voucherNumber <= 0
+    ) {
+      return {
+        status: "ERROR",
+        message: "El intento guardado no tiene una numeración ARCA válida.",
+      };
+    }
+
+    const afipClient = await getAfipFromRequest(req);
+    let existing: Record<string, unknown> | null = null;
+    try {
+      existing = (await afipClient.ElectronicBilling.getVoucherInfo(
+        voucherNumber,
+        ptoVta,
+        cbteTipo,
+      )) as Record<string, unknown> | null;
+    } catch {
+      existing = null;
+    }
+
+    if (!existing) {
+      const lastVoucher = Number(
+        await afipClient.ElectronicBilling.getLastVoucher(ptoVta, cbteTipo),
+      );
+      if (Number.isFinite(lastVoucher) && lastVoucher < voucherNumber) {
+        return { status: "NOT_FOUND" };
+      }
+      return {
+        status: "ERROR",
+        message:
+          "ARCA no permitió confirmar si el comprobante pendiente fue autorizado.",
+      };
+    }
+
+    if (!voucherMatchesPrepared(prepared, existing)) {
+      return {
+        status: "CONFLICT",
+        message:
+          "El número reservado en ARCA pertenece a otro comprobante. El intento requiere revisión antes de continuar.",
+      };
+    }
+
+    const details: Prisma.JsonObject = {
+      ...prepared,
+      ...(existing as Prisma.JsonObject),
+      PtoVta: ptoVta,
+      CbteTipo: cbteTipo,
+      CbteDesde: voucherNumber,
+      CbteHasta: voucherNumber,
+      CAE: String(
+        existing.CAE ?? existing.CodAutorizacion ?? existing.CodAut ?? "",
+      ),
+      CAEFchVto: String(
+        existing.CAEFchVto ?? existing.FchVto ?? existing.FchVtoCAE ?? "",
+      ),
+    };
+    if (!details.CAE) {
+      return {
+        status: "ERROR",
+        message: "ARCA devolvió el comprobante sin código de autorización.",
+      };
+    }
+
+    const agencyCUIT = await getAgencyCUITFromRequest(req);
+    const qrBase64 = await generateVoucherQrBase64(agencyCUIT, details);
+    return { status: "AUTHORIZED", details, qrBase64 };
+  } catch (error) {
+    return {
+      status: "ERROR",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
 
 function splitZeroVatEntries(entries: IVAEntry[]): {
   taxableEntries: IVAEntry[];
@@ -183,6 +383,7 @@ export async function createVoucherService(
   exchangeRateManual?: number,
   invoiceDate?: string,
   manualTotals?: ManualTotalsInput,
+  lifecycle?: VoucherLifecycleHooks,
 ): Promise<VoucherResponse> {
   try {
     // 1) Resolver AFIP según la agencia del usuario + CUIT real de esa agencia
@@ -216,10 +417,14 @@ export async function createVoucherService(
           Importe: parseFloat(Number(entry.Importe || 0).toFixed(2)),
         }));
       totalIVA = parseFloat(
-        mergedIvaEntries.reduce((sum, entry) => sum + entry.Importe, 0).toFixed(2),
+        mergedIvaEntries
+          .reduce((sum, entry) => sum + entry.Importe, 0)
+          .toFixed(2),
       );
       neto = parseFloat(
-        mergedIvaEntries.reduce((sum, entry) => sum + entry.BaseImp, 0).toFixed(2),
+        mergedIvaEntries
+          .reduce((sum, entry) => sum + entry.BaseImp, 0)
+          .toFixed(2),
       );
     } else {
       // 2) Totales
@@ -257,7 +462,10 @@ export async function createVoucherService(
         0,
       );
       const explicitNoGravado = round2(
-        serviceDetails.reduce((sum, s) => sum + Number(s.nonComputable ?? 0), 0),
+        serviceDetails.reduce(
+          (sum, s) => sum + Number(s.nonComputable ?? 0),
+          0,
+        ),
       );
       const explicitExento = round2(
         serviceDetails.reduce((sum, s) => sum + Number(s.exempt ?? 0), 0),
@@ -301,7 +509,8 @@ export async function createVoucherService(
         Importe: parseFloat(e.Importe.toFixed(2)),
       }));
 
-      const { taxableEntries, zeroVatBase } = splitZeroVatEntries(mergedIvaEntries);
+      const { taxableEntries, zeroVatBase } =
+        splitZeroVatEntries(mergedIvaEntries);
       mergedIvaEntries = taxableEntries;
 
       totalIVA = parseFloat(
@@ -332,7 +541,9 @@ export async function createVoucherService(
       neto = netoGravado;
       impTotConc = explicitNoGravado;
       impOpEx = round2(
-        explicitExento + zeroVatBase + (conceptosNoGravados > 0 ? conceptosNoGravados : 0),
+        explicitExento +
+          zeroVatBase +
+          (conceptosNoGravados > 0 ? conceptosNoGravados : 0),
       );
     }
 
@@ -440,43 +651,31 @@ export async function createVoucherService(
       CondicionIVAReceptorId: condId,
     };
 
+    await lifecycle?.onPrepared?.(voucherData);
+
     const created =
       await afipClient.ElectronicBilling.createVoucher(voucherData);
     if (!created.CAE) {
       return { success: false, message: "CAE no devuelto" };
     }
 
+    const details = { ...voucherData, ...created } as Prisma.JsonObject;
+    await lifecycle?.onAuthorized?.(details);
+
     // 7) QR con CUIT de la agencia del usuario (resuelto desde DB)
     const qrFecha = invoiceDate
       ? invoiceDate.replace(/-/g, "")
       : todayStrFallback;
-
-    const qrPayload = {
-      ver: 1,
-      fecha: qrFecha,
-      cuit: agencyCUIT, // <-- CUIT real de la agencia (sin .env)
-      ptoVta,
-      tipoCmp: tipoFactura,
-      nroCmp: next,
-      importe: adjustedTotal,
-      moneda: currency,
-      ctz: cotiz,
-      tipoDocRec: receptorDocTipo,
-      nroDocRec: Number(receptorDocNumber),
-      tipoCodAut: "E",
-      codAut: Number(created.CAE),
-    };
-
-    const qrBase64 = await qrcode.toDataURL(
-      `https://www.afip.gob.ar/fe/qr/?p=${Buffer.from(
-        JSON.stringify(qrPayload),
-      ).toString("base64")}`,
+    const qrBase64 = await generateVoucherQrBase64(
+      agencyCUIT,
+      details,
+      qrFecha,
     );
 
     return {
       success: true,
       message: "Factura creada exitosamente.",
-      details: { ...voucherData, ...created } as Prisma.JsonObject,
+      details,
       qrBase64,
     };
   } catch (err) {

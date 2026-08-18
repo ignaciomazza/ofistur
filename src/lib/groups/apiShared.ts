@@ -198,6 +198,26 @@ export function parseOptionalString(
   return trimmed;
 }
 
+export function parseOptionalStringPatch(
+  value: unknown,
+  max = 255,
+): {
+  provided: boolean;
+  valid: boolean;
+  value: string | null | undefined;
+} {
+  if (value === undefined) {
+    return { provided: false, valid: true, value: undefined };
+  }
+
+  const parsed = parseOptionalString(value, max);
+  return {
+    provided: true,
+    valid: parsed !== undefined,
+    value: parsed,
+  };
+}
+
 export function normalizeGroupType(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const s = value

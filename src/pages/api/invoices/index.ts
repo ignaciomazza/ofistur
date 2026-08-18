@@ -11,6 +11,10 @@ import {
 } from "@/lib/accessControl";
 import { canAccessBookingComponent } from "@/utils/permissions";
 
+export const config = {
+  maxDuration: 60,
+};
+
 /* ================= JWT SECRET (igual que bookings) ================= */
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_SECRET no configurado");
@@ -124,6 +128,7 @@ const querySchema = z.object({
 });
 
 const bodySchema = z.object({
+  idempotencyKey: z.string().trim().min(16).max(100).optional(),
   bookingId: z
     .union([z.string(), z.number()])
     .transform((v) => Number(v))
@@ -384,9 +389,14 @@ export default async function handler(
       // createInvoices ya resuelve agencia por el req (mismo token/cookie)
       const result = await createInvoices(req, parsedB.data);
       if (!result.success) {
-        return res
-          .status(400)
-          .json({ success: false, message: result.message });
+        return res.status(400).json({
+          success: false,
+          complete: result.complete ?? false,
+          plannedCount: result.plannedCount,
+          completedCount: result.completedCount,
+          requestKey: result.requestKey,
+          message: result.message,
+        });
       }
       const invoices = (result.invoices ?? []).map((inv) => ({
         ...inv,
@@ -399,7 +409,15 @@ export default async function handler(
               })
             : null,
       }));
-      return res.status(201).json({ success: true, invoices });
+      return res.status(201).json({
+        success: true,
+        complete: result.complete ?? true,
+        plannedCount: result.plannedCount ?? invoices.length,
+        completedCount: result.completedCount ?? invoices.length,
+        requestKey: result.requestKey,
+        message: result.message,
+        invoices,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error interno";
       console.error("[invoices][POST]", msg);
