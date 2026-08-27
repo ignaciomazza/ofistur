@@ -1,4 +1,7 @@
-import { normalizeCurrencyCode, toAmountNumber } from "@/lib/groups/financeShared";
+import {
+  normalizeCurrencyCode,
+  toAmountNumber,
+} from "@/lib/groups/financeShared";
 
 const DEBT_TOLERANCE = 0.01;
 
@@ -71,6 +74,82 @@ export type GroupReceiptDebtCurrent = {
   payments?: unknown;
 };
 
+function paidByCurrencyForReceipt(
+  receipt: GroupReceiptDebtReceipt | GroupReceiptDebtCurrent,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  addGroupReceiptToPaidByCurrency(out, {
+    service_refs: "service_refs" in receipt ? receipt.service_refs : [],
+    amount: receipt.amount,
+    amount_currency:
+      "amount_currency" in receipt
+        ? receipt.amount_currency
+        : receipt.amountCurrency,
+    payment_fee_amount:
+      "payment_fee_amount" in receipt
+        ? receipt.payment_fee_amount
+        : receipt.paymentFeeAmount,
+    base_amount:
+      "base_amount" in receipt ? receipt.base_amount : receipt.baseAmount,
+    base_currency:
+      "base_currency" in receipt
+        ? receipt.base_currency
+        : receipt.baseCurrency,
+    payments: receipt.payments,
+  });
+  return out;
+}
+
+export function areGroupReceiptCreditsEquivalent(
+  left: GroupReceiptDebtReceipt | GroupReceiptDebtCurrent,
+  right: GroupReceiptDebtReceipt | GroupReceiptDebtCurrent,
+): boolean {
+  const leftPaid = paidByCurrencyForReceipt(left);
+  const rightPaid = paidByCurrencyForReceipt(right);
+  const currencies = new Set([
+    ...Object.keys(leftPaid),
+    ...Object.keys(rightPaid),
+  ]);
+  return Array.from(currencies).every(
+    (currency) =>
+      Math.abs((leftPaid[currency] || 0) - (rightPaid[currency] || 0)) <=
+      DEBT_TOLERANCE,
+  );
+}
+
+function samePositiveIdSet(left: number[], right: number[]): boolean {
+  const a = uniquePositiveIds(left).sort((x, y) => x - y);
+  const b = uniquePositiveIds(right).sort((x, y) => x - y);
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+export function isNonWorseningGroupReceiptEdit(args: {
+  selectedServiceIds: number[];
+  previousReceipt: GroupReceiptDebtReceipt;
+  currentReceipt: GroupReceiptDebtCurrent;
+}): boolean {
+  if (
+    !samePositiveIdSet(
+      args.selectedServiceIds,
+      normalizeServiceRefList(args.previousReceipt.service_refs),
+    )
+  ) {
+    return false;
+  }
+
+  const previousPaid = paidByCurrencyForReceipt(args.previousReceipt);
+  const currentPaid = paidByCurrencyForReceipt(args.currentReceipt);
+  const currencies = new Set([
+    ...Object.keys(previousPaid),
+    ...Object.keys(currentPaid),
+  ]);
+  return Array.from(currencies).every(
+    (currency) =>
+      (currentPaid[currency] || 0) <=
+      (previousPaid[currency] || 0) + DEBT_TOLERANCE,
+  );
+}
+
 export type GroupReceiptDebtPaymentLine = {
   amount: number;
   payment_currency: string;
@@ -108,7 +187,9 @@ export function addGroupReceiptToPaidByCurrency(
   target: Record<string, number>,
   receipt: GroupReceiptDebtReceipt,
 ) {
-  const amountCurrency = normalizeCurrencyCode(receipt.amount_currency || "ARS");
+  const amountCurrency = normalizeCurrencyCode(
+    receipt.amount_currency || "ARS",
+  );
   const amountValue = Math.max(0, toSafeNumber(receipt.amount));
   const feeValue = Math.max(0, toSafeNumber(receipt.payment_fee_amount));
   const baseValue = Math.max(0, toSafeNumber(receipt.base_amount));
@@ -144,7 +225,9 @@ export function addGroupReceiptToPaidByCurrency(
     let lineFeeTotal = 0;
     for (const line of paymentLines) {
       lineFeeTotal += Math.max(0, line.fee_amount);
-      const credited = round2(Math.max(0, line.amount) + Math.max(0, line.fee_amount));
+      const credited = round2(
+        Math.max(0, line.amount) + Math.max(0, line.fee_amount),
+      );
       addToCurrency(target, line.payment_currency, credited);
     }
     const feeRemainder = round2(feeValue - lineFeeTotal);
@@ -174,7 +257,8 @@ function serviceTotal(service: GroupReceiptDebtService): number {
   const splitInterest =
     toSafeNumber(service.taxableCardInterest) +
     toSafeNumber(service.vatOnCardInterest);
-  const cardInterest = splitInterest > 0 ? splitInterest : toSafeNumber(service.card_interest);
+  const cardInterest =
+    splitInterest > 0 ? splitInterest : toSafeNumber(service.card_interest);
   return round2(Math.max(0, sale + Math.max(0, cardInterest)));
 }
 
@@ -212,12 +296,39 @@ function buildCurrentPaidByCurrency(
 
 export function validateGroupReceiptDebt(args: {
   selectedServiceIds: number[];
+  debtServiceIds?: number[];
   services: GroupReceiptDebtService[];
   existingReceipts: GroupReceiptDebtReceipt[];
   currentReceipt: GroupReceiptDebtCurrent;
+  previousReceipt?: GroupReceiptDebtReceipt | null;
+  saleTotalsOverride?: Record<string, number> | null;
 }): GroupReceiptDebtValidationResult {
   const normalizedServiceIds = uniquePositiveIds(args.selectedServiceIds);
-  if (normalizedServiceIds.length === 0) {
+  const normalizedDebtServiceIds = uniquePositiveIds(
+    args.debtServiceIds ?? normalizedServiceIds,
+  );
+  if (
+    args.previousReceipt &&
+    isNonWorseningGroupReceiptEdit({
+      selectedServiceIds: normalizedServiceIds,
+      previousReceipt: args.previousReceipt,
+      currentReceipt: args.currentReceipt,
+    })
+  ) {
+    return { ok: true, normalizedServiceIds };
+  }
+  const overriddenSalesByCurrency: Record<string, number> = {};
+  for (const [currency, amount] of Object.entries(
+    args.saleTotalsOverride ?? {},
+  )) {
+    addToCurrency(
+      overriddenSalesByCurrency,
+      currency,
+      Math.max(0, toSafeNumber(amount)),
+    );
+  }
+  const hasSaleOverride = Object.keys(overriddenSalesByCurrency).length > 0;
+  if (normalizedServiceIds.length === 0 && !hasSaleOverride) {
     return {
       ok: false,
       status: 400,
@@ -230,7 +341,7 @@ export function validateGroupReceiptDebt(args: {
   for (const service of args.services) {
     servicesById.set(service.id_service, service);
   }
-  if (servicesById.size === 0) {
+  if (servicesById.size === 0 && !hasSaleOverride) {
     return {
       ok: false,
       status: 400,
@@ -247,7 +358,8 @@ export function validateGroupReceiptDebt(args: {
       ok: false,
       status: 400,
       code: "GROUP_FINANCE_SERVICE_NOT_IN_GROUP_CONTEXT",
-      message: "Algún servicio seleccionado no pertenece al contexto de la grupal.",
+      message:
+        "Algún servicio seleccionado no pertenece al contexto de la grupal.",
     };
   }
 
@@ -266,10 +378,12 @@ export function validateGroupReceiptDebt(args: {
     };
   }
 
-  const salesByCurrency = buildSalesByCurrency({
-    selectedServiceIds: normalizedServiceIds,
-    servicesById,
-  });
+  const salesByCurrency = hasSaleOverride
+    ? overriddenSalesByCurrency
+    : buildSalesByCurrency({
+        selectedServiceIds: normalizedDebtServiceIds,
+        servicesById,
+      });
   if (Object.keys(salesByCurrency).length === 0) {
     return {
       ok: false,
@@ -279,19 +393,17 @@ export function validateGroupReceiptDebt(args: {
     };
   }
 
-  const amountCurrency = normalizeCurrencyCode(args.currentReceipt.amountCurrency);
+  const amountCurrency = normalizeCurrencyCode(
+    args.currentReceipt.amountCurrency,
+  );
   const baseCurrency = args.currentReceipt.baseCurrency
     ? normalizeCurrencyCode(args.currentReceipt.baseCurrency)
     : null;
   const baseAmount = toSafeNumber(args.currentReceipt.baseAmount);
-  const hasBaseConversion =
-    !!baseCurrency && baseAmount > DEBT_TOLERANCE;
+  const hasBaseConversion = !!baseCurrency && baseAmount > DEBT_TOLERANCE;
   const saleCurrencies = Object.keys(salesByCurrency);
 
-  if (
-    !saleCurrencies.includes(amountCurrency) &&
-    !hasBaseConversion
-  ) {
+  if (!saleCurrencies.includes(amountCurrency) && !hasBaseConversion) {
     return {
       ok: false,
       status: 400,
@@ -314,13 +426,8 @@ export function validateGroupReceiptDebt(args: {
     };
   }
 
-  const selectedSet = new Set(normalizedServiceIds);
   const paidByCurrency: Record<string, number> = {};
   for (const receipt of args.existingReceipts) {
-    const refs = normalizeServiceRefList(receipt.service_refs);
-    const appliesToSelection =
-      refs.length === 0 || refs.some((serviceId) => selectedSet.has(serviceId));
-    if (!appliesToSelection) continue;
     addGroupReceiptToPaidByCurrency(paidByCurrency, receipt);
   }
 
@@ -357,9 +464,7 @@ export function validateGroupReceiptDebt(args: {
   for (const currency of allCurrencies) {
     const remainingBefore = round2(remainingBeforeCurrent[currency] || 0);
     const currentPaid = round2(currentPaidByCurrency[currency] || 0);
-    const remainingAfterCurrent = round2(
-      remainingBefore - currentPaid,
-    );
+    const remainingAfterCurrent = round2(remainingBefore - currentPaid);
     const currentCreatesOrWorsensOverpay =
       currentPaid > DEBT_TOLERANCE || remainingBefore >= -DEBT_TOLERANCE;
     if (

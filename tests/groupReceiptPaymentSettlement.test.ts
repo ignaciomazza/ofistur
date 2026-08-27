@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import type { Prisma } from "@prisma/client";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildGroupReceiptSettlementBuckets,
   pickFullySettledGroupClientPaymentIds,
+  settleGroupReceiptClientPayments,
 } from "@/lib/groups/groupReceiptPaymentSettlement";
 
 describe("group receipt payment settlement", () => {
@@ -55,5 +57,49 @@ describe("group receipt payment settlement", () => {
     );
 
     expect(ids).toEqual([1, 2]);
+  });
+
+  it("aborts when another operation settles an installment first", async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const tx = {
+      travelGroupClientPayment: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id_travel_group_client_payment: 10,
+            amount: 100,
+            due_date: new Date("2026-08-01"),
+            concept: "Cuota 1",
+            status_reason: null,
+            metadata: { record_type: "PAYMENT_INSTALLMENT" },
+          },
+        ]),
+        updateMany,
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(
+      settleGroupReceiptClientPayments(tx, {
+        idAgency: 1,
+        groupId: 2,
+        passengerId: 3,
+        clientIds: [4],
+        receiptId: 5,
+        issueDate: new Date("2026-08-26"),
+        paidByUserId: 6,
+        amount: 100,
+        amountCurrency: "USD",
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "GROUP_FINANCE_PAYMENT_ALREADY_SETTLED",
+    });
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "PENDIENTE",
+          receipt_id: null,
+        }),
+      }),
+    );
   });
 });

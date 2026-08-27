@@ -245,6 +245,10 @@ export default function GroupFinanceSummaryPanel({
 
                     <SummaryBlock title="Operador y facturación">
                       <MetricRow
+                        label="Costo total operador"
+                        value={formatMoney(row.operatorCost, row.currency)}
+                      />
+                      <MetricRow
                         label="Pagado operador"
                         value={formatMoney(row.operatorPaid, row.currency)}
                       />

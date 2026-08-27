@@ -296,6 +296,7 @@ export interface ReceiptFormProps {
 
   searchContexts?: (q: string) => Promise<GroupFinanceContextOption[]>;
   loadServicesForContext?: (contextId: number) => Promise<ServiceLite[]>;
+  servicesCacheScope?: string | number | null;
 
   initialServiceIds?: number[];
   initialConcept?: string;
@@ -374,6 +375,7 @@ export default function GroupReceiptForm({
   allowAgency = true,
   searchContexts,
   loadServicesForContext,
+  servicesCacheScope,
   initialServiceIds = [],
   initialConcept = "",
   initialAmount,
@@ -480,6 +482,7 @@ export default function GroupReceiptForm({
     contextId: selectedContextId,
     loadServicesForContext,
     enabled: visible && mode === "context",
+    cacheScope: servicesCacheScope,
   });
 
   const [selectedServiceIds, setSelectedServiceIds] =
@@ -514,7 +517,9 @@ export default function GroupReceiptForm({
 
   const selectedContextDisplayId = useMemo(() => {
     if (!selectedContextId) return null;
-    const opt = contextOptions.find((item) => item.id_context === selectedContextId);
+    const opt = contextOptions.find(
+      (item) => item.id_context === selectedContextId,
+    );
     return opt?.agency_context_id ?? null;
   }, [contextOptions, selectedContextId]);
 
@@ -584,7 +589,9 @@ export default function GroupReceiptForm({
   const suggestions = useMemo(() => {
     if (!selectedServices.length) return null;
     const currenciesInSelection = new Set(
-      selectedServices.map((s) => normalizeCurrencyCodeLoose(s.currency || "ARS")),
+      selectedServices.map((s) =>
+        normalizeCurrencyCodeLoose(s.currency || "ARS"),
+      ),
     );
     if (currenciesInSelection.size > 1) return null;
 
@@ -610,7 +617,8 @@ export default function GroupReceiptForm({
     if (Array.isArray(initialPayments) && initialPayments.length > 0) {
       const hasPerLineFee = initialPayments.some(
         (p) =>
-          (p.fee_mode === "FIXED" || p.fee_mode === "PERCENT") ||
+          p.fee_mode === "FIXED" ||
+          p.fee_mode === "PERCENT" ||
           (typeof p.fee_amount === "number" && p.fee_amount > 0),
       );
       return initialPayments.map((p, idx) => ({
@@ -1117,14 +1125,20 @@ export default function GroupReceiptForm({
 
       const next = [...prev];
       const lineCurrency =
-        next[lastIdx].payment_currency || freeCurrency || lockedCurrency || "ARS";
+        next[lastIdx].payment_currency ||
+        freeCurrency ||
+        lockedCurrency ||
+        "ARS";
       next[lastIdx] = {
         ...next[lastIdx],
         amount: formatMoneyInput(String(nextLast), lineCurrency),
         ...(suggestions.fee != null
           ? {
               fee_mode: "FIXED" as const,
-              fee_value: formatMoneyInput(String(suggestions.fee), lineCurrency),
+              fee_value: formatMoneyInput(
+                String(suggestions.fee),
+                lineCurrency,
+              ),
               fee_label:
                 next[lastIdx].fee_label || DEFAULT_RECEIPT_ADJUSTMENT_LABEL,
             }
@@ -1144,7 +1158,10 @@ export default function GroupReceiptForm({
     if (base === null && fee === null) return "";
     const total = (base ?? 0) + (fee ?? 0);
     if (!total || total <= 0) return "";
-    return formatCurrencyMoney(total, lockedCurrency || defaultCurrency || "ARS");
+    return formatCurrencyMoney(
+      total,
+      lockedCurrency || defaultCurrency || "ARS",
+    );
   }, [
     clientTotalByCurrency,
     suggestions,
@@ -1290,8 +1307,12 @@ export default function GroupReceiptForm({
   }, [token]);
 
   const paymentSummary = useMemo(() => {
-    const lines: { label: string; amount: number; fee: number; currency: string }[] =
-      [];
+    const lines: {
+      label: string;
+      amount: number;
+      fee: number;
+      currency: string;
+    }[] = [];
 
     for (const l of paymentLines) {
       const amt = parseAmountInput(l.amount);
@@ -1429,7 +1450,14 @@ export default function GroupReceiptForm({
       alive = false;
       ac.abort();
     };
-  }, [editingReceiptId, groupId, groupPassengerId, mode, selectedContextId, token]);
+  }, [
+    editingReceiptId,
+    groupId,
+    groupPassengerId,
+    mode,
+    selectedContextId,
+    token,
+  ]);
 
   const relevantReceipts = useMemo(() => {
     if (!contextReceipts.length || !serviceIdsForContext.length) return [];
@@ -1470,7 +1498,9 @@ export default function GroupReceiptForm({
       const service = serviceById.get(serviceId);
       if (!service) return;
 
-      const serviceCurrency = normalizeCurrencyCodeLoose(service.currency || "ARS");
+      const serviceCurrency = normalizeCurrencyCodeLoose(
+        service.currency || "ARS",
+      );
       const baseCur = receipt.base_currency
         ? normalizeCurrencyCodeLoose(String(receipt.base_currency))
         : null;
@@ -1521,8 +1551,7 @@ export default function GroupReceiptForm({
     return selectedServices.reduce<Record<string, number>>((acc, s) => {
       const cur = normalizeCurrencyCodeLoose(s.currency || "ARS");
       const sale = toNum(s.sale_price);
-      const split =
-        toNum(s.taxableCardInterest) + toNum(s.vatOnCardInterest);
+      const split = toNum(s.taxableCardInterest) + toNum(s.vatOnCardInterest);
       const interest = split > 0 ? split : toNum(s.card_interest);
       const total = sale + interest;
       if (total) acc[cur] = (acc[cur] || 0) + total;
@@ -1557,8 +1586,7 @@ export default function GroupReceiptForm({
       const lineCurrency = normalizeCurrencyCodeLoose(
         line.payment_currency || effectiveCurrency || "ARS",
       );
-      const lineFee =
-        paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line);
+      const lineFee = paymentLineFeeByKey[line.key] ?? calcPaymentLineFee(line);
       const totalLine = amountVal + Math.max(0, lineFee);
       if (totalLine <= 0) continue;
       acc[lineCurrency] = round2((acc[lineCurrency] || 0) + totalLine);
@@ -1584,7 +1612,8 @@ export default function GroupReceiptForm({
     ]);
     currencies.forEach((cur) => {
       const sale = salesByCurrency[cur] || 0;
-      const paid = (paidByCurrency[cur] || 0) + (currentPaidByCurrency[cur] || 0);
+      const paid =
+        (paidByCurrency[cur] || 0) + (currentPaidByCurrency[cur] || 0);
       acc[cur] = sale - paid;
     });
     return acc;
@@ -1661,12 +1690,7 @@ export default function GroupReceiptForm({
     if (clientIds.length !== 1 || currentId !== normalizedLockedClientId) {
       setClientIds([normalizedLockedClientId]);
     }
-  }, [
-    clientIds,
-    clientsCount,
-    lockClientSelection,
-    normalizedLockedClientId,
-  ]);
+  }, [clientIds, clientsCount, lockClientSelection, normalizedLockedClientId]);
 
   const onIncClient = () => {
     setClientsCount((c) => c + 1);
@@ -1794,13 +1818,11 @@ export default function GroupReceiptForm({
     }
 
     const total =
-      paymentsTotalNum ||
-      (conversionEnabled ? 0 : suggestions?.base || 0);
+      paymentsTotalNum || (conversionEnabled ? 0 : suggestions?.base || 0);
     if (!total || total <= 0)
       e.amount = "El total es inválido. Cargá importes o usá el sugerido.";
     if (!effectiveCurrency)
-      e.payments =
-        "Elegí una moneda en las líneas de pago para continuar.";
+      e.payments = "Elegí una moneda en las líneas de pago para continuar.";
     const issueDateOk = /^\d{4}-\d{2}-\d{2}$/.test(issueDate);
     if (!issueDateOk) e.issue_date = "Elegí la fecha del recibo.";
     const baseNum = parseAmountInput(baseAmount);
@@ -1923,7 +1945,7 @@ export default function GroupReceiptForm({
           amount: parseAmountInput(l.amount) ?? 0,
           payment_method_id:
             l.payment_method_id == null ? null : Number(l.payment_method_id),
-          account_id: isCredit ? null : l.account_id ?? null,
+          account_id: isCredit ? null : (l.account_id ?? null),
           payment_currency: normalizeCurrencyCodeLoose(
             l.payment_currency || effectiveCurrency,
           ),
@@ -1972,7 +1994,9 @@ export default function GroupReceiptForm({
     const primaryPayment =
       normalizedPayments.find(
         (p) => p.payment_method_id !== Number(creditMethodId),
-      ) ?? normalizedPayments[0] ?? null;
+      ) ??
+      normalizedPayments[0] ??
+      null;
 
     const single =
       normalizedPayments.length === 1 ? normalizedPayments[0] : null;
@@ -2009,22 +2033,26 @@ export default function GroupReceiptForm({
       hasMixedPayments && baseReady ? (baseAmountNum as number) : finalAmount;
     const payloadAmountCurrency =
       hasMixedPayments && baseReady
-        ? (baseCurrency || effectiveCurrency)
+        ? baseCurrency || effectiveCurrency
         : effectiveCurrency;
 
     const payloadBaseAmount = baseReady ? baseAmountNum : undefined;
-    const payloadBaseCurrency = baseReady ? baseCurrency || undefined : undefined;
+    const payloadBaseCurrency = baseReady
+      ? baseCurrency || undefined
+      : undefined;
 
-    const payloadCounterAmount = conversionEnabled && counterAmountValid
-      ? counterAmountNum
-      : useConversion && !hasMixedPayments
-        ? finalAmount
-        : undefined;
-    const payloadCounterCurrency = conversionEnabled && counterAmountValid
-      ? counterCurrency || undefined
-      : useConversion && !hasMixedPayments
-        ? effectiveCurrency
-        : undefined;
+    const payloadCounterAmount =
+      conversionEnabled && counterAmountValid
+        ? counterAmountNum
+        : useConversion && !hasMixedPayments
+          ? finalAmount
+          : undefined;
+    const payloadCounterCurrency =
+      conversionEnabled && counterAmountValid
+        ? counterCurrency || undefined
+        : useConversion && !hasMixedPayments
+          ? effectiveCurrency
+          : undefined;
     const normalizedConcept = (concept ?? "").trim() || "Cobro de grupal";
     const normalizedPaymentDescription =
       paymentDescription?.trim() ||
@@ -2039,7 +2067,11 @@ export default function GroupReceiptForm({
       normalizedLockedClientId &&
       !payloadClientIds.includes(normalizedLockedClientId)
     ) {
-      payloadClientIds.splice(0, payloadClientIds.length, normalizedLockedClientId);
+      payloadClientIds.splice(
+        0,
+        payloadClientIds.length,
+        normalizedLockedClientId,
+      );
     }
 
     const apiBody: ReceiptPayload = {
@@ -2095,7 +2127,9 @@ export default function GroupReceiptForm({
       }
 
       if (!rid) {
-        toast.success("Recibo creado (sin Nº interno detectable para movimientos).");
+        toast.success(
+          "Recibo creado (sin Nº interno detectable para movimientos).",
+        );
         setVisible(false);
         return;
       }

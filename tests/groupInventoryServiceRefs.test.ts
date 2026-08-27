@@ -62,4 +62,38 @@ describe("group inventory service refs", () => {
       }),
     ).toBeNull();
   });
+
+  it("uses the passenger assignment price without changing the inventory cost", () => {
+    const service = mapInventoryToServiceLike(
+      {
+        id_travel_group_inventory: 8,
+        agency_travel_group_inventory_id: 108,
+        travel_group_departure_id: 3,
+        inventory_type: "AEREO",
+        service_type: "Vuelo",
+        label: "Vuelo grupal",
+        provider: "Operador",
+        locator: "XYZ789",
+        currency: "USD",
+        unit_cost: "600",
+        total_qty: 2,
+        note: buildMetaNote({
+          costTotalPrice: 1200,
+          saleUnitPrice: 750,
+        }),
+        travelGroupDeparture: null,
+      },
+      {
+        bookingId: 1,
+        fallbackCurrency: "ARS",
+        fallbackDestination: "Grupal",
+        salePriceOverride: "825.50",
+        currencyOverride: "EUR",
+      },
+    );
+
+    expect(service.cost_price).toBe(1200);
+    expect(service.sale_price).toBe(825.5);
+    expect(service.currency).toBe("EUR");
+  });
 });

@@ -1775,9 +1775,9 @@ export default function GroupInvoiceForm({
                 toast.error(distributionValidation.error);
                 return;
               }
-              if (manualEnabled && hasMultipleCurrencies) {
+              if (hasMultipleCurrencies) {
                 toast.error(
-                  "Los importes manuales solo se permiten con una única moneda.",
+                  "Emití una factura por moneda: seleccioná servicios de una sola moneda.",
                 );
                 return;
               }

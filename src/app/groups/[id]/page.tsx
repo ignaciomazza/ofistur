@@ -1691,6 +1691,8 @@ export default function GroupDetailPage() {
   const [paymentsLoadingError, setPaymentsLoadingError] = useState<
     string | null
   >(null);
+  const collectFinanceRequestIdRef = useRef(0);
+  const financeRequestIdRef = useRef(0);
   const activeDepartureRef = useRef<number | null>(null);
   const lastScopedDepartureRef = useRef<number | null>(null);
 
@@ -2280,7 +2282,9 @@ export default function GroupDetailPage() {
 
   const inventoryById = useMemo(() => {
     return new Map(
-      inventories.map((item) => [item.id_travel_group_inventory, item] as const),
+      inventories.map(
+        (item) => [item.id_travel_group_inventory, item] as const,
+      ),
     );
   }, [inventories]);
 
@@ -2357,7 +2361,9 @@ export default function GroupDetailPage() {
 
       const nextTotals: Record<string, string> = {};
       for (const currency of getPassengerSaleCurrencies(passenger)) {
-        nextTotals[currency] = formatSaleInputAmount(saleTotalsByCurrency[currency]);
+        nextTotals[currency] = formatSaleInputAmount(
+          saleTotalsByCurrency[currency],
+        );
       }
 
       return {
@@ -2417,12 +2423,15 @@ export default function GroupDetailPage() {
     [],
   );
 
-  const handleSetExpandedPassengerSaleOverride = useCallback((next: boolean) => {
-    setExpandedPassengerSaleDraft((current) => ({
-      ...current,
-      useSaleTotalOverride: next,
-    }));
-  }, []);
+  const handleSetExpandedPassengerSaleOverride = useCallback(
+    (next: boolean) => {
+      setExpandedPassengerSaleDraft((current) => ({
+        ...current,
+        useSaleTotalOverride: next,
+      }));
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!expandedPassengerId) return;
@@ -2681,6 +2690,7 @@ export default function GroupDetailPage() {
 
   const fetchCollectFinanceData = useCallback(
     async (clientId: number | null, passengerId: number | null) => {
+      const requestId = ++collectFinanceRequestIdRef.current;
       if (!clientId || clientId <= 0 || !passengerId || passengerId <= 0) {
         setCollectContext(null);
         setCollectReceipts([]);
@@ -2706,8 +2716,10 @@ export default function GroupDetailPage() {
           },
           "No pudimos cargar el contexto financiero del pasajero.",
         );
+        if (requestId !== collectFinanceRequestIdRef.current) return;
         setCollectContext(pickFinanceContext(contextData));
       } catch (error) {
+        if (requestId !== collectFinanceRequestIdRef.current) return;
         setCollectContext(null);
         errors.push(
           error instanceof Error
@@ -2725,6 +2737,7 @@ export default function GroupDetailPage() {
           },
           "No pudimos cargar los recibos del pasajero en la grupal.",
         );
+        if (requestId !== collectFinanceRequestIdRef.current) return;
         const allReceipts = Array.isArray(receiptsData.receipts)
           ? receiptsData.receipts
           : [];
@@ -2747,6 +2760,7 @@ export default function GroupDetailPage() {
         });
         setCollectReceipts(filteredReceipts);
       } catch (error) {
+        if (requestId !== collectFinanceRequestIdRef.current) return;
         setCollectReceipts([]);
         errors.push(
           error instanceof Error ? error.message : "Recibos no disponibles.",
@@ -2765,6 +2779,7 @@ export default function GroupDetailPage() {
           },
           "No pudimos cargar las cuotas del pasajero en la grupal.",
         );
+        if (requestId !== collectFinanceRequestIdRef.current) return;
         const rows = Array.isArray(clientPaymentsData.payments)
           ? clientPaymentsData.payments
           : Array.isArray(clientPaymentsData.items)
@@ -2772,12 +2787,14 @@ export default function GroupDetailPage() {
             : [];
         setCollectClientPayments(rows);
       } catch (error) {
+        if (requestId !== collectFinanceRequestIdRef.current) return;
         setCollectClientPayments([]);
         errors.push(
           error instanceof Error ? error.message : "Cuotas no disponibles.",
         );
       }
 
+      if (requestId !== collectFinanceRequestIdRef.current) return;
       setCollectLoadingError(errors.length > 0 ? errors[0] : null);
       setCollectLoading(false);
     },
@@ -2885,8 +2902,12 @@ export default function GroupDetailPage() {
   }, [sectionFilter, fetchPaymentsDataByScope, selectedPaymentsScope]);
 
   const fetchFinanceDataByScope = useCallback(
-    async (scopeOption: GroupFinanceScopeOption | null) => {
-      if (!scopeOption) {
+    async (
+      scopeOption: GroupFinanceScopeOption | null,
+      passengerId: number | null,
+    ) => {
+      const requestId = ++financeRequestIdRef.current;
+      if (!scopeOption || !passengerId || passengerId <= 0) {
         setFinanceContext(null);
         setFinanceInvoices([]);
         setFinanceCreditNotes([]);
@@ -2905,15 +2926,17 @@ export default function GroupDetailPage() {
           context?: GroupFinanceContextPayload;
           booking?: GroupFinanceContextPayload;
         }>(
-          `/api/groups/${encodeURIComponent(groupId)}/finance/context?scope=${encodeURIComponent(scopeOption.key)}`,
+          `/api/groups/${encodeURIComponent(groupId)}/finance/context?passengerId=${passengerId}`,
           {
             credentials: "include",
             cache: "no-store",
           },
           "No pudimos cargar el contexto operativo principal.",
         );
+        if (requestId !== financeRequestIdRef.current) return;
         setFinanceContext(pickFinanceContext(contextResult));
       } catch (error) {
+        if (requestId !== financeRequestIdRef.current) return;
         setFinanceContext(null);
         errors.push(
           error instanceof Error
@@ -2926,17 +2949,19 @@ export default function GroupDetailPage() {
 
       try {
         const invoicesResult = await requestGroupApi<{ invoices?: Invoice[] }>(
-          `/api/groups/${encodeURIComponent(groupId)}/finance/invoices?scope=${scopeParam}`,
+          `/api/groups/${encodeURIComponent(groupId)}/finance/invoices?passengerId=${passengerId}`,
           {
             credentials: "include",
             cache: "no-store",
           },
           "No pudimos cargar facturas del contexto de la grupal.",
         );
+        if (requestId !== financeRequestIdRef.current) return;
         setFinanceInvoices(
           Array.isArray(invoicesResult.invoices) ? invoicesResult.invoices : [],
         );
       } catch (error) {
+        if (requestId !== financeRequestIdRef.current) return;
         setFinanceInvoices([]);
         errors.push(
           error instanceof Error ? error.message : "Facturas no disponibles.",
@@ -2954,10 +2979,12 @@ export default function GroupDetailPage() {
           },
           "No pudimos cargar notas de crédito del contexto de la grupal.",
         );
+        if (requestId !== financeRequestIdRef.current) return;
         setFinanceCreditNotes(
           Array.isArray(notesResult.creditNotes) ? notesResult.creditNotes : [],
         );
       } catch (error) {
+        if (requestId !== financeRequestIdRef.current) return;
         setFinanceCreditNotes([]);
         errors.push(
           error instanceof Error
@@ -2966,6 +2993,7 @@ export default function GroupDetailPage() {
         );
       }
 
+      if (requestId !== financeRequestIdRef.current) return;
       setFinanceLoadingError(errors.length > 0 ? errors[0] : null);
       setFinanceLoading(false);
     },
@@ -2973,13 +3001,28 @@ export default function GroupDetailPage() {
   );
 
   const refreshFinanceData = useCallback(async () => {
-    await fetchFinanceDataByScope(selectedFinanceScope);
-  }, [fetchFinanceDataByScope, selectedFinanceScope]);
+    await fetchFinanceDataByScope(
+      selectedFinanceScope,
+      selectedFinancePassenger?.id_travel_group_passenger ?? null,
+    );
+  }, [
+    fetchFinanceDataByScope,
+    selectedFinancePassenger?.id_travel_group_passenger,
+    selectedFinanceScope,
+  ]);
 
   useEffect(() => {
     if (sectionFilter !== "FACTURACION") return;
-    void fetchFinanceDataByScope(selectedFinanceScope);
-  }, [sectionFilter, fetchFinanceDataByScope, selectedFinanceScope]);
+    void fetchFinanceDataByScope(
+      selectedFinanceScope,
+      selectedFinancePassenger?.id_travel_group_passenger ?? null,
+    );
+  }, [
+    sectionFilter,
+    fetchFinanceDataByScope,
+    selectedFinancePassenger?.id_travel_group_passenger,
+    selectedFinanceScope,
+  ]);
 
   const handleFinanceInvoiceChange = (
     e: ChangeEvent<HTMLInputElement | HTMLSelectElement>,
@@ -3405,7 +3448,7 @@ export default function GroupDetailPage() {
 
   useEffect(() => {
     collectServicesByContextRef.current.clear();
-  }, [groupId]);
+  }, [groupId, selectedCollectPassenger?.id_travel_group_passenger]);
 
   const loadCollectServicesForContext = useCallback(
     async (contextId: number): Promise<ServiceLite[]> => {
@@ -3433,7 +3476,7 @@ export default function GroupDetailPage() {
         context?: GroupFinanceContextPayload;
         booking?: GroupFinanceContextPayload;
       }>(
-        `/api/groups/${encodeURIComponent(groupId)}/finance/context?contextId=${normalizedContextId}&bookingId=${normalizedContextId}`,
+        `/api/groups/${encodeURIComponent(groupId)}/finance/context?contextId=${normalizedContextId}&bookingId=${normalizedContextId}&passengerId=${encodeURIComponent(String(selectedCollectPassenger?.id_travel_group_passenger ?? ""))}`,
         {
           credentials: "include",
           cache: "no-store",
@@ -3454,6 +3497,7 @@ export default function GroupDetailPage() {
       collectContext?.id_booking,
       collectContextServices,
       groupId,
+      selectedCollectPassenger?.id_travel_group_passenger,
     ],
   );
 
@@ -3479,7 +3523,10 @@ export default function GroupDetailPage() {
   useEffect(() => {
     setFinanceInvoiceFormVisible(false);
     setFinanceInvoiceFormData(createEmptyInvoiceFormData());
-  }, [selectedFinanceScope?.key]);
+  }, [
+    selectedFinanceInvoicePassenger?.id_travel_group_passenger,
+    selectedFinanceScope?.key,
+  ]);
 
   useEffect(() => {
     setEditingOperatorPayment(null);
@@ -5949,7 +5996,9 @@ export default function GroupDetailPage() {
                     <label className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">Pasajero activo:</span>
                       <select
-                        value={selectedCollectPassenger.id_travel_group_passenger}
+                        value={
+                          selectedCollectPassenger.id_travel_group_passenger
+                        }
                         onChange={(e) => {
                           const nextId = Number(e.target.value);
                           if (!Number.isFinite(nextId) || nextId <= 0) return;
@@ -6075,7 +6124,9 @@ export default function GroupDetailPage() {
                         initialPaymentDescription={
                           editingCollectReceipt?.currency || ""
                         }
-                        initialPdfItems={editingCollectReceipt?.pdf_items ?? null}
+                        initialPdfItems={
+                          editingCollectReceipt?.pdf_items ?? null
+                        }
                         initialFeeAmount={
                           editingCollectReceipt?.payment_fee_amount != null
                             ? toAmountNumber(
@@ -6112,6 +6163,7 @@ export default function GroupDetailPage() {
                               : "Pasajero activo"
                         }
                         loadServicesForContext={loadCollectServicesForContext}
+                        servicesCacheScope={`${groupId}:${selectedCollectPassenger.id_travel_group_passenger}`}
                         onSubmit={async (payload) => {
                           const normalizedPayload = {
                             ...payload,
@@ -6542,7 +6594,10 @@ export default function GroupDetailPage() {
                   className="min-w-[220px] rounded-xl border border-emerald-300/80 bg-white/90 px-2 py-1 text-xs font-semibold text-emerald-900 outline-none transition focus:border-emerald-500 dark:border-emerald-500/60 dark:bg-emerald-950/30 dark:text-emerald-100"
                 >
                   {passengerSelectionOptions.map((option) => (
-                    <option key={`passenger-active-${option.id}`} value={option.id}>
+                    <option
+                      key={`passenger-active-${option.id}`}
+                      value={option.id}
+                    >
                       {option.label}
                     </option>
                   ))}
@@ -6726,7 +6781,9 @@ export default function GroupDetailPage() {
                                 }}
                                 className={`${pillClass(isActive, "sky")} inline-flex items-center gap-1`}
                                 title={isActive ? "En edición" : "Gestionar"}
-                                aria-label={isActive ? "En edición" : "Gestionar"}
+                                aria-label={
+                                  isActive ? "En edición" : "Gestionar"
+                                }
                               >
                                 <svg
                                   xmlns="http://www.w3.org/2000/svg"
@@ -6900,11 +6957,10 @@ export default function GroupDetailPage() {
                                           item.assigned_inventory_ids.includes(
                                             inventoryId,
                                           );
-                                        const sale =
-                                          getPassengerInventorySale(
-                                            item,
-                                            inventoryId,
-                                          );
+                                        const sale = getPassengerInventorySale(
+                                          item,
+                                          inventoryId,
+                                        );
                                         const availableQty =
                                           inventoryMetrics?.availableQty ??
                                           Math.max(

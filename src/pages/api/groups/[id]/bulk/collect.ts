@@ -11,6 +11,17 @@ import {
   toDistinctPositiveInts,
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
+import {
+  isGroupPaymentInstallment,
+  isGroupServiceAssignment,
+} from "@/lib/groups/clientPaymentRecordType";
+import {
+  GroupFinanceRequestError,
+  isGroupFinanceRequestError,
+  lockGroupInventoryServiceIds,
+  lockGroupPassenger,
+} from "@/lib/groups/groupFinanceMutationGuards";
+import { validateGroupReceiptDebtForPassenger } from "@/lib/groups/groupReceiptDebtContext";
 
 type Body = {
   paymentIds?: unknown;
@@ -33,6 +44,9 @@ type GroupPaymentRow = {
   amount: Prisma.Decimal;
   currency: string;
   status: string;
+  concept: string | null;
+  status_reason: string | null;
+  metadata: unknown;
 };
 
 function pickParam(value: string | string[] | undefined): string | null {
@@ -99,10 +113,15 @@ export default async function handler(
 
   const rawGroupId = pickParam(req.query.id);
   if (!rawGroupId) {
-    return groupApiError(res, 400, "El identificador de la grupal es inválido.", {
-      code: "GROUP_ID_INVALID",
-      solution: "Volvé al listado de grupales y abrila nuevamente.",
-    });
+    return groupApiError(
+      res,
+      400,
+      "El identificador de la grupal es inválido.",
+      {
+        code: "GROUP_ID_INVALID",
+        solution: "Volvé al listado de grupales y abrila nuevamente.",
+      },
+    );
   }
   const groupWhere = parseGroupWhereInput(rawGroupId, auth.id_agency);
   if (!groupWhere) {
@@ -146,8 +165,10 @@ export default async function handler(
     });
   }
   const concept =
-    parseOptionalString(body.concept, 200) ?? `Cobro masivo grupal ${group.name}`;
-  const amountString = parseOptionalString(body.amountString, 200) ?? "COBRO MASIVO";
+    parseOptionalString(body.concept, 200) ??
+    `Cobro masivo grupal ${group.name}`;
+  const amountString =
+    parseOptionalString(body.amountString, 200) ?? "COBRO MASIVO";
 
   const paymentMethodId = toPositiveInt(body.payment_method_id);
   if (createReceipts && !paymentMethodId) {
@@ -167,11 +188,19 @@ export default async function handler(
     body.payment_fee_amount == null || body.payment_fee_amount === ""
       ? null
       : Number(String(body.payment_fee_amount).replace(",", "."));
-  if (feeAmountRaw != null && (!Number.isFinite(feeAmountRaw) || feeAmountRaw < 0)) {
-    return groupApiError(res, 400, "El costo adicional del cobro es inválido.", {
-      code: "GROUP_COLLECT_FEE_INVALID",
-      solution: "Ingresá un valor numérico mayor o igual a 0.",
-    });
+  if (
+    feeAmountRaw != null &&
+    (!Number.isFinite(feeAmountRaw) || feeAmountRaw < 0)
+  ) {
+    return groupApiError(
+      res,
+      400,
+      "El costo adicional del cobro es inválido.",
+      {
+        code: "GROUP_COLLECT_FEE_INVALID",
+        solution: "Ingresá un valor numérico mayor o igual a 0.",
+      },
+    );
   }
 
   const [paymentMethod, account] = await Promise.all([
@@ -239,9 +268,16 @@ export default async function handler(
           in: passengers.map((item) => item.id_travel_group_passenger),
         },
       },
-      select: { id_travel_group_client_payment: true },
+      select: {
+        id_travel_group_client_payment: true,
+        concept: true,
+        status_reason: true,
+        metadata: true,
+      },
     });
-    paymentIds = pending.map((item) => item.id_travel_group_client_payment);
+    paymentIds = pending
+      .filter(isGroupPaymentInstallment)
+      .map((item) => item.id_travel_group_client_payment);
   }
 
   if (paymentIds.length === 0) {
@@ -251,7 +287,8 @@ export default async function handler(
       "No encontramos cuotas pendientes para cobrar.",
       {
         code: "GROUP_COLLECT_EMPTY",
-        solution: "Seleccioná pasajeros con cuotas pendientes o indicá pagos válidos.",
+        solution:
+          "Seleccioná pasajeros con cuotas pendientes o indicá pagos válidos.",
       },
     );
   }
@@ -271,13 +308,33 @@ export default async function handler(
       currency: true,
       status: true,
       travel_group_id: true,
+      concept: true,
+      status_reason: true,
+      metadata: true,
     },
   });
   if (payments.length !== paymentIds.length) {
-    return groupApiError(res, 404, "Alguno de los pagos seleccionados no existe.", {
-      code: "GROUP_COLLECT_PAYMENT_NOT_FOUND",
-      solution: "Refrescá la pantalla y volvé a seleccionar los pagos.",
-    });
+    return groupApiError(
+      res,
+      404,
+      "Alguno de los pagos seleccionados no existe.",
+      {
+        code: "GROUP_COLLECT_PAYMENT_NOT_FOUND",
+        solution: "Refrescá la pantalla y volvé a seleccionar los pagos.",
+      },
+    );
+  }
+  if (payments.some(isGroupServiceAssignment)) {
+    return groupApiError(
+      res,
+      400,
+      "La selección incluye asignaciones de servicios que no son cuotas.",
+      {
+        code: "GROUP_COLLECT_INCLUDES_SERVICE_ASSIGNMENT",
+        solution:
+          "Refrescá la lista y seleccioná únicamente cuotas pendientes.",
+      },
+    );
   }
 
   for (const payment of payments) {
@@ -342,10 +399,28 @@ export default async function handler(
     receipt_id: number | null;
     payment_ids: number[];
   }> = [];
+  const orderedBuckets = Array.from(buckets.values()).sort((a, b) => {
+    if (a.travel_group_passenger_id !== b.travel_group_passenger_id) {
+      return a.travel_group_passenger_id - b.travel_group_passenger_id;
+    }
+    if (a.client_id !== b.client_id) return a.client_id - b.client_id;
+    return a.currency.localeCompare(b.currency);
+  });
 
   try {
     await prisma.$transaction(async (tx) => {
-      for (const bucket of buckets.values()) {
+      for (const bucket of orderedBuckets) {
+        await lockGroupPassenger(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          passengerId: bucket.travel_group_passenger_id,
+        });
+        const serviceIds = toServiceIds(bucket.payments);
+        await lockGroupInventoryServiceIds(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceIds,
+        });
         const total = bucket.payments.reduce(
           (acc, payment) => acc.plus(payment.amount),
           new Prisma.Decimal(0),
@@ -353,6 +428,41 @@ export default async function handler(
 
         let createdReceiptId: number | null = null;
         if (createReceipts) {
+          const targetPassenger =
+            await tx.travelGroupPassenger.findUniqueOrThrow({
+              where: {
+                id_travel_group_passenger: bucket.travel_group_passenger_id,
+              },
+              select: {
+                id_travel_group_passenger: true,
+                travel_group_departure_id: true,
+                metadata: true,
+              },
+            });
+          const validation = await validateGroupReceiptDebtForPassenger(tx, {
+            agencyId: auth.id_agency,
+            groupId: group.id_travel_group,
+            passenger: {
+              id: targetPassenger.id_travel_group_passenger,
+              departureId: targetPassenger.travel_group_departure_id,
+              metadata: targetPassenger.metadata,
+            },
+            selectedServiceIds: serviceIds,
+            currentReceipt: {
+              amount: Number(total.toString()),
+              amountCurrency: bucket.currency,
+              paymentFeeAmount: feeAmountRaw ?? 0,
+              baseAmount: null,
+              baseCurrency: null,
+            },
+          });
+          if (!validation.ok) {
+            throw new GroupFinanceRequestError({
+              status: validation.status,
+              code: validation.code,
+              message: validation.message,
+            });
+          }
           const agencyReceiptId = await getNextAgencyCounter(
             tx,
             auth.id_agency,
@@ -377,20 +487,26 @@ export default async function handler(
                 feeAmountRaw == null ? null : new Prisma.Decimal(feeAmountRaw),
               account: account?.name ?? null,
               client_ids: [bucket.client_id],
-              service_refs: toServiceIds(bucket.payments),
+              service_refs: validation.normalizedServiceIds,
             },
             select: { id_travel_group_receipt: true },
           });
           createdReceiptId = created.id_travel_group_receipt;
         }
 
-        await tx.travelGroupClientPayment.updateMany({
+        const updated = await tx.travelGroupClientPayment.updateMany({
           where: {
             id_agency: auth.id_agency,
             travel_group_id: group.id_travel_group,
+            travel_group_passenger_id: bucket.travel_group_passenger_id,
+            client_id: bucket.client_id,
             id_travel_group_client_payment: {
-              in: bucket.payments.map((item) => item.id_travel_group_client_payment),
+              in: bucket.payments.map(
+                (item) => item.id_travel_group_client_payment,
+              ),
             },
+            status: "PENDIENTE",
+            receipt_id: null,
           },
           data: {
             status: "PAGADA",
@@ -401,6 +517,15 @@ export default async function handler(
             updated_at: new Date(),
           },
         });
+        if (updated.count !== bucket.payments.length) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_COLLECT_PAYMENT_ALREADY_SETTLED",
+            message: "Alguna cuota seleccionada ya fue cobrada.",
+            solution:
+              "Refrescá la grupal y revisá los recibos antes de reintentar.",
+          });
+        }
 
         settledCount += bucket.payments.length;
         receiptsCreated.push({
@@ -408,7 +533,9 @@ export default async function handler(
           client_id: bucket.client_id,
           currency: bucket.currency,
           receipt_id: createdReceiptId,
-          payment_ids: bucket.payments.map((item) => item.id_travel_group_client_payment),
+          payment_ids: bucket.payments.map(
+            (item) => item.id_travel_group_client_payment,
+          ),
         });
       }
     });
@@ -416,10 +543,17 @@ export default async function handler(
     return res.status(200).json({
       ok: true,
       settled_count: settledCount,
-      receipts_count: receiptsCreated.filter((item) => item.receipt_id != null).length,
+      receipts_count: receiptsCreated.filter((item) => item.receipt_id != null)
+        .length,
       buckets: receiptsCreated,
     });
   } catch (error) {
+    if (isGroupFinanceRequestError(error)) {
+      return groupApiError(res, error.status, error.message, {
+        code: error.code,
+        solution: error.solution,
+      });
+    }
     console.error("[groups][bulk][collect]", error);
     return groupApiError(res, 500, "No pudimos cobrar los pagos en lote.", {
       code: "GROUP_COLLECT_ERROR",

@@ -12,6 +12,14 @@ import {
   requireAuth,
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
+import { isGroupServiceAssignment } from "@/lib/groups/clientPaymentRecordType";
+import { encodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
+import {
+  assertGroupServiceHasNoFinancialReferences,
+  GroupFinanceRequestError,
+  isGroupFinanceRequestError,
+  lockGroupInventoryServiceIds,
+} from "@/lib/groups/groupFinanceMutationGuards";
 
 type Body = {
   departure_id?: unknown;
@@ -413,21 +421,79 @@ export default async function handler(
     }
 
     try {
-      const updated = await prisma.travelGroupInventory.update({
-        where: { id_travel_group_inventory: current.id_travel_group_inventory },
-        data: patch,
-        include: {
-          travelGroupDeparture: {
-            select: {
-              id_travel_group_departure: true,
-              name: true,
-              departure_date: true,
+      const updated = await prisma.$transaction(async (tx) => {
+        const serviceId = encodeInventoryServiceId(
+          current.id_travel_group_inventory,
+        );
+        await lockGroupInventoryServiceIds(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceIds: [serviceId],
+        });
+        const locked = await tx.travelGroupInventory.findFirst({
+          where: {
+            id_travel_group_inventory: current.id_travel_group_inventory,
+            id_agency: auth.id_agency,
+            travel_group_id: group.id_travel_group,
+          },
+        });
+        if (!locked) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_FINANCE_SERVICE_CHANGED",
+            message: "El servicio cambió mientras se procesaba la edición.",
+            solution: "Refrescá la grupal y volvé a intentarlo.",
+          });
+        }
+
+        const lockedFinalTotal =
+          body.total_qty !== undefined ? nextTotal! : locked.total_qty;
+        const lockedFinalAssigned =
+          body.assigned_qty !== undefined ? nextAssigned! : locked.assigned_qty;
+        const lockedFinalConfirmed =
+          body.confirmed_qty !== undefined
+            ? nextConfirmed!
+            : locked.confirmed_qty;
+        const lockedFinalBlocked =
+          body.blocked_qty !== undefined ? nextBlocked! : locked.blocked_qty;
+        if (
+          lockedFinalAssigned > lockedFinalTotal ||
+          lockedFinalConfirmed > lockedFinalTotal ||
+          lockedFinalBlocked > lockedFinalTotal
+        ) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_QTY_CHANGED",
+            message:
+              "Las cantidades del servicio cambiaron mientras se procesaba la edición.",
+            solution: "Refrescá la grupal y volvé a ingresar las cantidades.",
+          });
+        }
+
+        return tx.travelGroupInventory.update({
+          where: {
+            id_travel_group_inventory: current.id_travel_group_inventory,
+          },
+          data: patch,
+          include: {
+            travelGroupDeparture: {
+              select: {
+                id_travel_group_departure: true,
+                name: true,
+                departure_date: true,
+              },
             },
           },
-        },
+        });
       });
       return res.status(200).json(updated);
     } catch (error) {
+      if (isGroupFinanceRequestError(error)) {
+        return groupApiError(res, error.status, error.message, {
+          code: error.code,
+          solution: error.solution,
+        });
+      }
       console.error("[groups][inventories][PATCH]", error);
       return groupApiError(
         res,
@@ -466,10 +532,50 @@ export default async function handler(
       );
     }
     const forceDelete = parseForceFlag(req.query.force);
+    const serviceRef = String(
+      encodeInventoryServiceId(current.id_travel_group_inventory),
+    );
+    const assignmentCandidates = await prisma.travelGroupClientPayment.findMany(
+      {
+        where: {
+          id_agency: auth.id_agency,
+          travel_group_id: group.id_travel_group,
+          service_ref: serviceRef,
+          status: { not: "CANCELADA" },
+        },
+        select: {
+          id_travel_group_client_payment: true,
+          status: true,
+          concept: true,
+          status_reason: true,
+          metadata: true,
+        },
+      },
+    );
+    const activeAssignments = assignmentCandidates.filter(
+      isGroupServiceAssignment,
+    );
     if (
-      !forceDelete &&
-      (current.assigned_qty > 0 || current.confirmed_qty > 0)
+      activeAssignments.some(
+        (item) => String(item.status || "").toUpperCase() !== "PENDIENTE",
+      )
     ) {
+      return groupApiError(
+        res,
+        409,
+        "No podés eliminar un servicio con asignaciones ya cobradas.",
+        {
+          code: "GROUP_INVENTORY_DELETE_PAID_ASSIGNMENT",
+          solution:
+            "Revisá los cobros de los pasajeros antes de eliminar el servicio.",
+        },
+      );
+    }
+    const effectiveAssigned = Math.max(
+      current.assigned_qty,
+      activeAssignments.length,
+    );
+    if (!forceDelete && (effectiveAssigned > 0 || current.confirmed_qty > 0)) {
       return groupApiError(
         res,
         409,
@@ -482,14 +588,127 @@ export default async function handler(
       );
     }
     try {
-      await prisma.travelGroupInventory.delete({
-        where: { id_travel_group_inventory: current.id_travel_group_inventory },
+      const cancelledAssignments = await prisma.$transaction(async (tx) => {
+        const encodedServiceId = encodeInventoryServiceId(
+          current.id_travel_group_inventory,
+        );
+        await lockGroupInventoryServiceIds(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceIds: [encodedServiceId],
+        });
+        const [lockedInventory, currentAssignmentCandidates] =
+          await Promise.all([
+            tx.travelGroupInventory.findUniqueOrThrow({
+              where: {
+                id_travel_group_inventory: current.id_travel_group_inventory,
+              },
+            }),
+            tx.travelGroupClientPayment.findMany({
+              where: {
+                id_agency: auth.id_agency,
+                travel_group_id: group.id_travel_group,
+                service_ref: String(encodedServiceId),
+                status: { not: "CANCELADA" },
+              },
+              select: {
+                id_travel_group_client_payment: true,
+                travel_group_passenger_id: true,
+                status: true,
+                concept: true,
+                status_reason: true,
+                metadata: true,
+              },
+            }),
+          ]);
+        const currentAssignments = currentAssignmentCandidates.filter(
+          isGroupServiceAssignment,
+        );
+        await assertGroupServiceHasNoFinancialReferences(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceId: encodedServiceId,
+          passengerIds: currentAssignments.map(
+            (item) => item.travel_group_passenger_id,
+          ),
+        });
+        if (
+          currentAssignments.some(
+            (item) => String(item.status || "").toUpperCase() !== "PENDIENTE",
+          )
+        ) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_DELETE_PAID_ASSIGNMENT",
+            message:
+              "No podés eliminar un servicio con asignaciones ya cobradas.",
+            solution:
+              "Revisá los cobros de los pasajeros antes de eliminar el servicio.",
+          });
+        }
+        const currentEffectiveAssigned = Math.max(
+          lockedInventory.assigned_qty,
+          currentAssignments.length,
+        );
+        if (
+          !forceDelete &&
+          (currentEffectiveAssigned > 0 || lockedInventory.confirmed_qty > 0)
+        ) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_DELETE_BLOCKED",
+            message:
+              "No podés eliminar un servicio con cupos asignados o confirmados.",
+            solution:
+              "Confirmá el borrado forzado desde la interfaz o quitá primero las asignaciones/confirmaciones.",
+          });
+        }
+        const cancelledAssignmentIds = currentAssignments.map(
+          (item) => item.id_travel_group_client_payment,
+        );
+        const cancelled = await tx.travelGroupClientPayment.updateMany({
+          where: {
+            id_agency: auth.id_agency,
+            travel_group_id: group.id_travel_group,
+            id_travel_group_client_payment: {
+              in: cancelledAssignmentIds,
+            },
+            status: "PENDIENTE",
+          },
+          data: {
+            status: "CANCELADA",
+            status_reason: "Servicio eliminado de la grupal",
+            updated_at: new Date(),
+          },
+        });
+        if (cancelled.count !== cancelledAssignmentIds.length) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_ASSIGNMENT_CHANGED",
+            message:
+              "Las asignaciones cambiaron mientras intentabas eliminar el servicio.",
+            solution: "Refrescá la grupal y volvé a intentarlo.",
+          });
+        }
+        await tx.travelGroupInventory.delete({
+          where: {
+            id_travel_group_inventory: current.id_travel_group_inventory,
+          },
+        });
+        return cancelled.count;
       });
       return res.status(200).json({
         ok: true,
         forced: forceDelete,
+        cancelled_assignments: cancelledAssignments,
       });
     } catch (error) {
+      if (isGroupFinanceRequestError(error)) {
+        return groupApiError(res, error.status, error.message, {
+          code: error.code,
+          solution: error.solution,
+        });
+      }
       console.error("[groups][inventories][DELETE]", error);
       return groupApiError(
         res,

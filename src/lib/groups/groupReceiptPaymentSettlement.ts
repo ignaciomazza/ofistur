@@ -8,6 +8,8 @@ import {
   toAmountNumber,
 } from "@/lib/groups/financeShared";
 import type { GroupReceiptStoredPaymentLine } from "@/lib/groups/groupReceiptMetadata";
+import { isGroupPaymentInstallment } from "@/lib/groups/clientPaymentRecordType";
+import { GroupFinanceRequestError } from "@/lib/groups/groupFinanceMutationGuards";
 
 const SETTLEMENT_TOLERANCE_CENTS = 1;
 
@@ -120,23 +122,25 @@ export async function settleGroupReceiptClientPayments(
         id_travel_group_client_payment: true,
         amount: true,
         due_date: true,
+        concept: true,
+        status_reason: true,
+        metadata: true,
       },
-      orderBy: [
-        { due_date: "asc" },
-        { id_travel_group_client_payment: "asc" },
-      ],
+      orderBy: [{ due_date: "asc" }, { id_travel_group_client_payment: "asc" }],
     });
     const ids = pickFullySettledGroupClientPaymentIds(
-      pendingPayments,
+      pendingPayments.filter(isGroupPaymentInstallment),
       bucket.amount,
     );
     if (ids.length === 0) continue;
 
-    await tx.travelGroupClientPayment.updateMany({
+    const updated = await tx.travelGroupClientPayment.updateMany({
       where: {
         id_agency: args.idAgency,
         travel_group_id: args.groupId,
         id_travel_group_client_payment: { in: ids },
+        status: "PENDIENTE",
+        receipt_id: null,
       },
       data: {
         status: "PAGADA",
@@ -147,6 +151,15 @@ export async function settleGroupReceiptClientPayments(
         updated_at: new Date(),
       },
     });
+    if (updated.count !== ids.length) {
+      throw new GroupFinanceRequestError({
+        status: 409,
+        code: "GROUP_FINANCE_PAYMENT_ALREADY_SETTLED",
+        message: "Alguna cuota fue cobrada por otra operación.",
+        solution:
+          "Refrescá la grupal y revisá los recibos antes de reintentar.",
+      });
+    }
     settledIds.push(...ids);
   }
 

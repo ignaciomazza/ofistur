@@ -53,6 +53,8 @@ describe("group finance summary", () => {
       currency: "USD",
       assignedSale: 400,
       assignedCost: 200,
+      operatorCost: 400,
+      operatorDebt: 400,
       estimatedTaxes: 20,
       transferFees: 9.6,
       estimatedNetCommission: 170.4,
@@ -154,7 +156,60 @@ describe("group finance summary", () => {
     });
   });
 
-  it("uses operator payment allocations before falling back to base amount", () => {
+  it("uses a passenger total override for group revenue and balance", () => {
+    const serviceRef = encodeInventoryServiceId(6);
+    const summary = buildGroupFinanceSummary({
+      transferFeePct: 0.024,
+      inventories: [
+        {
+          id_travel_group_inventory: 6,
+          label: "Paquete flexible",
+          currency: "USD",
+          total_qty: 1,
+          unit_cost: "70",
+          note: buildMetaNote({ saleUnitPrice: 100 }),
+        },
+      ],
+      assignments: [
+        {
+          id: 1,
+          travel_group_passenger_id: 60,
+          service_ref: serviceRef,
+          amount: 100,
+          currency: "USD",
+        },
+      ],
+      passengerSaleOverrides: [
+        {
+          travel_group_passenger_id: 60,
+          saleTotals: { USD: 150 },
+        },
+      ],
+      receipts: [
+        {
+          amount: 120,
+          amount_currency: "USD",
+          payment_fee_amount: 0,
+        },
+      ],
+      operatorPayments: [],
+      operatorDues: [],
+      invoices: [],
+    });
+
+    expect(summary.currencies[0]).toMatchObject({
+      assignedSale: 150,
+      collected: 120,
+      passengerDebt: 30,
+      transferFees: 3.6,
+    });
+    expect(summary.services[0]).toMatchObject({
+      assignedSale: 100,
+      assignedCost: 70,
+    });
+  });
+
+  it("subtracts operator payments from the total reserved service cost", () => {
     const serviceRef = encodeInventoryServiceId(4);
     const summary = buildGroupFinanceSummary({
       inventories: [
@@ -207,9 +262,82 @@ describe("group finance summary", () => {
     });
 
     expect(summary.currencies[0]).toMatchObject({
+      operatorCost: 200,
       operatorPaid: 100,
-      operatorDebt: 50,
-      operatorPaidPct: 66.67,
+      operatorDebt: 100,
+      operatorPaidPct: 50,
+    });
+  });
+
+  it("uses due dates only as scheduling data, not as operator debt", () => {
+    const serviceRef = encodeInventoryServiceId(40);
+    const summary = buildGroupFinanceSummary({
+      inventories: [
+        {
+          id_travel_group_inventory: 40,
+          label: "Hotel",
+          currency: "USD",
+          total_qty: 2,
+          unit_cost: "100",
+          note: buildMetaNote({ costTotalPrice: 200, saleUnitPrice: 150 }),
+        },
+      ],
+      assignments: [
+        {
+          id: 1,
+          travel_group_passenger_id: 401,
+          service_ref: serviceRef,
+          amount: 150,
+          currency: "USD",
+        },
+        {
+          id: 2,
+          travel_group_passenger_id: 402,
+          service_ref: serviceRef,
+          amount: 150,
+          currency: "USD",
+        },
+      ],
+      receipts: [],
+      operatorPayments: [{ amount: 80, currency: "USD" }],
+      operatorDues: [{ amount: 25, currency: "USD", status: "PENDIENTE" }],
+      invoices: [],
+    });
+
+    expect(summary.currencies[0]).toMatchObject({
+      assignedCost: 200,
+      operatorCost: 200,
+      operatorPaid: 80,
+      operatorDebt: 120,
+      operatorPaidPct: 40,
+    });
+  });
+
+  it("keeps operator debt for reserved inventory without assignments", () => {
+    const summary = buildGroupFinanceSummary({
+      inventories: [
+        {
+          id_travel_group_inventory: 41,
+          label: "Bloqueo aéreo",
+          currency: "USD",
+          total_qty: 10,
+          unit_cost: "100",
+          note: buildMetaNote({ costTotalPrice: 1_000 }),
+        },
+      ],
+      assignments: [],
+      receipts: [],
+      operatorPayments: [{ amount: 250, currency: "USD" }],
+      operatorDues: [],
+      invoices: [],
+    });
+
+    expect(summary.currencies[0]).toMatchObject({
+      assignedCost: 0,
+      operatorCost: 1_000,
+      operatorPaid: 250,
+      operatorDebt: 750,
+      operatorPaidPct: 25,
     });
   });
 

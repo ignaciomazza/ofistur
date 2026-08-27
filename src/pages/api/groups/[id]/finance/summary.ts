@@ -7,6 +7,8 @@ import {
   requireGroupFinanceContext,
 } from "@/lib/groups/financeShared";
 import { readGroupReceiptPaymentsFromMetadata } from "@/lib/groups/groupReceiptMetadata";
+import { isGroupServiceAssignment } from "@/lib/groups/clientPaymentRecordType";
+import { readPassengerSaleConfig } from "@/lib/groups/passengerSaleTotals";
 import {
   buildGroupFinanceSummary,
   type GroupFinanceSummaryResult,
@@ -37,7 +39,7 @@ type SummaryResponse = {
 
 function pickQueryValue(value: string | string[] | undefined): string | null {
   if (!value) return null;
-  return Array.isArray(value) ? value[0] ?? null : value;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
 function parseSummaryScope(raw: string | null): SummaryScope | null {
@@ -144,10 +146,15 @@ export default async function handler(
       },
     });
     if (!departure) {
-      return groupApiError(res, 404, "No encontramos esa salida en la grupal.", {
-        code: "GROUP_FINANCE_SUMMARY_DEPARTURE_NOT_FOUND",
-        solution: "Refrescá la pantalla y seleccioná una salida válida.",
-      });
+      return groupApiError(
+        res,
+        404,
+        "No encontramos esa salida en la grupal.",
+        {
+          code: "GROUP_FINANCE_SUMMARY_DEPARTURE_NOT_FOUND",
+          solution: "Refrescá la pantalla y seleccioná una salida válida.",
+        },
+      );
     }
     resolvedScope = {
       ...scope,
@@ -181,6 +188,7 @@ export default async function handler(
       operatorPayments,
       operatorDues,
       invoices,
+      passengers,
     ] = await Promise.all([
       prisma.agency.findUnique({
         where: { id_agency: ctx.auth.id_agency },
@@ -229,6 +237,9 @@ export default async function handler(
           amount: true,
           currency: true,
           status: true,
+          concept: true,
+          status_reason: true,
+          metadata: true,
         },
         orderBy: { id_travel_group_client_payment: "asc" },
       }),
@@ -286,16 +297,46 @@ export default async function handler(
           status: true,
         },
       }),
+      prisma.travelGroupPassenger.findMany({
+        where: {
+          id_agency: ctx.auth.id_agency,
+          travel_group_id: ctx.group.id_travel_group,
+          ...scopedWhere,
+        },
+        select: {
+          id_travel_group_passenger: true,
+          metadata: true,
+        },
+      }),
     ]);
+
+    const passengerSaleOverrides = passengers.flatMap((passenger) => {
+      const saleConfig = readPassengerSaleConfig(passenger.metadata);
+      if (
+        !saleConfig.useSaleTotalOverride ||
+        Object.keys(saleConfig.saleTotals).length === 0
+      ) {
+        return [];
+      }
+      return [
+        {
+          travel_group_passenger_id:
+            passenger.id_travel_group_passenger,
+          saleTotals: saleConfig.saleTotals,
+        },
+      ];
+    });
 
     const summary = buildGroupFinanceSummary({
       transferFeePct:
-        agency?.transfer_fee_pct != null ? Number(agency.transfer_fee_pct) : 0.024,
+        agency?.transfer_fee_pct != null
+          ? Number(agency.transfer_fee_pct)
+          : 0.024,
       billingAdjustments: normalizeBillingAdjustments(
         calcConfig?.billing_adjustments,
       ),
       inventories,
-      assignments: assignments.map((item) => ({
+      assignments: assignments.filter(isGroupServiceAssignment).map((item) => ({
         id: item.id_travel_group_client_payment,
         travel_group_passenger_id: item.travel_group_passenger_id,
         travel_group_departure_id: item.travel_group_departure_id,
@@ -315,6 +356,7 @@ export default async function handler(
       operatorPayments,
       operatorDues,
       invoices,
+      passengerSaleOverrides,
     });
 
     return res.status(200).json({

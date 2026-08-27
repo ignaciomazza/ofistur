@@ -13,7 +13,18 @@ import {
 } from "@/lib/groups/apiShared";
 import { parseTemplateInstallments } from "@/lib/groups/paymentTemplatesShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
+import {
+  GROUP_CLIENT_PAYMENT_RECORD_TYPE,
+  groupClientPaymentRecordMetadata,
+  isGroupPaymentInstallment,
+} from "@/lib/groups/clientPaymentRecordType";
 import { decodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
+import {
+  GroupFinanceRequestError,
+  isGroupFinanceRequestError,
+  lockGroupInventoryServiceIds,
+  lockGroupPassenger,
+} from "@/lib/groups/groupFinanceMutationGuards";
 
 type InstallmentInput = {
   due_date?: unknown;
@@ -79,7 +90,9 @@ function parseInstallments(raw: unknown): Array<{
     if (!Number.isFinite(amountNum) || amountNum <= 0) return null;
 
     const currency =
-      typeof item?.currency === "string" ? item.currency.trim().toUpperCase() : "";
+      typeof item?.currency === "string"
+        ? item.currency.trim().toUpperCase()
+        : "";
     if (!currency) return null;
 
     const serviceIdRaw = Number(item?.service_id);
@@ -121,18 +134,29 @@ export default async function handler(
   const auth = await requireAuth(req, res);
   if (!auth) return;
   if (!canWriteGroups(auth.role)) {
-    return groupApiError(res, 403, "No tenés permisos para crear planes de pago en lote.", {
-      code: "GROUP_PAYMENT_PLAN_FORBIDDEN",
-      solution: "Solicitá permisos de edición de grupales a un administrador.",
-    });
+    return groupApiError(
+      res,
+      403,
+      "No tenés permisos para crear planes de pago en lote.",
+      {
+        code: "GROUP_PAYMENT_PLAN_FORBIDDEN",
+        solution:
+          "Solicitá permisos de edición de grupales a un administrador.",
+      },
+    );
   }
 
   const rawGroupId = pickParam(req.query.id);
   if (!rawGroupId) {
-    return groupApiError(res, 400, "El identificador de la grupal es inválido.", {
-      code: "GROUP_ID_INVALID",
-      solution: "Volvé al listado de grupales y abrila nuevamente.",
-    });
+    return groupApiError(
+      res,
+      400,
+      "El identificador de la grupal es inválido.",
+      {
+        code: "GROUP_ID_INVALID",
+        solution: "Volvé al listado de grupales y abrila nuevamente.",
+      },
+    );
   }
   const groupWhere = parseGroupWhereInput(rawGroupId, auth.id_agency);
   if (!groupWhere) {
@@ -144,7 +168,12 @@ export default async function handler(
 
   const group = await prisma.travelGroup.findFirst({
     where: groupWhere,
-    select: { id_travel_group: true, status: true, type: true, start_date: true },
+    select: {
+      id_travel_group: true,
+      status: true,
+      type: true,
+      start_date: true,
+    },
   });
   if (!group) {
     return groupApiError(res, 404, "No encontramos la grupal solicitada.", {
@@ -159,7 +188,8 @@ export default async function handler(
       "No se pueden crear planes en grupales cerradas o canceladas.",
       {
         code: "GROUP_LOCKED",
-        solution: "Cambiá el estado de la grupal antes de crear planes masivos.",
+        solution:
+          "Cambiá el estado de la grupal antes de crear planes masivos.",
       },
     );
   }
@@ -216,7 +246,8 @@ export default async function handler(
         "La plantilla seleccionada no aplica al tipo de esta grupal.",
         {
           code: "GROUP_PAYMENT_TEMPLATE_TYPE_MISMATCH",
-          solution: "Elegí una plantilla para este tipo de grupal o dejá cuotas manuales.",
+          solution:
+            "Elegí una plantilla para este tipo de grupal o dejá cuotas manuales.",
         },
       );
     }
@@ -249,10 +280,15 @@ export default async function handler(
     const baseDateRaw = body.template_base_date;
     const baseDate = parseDueDate(baseDateRaw);
     if (baseDateRaw !== undefined && !baseDate) {
-      return groupApiError(res, 400, "La fecha base de la plantilla es inválida.", {
-        code: "GROUP_TEMPLATE_BASE_DATE_INVALID",
-        solution: "Ingresá una fecha válida con formato AAAA-MM-DD.",
-      });
+      return groupApiError(
+        res,
+        400,
+        "La fecha base de la plantilla es inválida.",
+        {
+          code: "GROUP_TEMPLATE_BASE_DATE_INVALID",
+          solution: "Ingresá una fecha válida con formato AAAA-MM-DD.",
+        },
+      );
     }
     const effectiveBaseDate = baseDate ?? group.start_date ?? new Date();
 
@@ -303,7 +339,9 @@ export default async function handler(
   }
 
   const validTargets = passengers.filter(
-    (p): p is {
+    (
+      p,
+    ): p is {
       id_travel_group_passenger: number;
       travel_group_departure_id: number | null;
       client_id: number;
@@ -365,9 +403,13 @@ export default async function handler(
     ]);
 
     const regularServiceSet = new Set(services.map((s) => s.id_service));
-    const inventorySet = new Set(inventories.map((i) => i.id_travel_group_inventory));
+    const inventorySet = new Set(
+      inventories.map((i) => i.id_travel_group_inventory),
+    );
 
-    const invalidRegular = regularServiceIds.filter((id) => !regularServiceSet.has(id));
+    const invalidRegular = regularServiceIds.filter(
+      (id) => !regularServiceSet.has(id),
+    );
     const invalidInventory = requestedServiceIds.filter((serviceId) => {
       const inventoryId = inventoryIdByServiceId.get(serviceId);
       return inventoryId ? !inventorySet.has(inventoryId) : false;
@@ -389,17 +431,48 @@ export default async function handler(
 
   let createdCount = 0;
   let cancelledCount = 0;
+  const orderedTargets = [...validTargets].sort(
+    (a, b) => a.id_travel_group_passenger - b.id_travel_group_passenger,
+  );
 
   try {
     await prisma.$transaction(async (tx) => {
-      for (const passenger of validTargets) {
+      for (const passenger of orderedTargets) {
+        await lockGroupPassenger(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          passengerId: passenger.id_travel_group_passenger,
+        });
+        await lockGroupInventoryServiceIds(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceIds: requestedServiceIds,
+        });
         if (replacePending) {
-          const cancelled = await tx.travelGroupClientPayment.updateMany({
+          const pendingRows = await tx.travelGroupClientPayment.findMany({
             where: {
               id_agency: auth.id_agency,
               travel_group_id: group.id_travel_group,
               travel_group_passenger_id: passenger.id_travel_group_passenger,
               status: "PENDIENTE",
+            },
+            select: {
+              id_travel_group_client_payment: true,
+              concept: true,
+              status_reason: true,
+              metadata: true,
+            },
+          });
+          const pendingInstallmentIds = pendingRows
+            .filter(isGroupPaymentInstallment)
+            .map((item) => item.id_travel_group_client_payment);
+          const cancelled = await tx.travelGroupClientPayment.updateMany({
+            where: {
+              id_agency: auth.id_agency,
+              travel_group_id: group.id_travel_group,
+              id_travel_group_client_payment: { in: pendingInstallmentIds },
+              status: "PENDIENTE",
+              receipt_id: null,
             },
             data: {
               status: "CANCELADA",
@@ -407,6 +480,15 @@ export default async function handler(
               updated_at: new Date(),
             },
           });
+          if (cancelled.count !== pendingInstallmentIds.length) {
+            throw new GroupFinanceRequestError({
+              status: 409,
+              code: "GROUP_PAYMENT_PLAN_CHANGED",
+              message:
+                "Alguna cuota cambió mientras se reemplazaba el plan de pagos.",
+              solution: "Refrescá la grupal y volvé a intentarlo.",
+            });
+          }
           cancelledCount += cancelled.count;
         }
 
@@ -432,6 +514,9 @@ export default async function handler(
               currency: installment.currency,
               due_date: installment.due_date,
               status: "PENDIENTE",
+              metadata: groupClientPaymentRecordMetadata(
+                GROUP_CLIENT_PAYMENT_RECORD_TYPE.PAYMENT_INSTALLMENT,
+              ),
             },
           });
           createdCount += 1;
@@ -448,10 +533,21 @@ export default async function handler(
       template_id: templateId ?? null,
     });
   } catch (error) {
+    if (isGroupFinanceRequestError(error)) {
+      return groupApiError(res, error.status, error.message, {
+        code: error.code,
+        solution: error.solution,
+      });
+    }
     console.error("[groups][bulk][payment-plans]", error);
-    return groupApiError(res, 500, "No pudimos crear los planes de pago en lote.", {
-      code: "GROUP_PAYMENT_PLAN_ERROR",
-      solution: "Reintentá en unos segundos.",
-    });
+    return groupApiError(
+      res,
+      500,
+      "No pudimos crear los planes de pago en lote.",
+      {
+        code: "GROUP_PAYMENT_PLAN_ERROR",
+        solution: "Reintentá en unos segundos.",
+      },
+    );
   }
 }

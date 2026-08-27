@@ -11,6 +11,12 @@ import {
   toDistinctPositiveInts,
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
+import {
+  assertGroupPassengerDepartureCanChange,
+  GroupFinanceRequestError,
+  isGroupFinanceRequestError,
+  lockGroupPassenger,
+} from "@/lib/groups/groupFinanceMutationGuards";
 
 type BulkUpdateBody = {
   passengerIds?: unknown;
@@ -375,11 +381,60 @@ export default async function handler(
 
     await prisma.$transaction(async (tx) => {
       for (const passenger of passengers) {
+        await lockGroupPassenger(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          passengerId: passenger.id_travel_group_passenger,
+        });
+      }
+      const lockedPassengers = await tx.travelGroupPassenger.findMany({
+        where: {
+          id_agency: auth.id_agency,
+          travel_group_id: group.id_travel_group,
+          id_travel_group_passenger: { in: passengerIds },
+        },
+        select: {
+          id_travel_group_passenger: true,
+          status: true,
+          travel_group_departure_id: true,
+          metadata: true,
+        },
+      });
+      const lockedPassengerById = new Map(
+        lockedPassengers.map((passenger) => [
+          passenger.id_travel_group_passenger,
+          passenger,
+        ]),
+      );
+
+      for (const originalPassenger of passengers) {
+        const passenger = lockedPassengerById.get(
+          originalPassenger.id_travel_group_passenger,
+        );
+        if (!passenger) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_FINANCE_PASSENGER_CHANGED",
+            message: "Algún pasajero cambió mientras se procesaba la operación.",
+            solution: "Refrescá la grupal y volvé a intentarlo.",
+          });
+        }
         const data: Prisma.TravelGroupPassengerUncheckedUpdateInput = {};
         const targetDepartureId =
           departure !== undefined
             ? departure?.id_travel_group_departure ?? null
             : passenger.travel_group_departure_id ?? null;
+
+        if (
+          departure !== undefined &&
+          targetDepartureId !== passenger.travel_group_departure_id
+        ) {
+          await assertGroupPassengerDepartureCanChange(tx, {
+            agencyId: auth.id_agency,
+            groupId: group.id_travel_group,
+            passengerId: passenger.id_travel_group_passenger,
+          });
+        }
 
         if (nextStatus) {
           data.status = nextStatus;
@@ -466,6 +521,12 @@ export default async function handler(
       },
     });
   } catch (error) {
+    if (isGroupFinanceRequestError(error)) {
+      return groupApiError(res, error.status, error.message, {
+        code: error.code,
+        solution: error.solution,
+      });
+    }
     console.error("[groups][passengers][bulk-update]", error);
     return groupApiError(res, 500, "No pudimos actualizar los pasajeros.", {
       code: "GROUP_PASSENGER_UPDATE_ERROR",

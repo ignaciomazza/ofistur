@@ -11,9 +11,21 @@ import {
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
 import {
+  GROUP_CLIENT_PAYMENT_RECORD_TYPE,
+  groupClientPaymentRecordMetadata,
+  isGroupServiceAssignment,
+} from "@/lib/groups/clientPaymentRecordType";
+import {
   encodeInventoryServiceId,
   resolveInventoryEstimatedSaleUnitPrice,
 } from "@/lib/groups/inventoryServiceRefs";
+import {
+  assertGroupServiceHasNoFinancialReferences,
+  GroupFinanceRequestError,
+  isGroupFinanceRequestError,
+  lockGroupInventoryServiceIds,
+  lockGroupPassenger,
+} from "@/lib/groups/groupFinanceMutationGuards";
 
 function pickParam(value: string | string[] | undefined): string | null {
   if (!value) return null;
@@ -189,73 +201,79 @@ export default async function handler(
   }
   const passengerClientId = passenger.client_id;
 
-  const serviceRef = String(encodeInventoryServiceId(inventoryId));
-  const existingAssignments = await prisma.travelGroupClientPayment.findMany({
-    where: {
-      id_agency: auth.id_agency,
-      travel_group_id: group.id_travel_group,
-      service_ref: serviceRef,
-      status: { not: "CANCELADA" },
-    },
-    select: {
-      travel_group_passenger_id: true,
-    },
-  });
-  const assignedPassengerIds = new Set(
-    existingAssignments.map((item) => item.travel_group_passenger_id),
-  );
+  const encodedServiceId = encodeInventoryServiceId(inventoryId);
+  const serviceRef = String(encodedServiceId);
   if (req.method === "DELETE") {
-    if (!assignedPassengerIds.has(passenger.id_travel_group_passenger)) {
-      return groupApiError(
-        res,
-        409,
-        "Ese servicio no está asignado al pasajero indicado.",
-        {
-          code: "GROUP_INVENTORY_NOT_ASSIGNED",
-          solution: "Refrescá la pantalla y revisá las asignaciones.",
-        },
-      );
-    }
-
-    const passengerAssignments = await prisma.travelGroupClientPayment.findMany(
-      {
-        where: {
-          id_agency: auth.id_agency,
-          travel_group_id: group.id_travel_group,
-          travel_group_passenger_id: passenger.id_travel_group_passenger,
-          service_ref: serviceRef,
-          status: { not: "CANCELADA" },
-        },
-        select: {
-          id_travel_group_client_payment: true,
-          status: true,
-        },
-      },
-    );
-    if (
-      passengerAssignments.some(
-        (item) => String(item.status || "").toUpperCase() !== "PENDIENTE",
-      )
-    ) {
-      return groupApiError(
-        res,
-        409,
-        "No se puede anular una asignación con pagos ya cobrados.",
-        {
-          code: "GROUP_INVENTORY_ASSIGNMENT_PAID",
-          solution: "Revisá los cobros del pasajero antes de anular.",
-        },
-      );
-    }
-
     try {
       const result = await prisma.$transaction(async (tx) => {
+        await lockGroupPassenger(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          passengerId: passenger.id_travel_group_passenger,
+        });
+        await lockGroupInventoryServiceIds(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceIds: [encodedServiceId],
+        });
+        const rows = await tx.travelGroupClientPayment.findMany({
+          where: {
+            id_agency: auth.id_agency,
+            travel_group_id: group.id_travel_group,
+            service_ref: serviceRef,
+            status: { not: "CANCELADA" },
+          },
+          select: {
+            id_travel_group_client_payment: true,
+            travel_group_passenger_id: true,
+            status: true,
+            concept: true,
+            status_reason: true,
+            metadata: true,
+          },
+        });
+        const activeAssignments = rows.filter(isGroupServiceAssignment);
+        const passengerAssignments = activeAssignments.filter(
+          (item) =>
+            item.travel_group_passenger_id ===
+            passenger.id_travel_group_passenger,
+        );
+        if (passengerAssignments.length === 0) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_NOT_ASSIGNED",
+            message: "Ese servicio no está asignado al pasajero indicado.",
+            solution: "Refrescá la pantalla y revisá las asignaciones.",
+          });
+        }
+        await assertGroupServiceHasNoFinancialReferences(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceId: encodedServiceId,
+          passengerId: passenger.id_travel_group_passenger,
+        });
+        if (
+          passengerAssignments.some(
+            (item) => String(item.status || "").toUpperCase() !== "PENDIENTE",
+          )
+        ) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_ASSIGNMENT_PAID",
+            message: "No se puede anular una asignación con pagos ya cobrados.",
+            solution: "Revisá los cobros del pasajero antes de anular.",
+          });
+        }
+        const pendingAssignmentIds = passengerAssignments
+          .filter(
+            (item) => String(item.status || "").toUpperCase() === "PENDIENTE",
+          )
+          .map((item) => item.id_travel_group_client_payment);
         const cancelled = await tx.travelGroupClientPayment.updateMany({
           where: {
             id_agency: auth.id_agency,
             travel_group_id: group.id_travel_group,
-            travel_group_passenger_id: passenger.id_travel_group_passenger,
-            service_ref: serviceRef,
+            id_travel_group_client_payment: { in: pendingAssignmentIds },
             status: "PENDIENTE",
           },
           data: {
@@ -264,12 +282,29 @@ export default async function handler(
             updated_at: new Date(),
           },
         });
+        if (cancelled.count !== pendingAssignmentIds.length) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_ASSIGNMENT_CHANGED",
+            message: "La asignación cambió mientras intentabas anularla.",
+            solution: "Refrescá la grupal y volvé a intentarlo.",
+          });
+        }
+        const remainingPassengerCount = new Set(
+          activeAssignments
+            .filter(
+              (item) =>
+                item.travel_group_passenger_id !==
+                passenger.id_travel_group_passenger,
+            )
+            .map((item) => item.travel_group_passenger_id),
+        ).size;
         const updatedInventory = await tx.travelGroupInventory.update({
           where: {
             id_travel_group_inventory: inventory.id_travel_group_inventory,
           },
           data: {
-            assigned_qty: Math.max(assignedPassengerIds.size - 1, 0),
+            assigned_qty: remainingPassengerCount,
           },
         });
         return { cancelled, inventory: updatedInventory };
@@ -281,6 +316,12 @@ export default async function handler(
         assigned_qty: result.inventory.assigned_qty,
       });
     } catch (error) {
+      if (isGroupFinanceRequestError(error)) {
+        return groupApiError(res, error.status, error.message, {
+          code: error.code,
+          solution: error.solution,
+        });
+      }
       console.error("[groups][inventories][unassign]", error);
       return groupApiError(res, 500, "No pudimos anular la asignación.", {
         code: "GROUP_INVENTORY_UNASSIGN_ERROR",
@@ -290,63 +331,88 @@ export default async function handler(
   }
 
   if (req.method === "PATCH") {
-    if (!assignedPassengerIds.has(passenger.id_travel_group_passenger)) {
-      return groupApiError(
-        res,
-        409,
-        "Ese servicio no está asignado al pasajero indicado.",
-        {
-          code: "GROUP_INVENTORY_NOT_ASSIGNED",
-          solution: "Asigná el servicio antes de ajustar el valor de venta.",
-        },
-      );
-    }
-
-    const passengerAssignments = await prisma.travelGroupClientPayment.findMany(
-      {
-        where: {
-          id_agency: auth.id_agency,
-          travel_group_id: group.id_travel_group,
-          travel_group_passenger_id: passenger.id_travel_group_passenger,
-          service_ref: serviceRef,
-          status: { not: "CANCELADA" },
-        },
-        select: {
-          id_travel_group_client_payment: true,
-          status: true,
-        },
-      },
-    );
-    if (
-      passengerAssignments.some(
-        (item) => String(item.status || "").toUpperCase() !== "PENDIENTE",
-      )
-    ) {
-      return groupApiError(
-        res,
-        409,
-        "No se puede ajustar una asignación con pagos ya cobrados.",
-        {
-          code: "GROUP_INVENTORY_ASSIGNMENT_PAID",
-          solution: "Revisá los cobros del pasajero antes de ajustar.",
-        },
-      );
-    }
-
     try {
-      const updated = await prisma.travelGroupClientPayment.updateMany({
-        where: {
-          id_agency: auth.id_agency,
-          travel_group_id: group.id_travel_group,
-          travel_group_passenger_id: passenger.id_travel_group_passenger,
-          service_ref: serviceRef,
-          status: "PENDIENTE",
-        },
-        data: {
-          amount: new Prisma.Decimal((requestedSaleAmount ?? 0).toFixed(2)),
-          status_reason: "Valor de venta ajustado manualmente",
-          updated_at: new Date(),
-        },
+      const updated = await prisma.$transaction(async (tx) => {
+        await lockGroupPassenger(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          passengerId: passenger.id_travel_group_passenger,
+        });
+        await lockGroupInventoryServiceIds(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceIds: [encodedServiceId],
+        });
+        const rows = await tx.travelGroupClientPayment.findMany({
+          where: {
+            id_agency: auth.id_agency,
+            travel_group_id: group.id_travel_group,
+            travel_group_passenger_id: passenger.id_travel_group_passenger,
+            service_ref: serviceRef,
+            status: { not: "CANCELADA" },
+          },
+          select: {
+            id_travel_group_client_payment: true,
+            status: true,
+            concept: true,
+            status_reason: true,
+            metadata: true,
+          },
+        });
+        const passengerAssignments = rows.filter(isGroupServiceAssignment);
+        if (passengerAssignments.length === 0) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_NOT_ASSIGNED",
+            message: "Ese servicio no está asignado al pasajero indicado.",
+            solution: "Asigná el servicio antes de ajustar el valor de venta.",
+          });
+        }
+        await assertGroupServiceHasNoFinancialReferences(tx, {
+          agencyId: auth.id_agency,
+          groupId: group.id_travel_group,
+          serviceId: encodedServiceId,
+          passengerId: passenger.id_travel_group_passenger,
+        });
+        if (
+          passengerAssignments.some(
+            (item) => String(item.status || "").toUpperCase() !== "PENDIENTE",
+          )
+        ) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_ASSIGNMENT_PAID",
+            message:
+              "No se puede ajustar una asignación con pagos ya cobrados.",
+            solution: "Revisá los cobros del pasajero antes de ajustar.",
+          });
+        }
+        const ids = passengerAssignments.map(
+          (item) => item.id_travel_group_client_payment,
+        );
+        const result = await tx.travelGroupClientPayment.updateMany({
+          where: {
+            id_agency: auth.id_agency,
+            travel_group_id: group.id_travel_group,
+            id_travel_group_client_payment: { in: ids },
+            status: "PENDIENTE",
+            receipt_id: null,
+          },
+          data: {
+            amount: new Prisma.Decimal((requestedSaleAmount ?? 0).toFixed(2)),
+            status_reason: "Valor de venta ajustado manualmente",
+            updated_at: new Date(),
+          },
+        });
+        if (result.count !== ids.length) {
+          throw new GroupFinanceRequestError({
+            status: 409,
+            code: "GROUP_INVENTORY_ASSIGNMENT_CHANGED",
+            message: "La asignación cambió mientras intentabas ajustarla.",
+            solution: "Refrescá la grupal y volvé a intentarlo.",
+          });
+        }
+        return result;
       });
 
       return res.status(200).json({
@@ -355,6 +421,12 @@ export default async function handler(
         amount: requestedSaleAmount ?? 0,
       });
     } catch (error) {
+      if (isGroupFinanceRequestError(error)) {
+        return groupApiError(res, error.status, error.message, {
+          code: error.code,
+          solution: error.solution,
+        });
+      }
       console.error("[groups][inventories][assign][amount]", error);
       return groupApiError(
         res,
@@ -368,57 +440,81 @@ export default async function handler(
     }
   }
 
-  const saleUnitPrice = resolveInventoryEstimatedSaleUnitPrice(inventory);
-  if (
-    requestedSaleAmount === undefined &&
-    (saleUnitPrice == null || saleUnitPrice <= 0)
-  ) {
-    return groupApiError(
-      res,
-      400,
-      "El servicio no tiene venta unitaria estimada para asignar.",
-      {
-        code: "GROUP_INVENTORY_SALE_PRICE_REQUIRED",
-        solution: "Editá el servicio y cargá una venta unitaria estimada.",
-      },
-    );
-  }
-  const saleAmount = requestedSaleAmount ?? saleUnitPrice ?? 0;
-
-  if (assignedPassengerIds.has(passenger.id_travel_group_passenger)) {
-    return groupApiError(
-      res,
-      409,
-      "Ese servicio ya está asignado al pasajero activo.",
-      {
-        code: "GROUP_INVENTORY_ALREADY_ASSIGNED",
-        solution: "Seleccioná otro pasajero o revisá las cuotas existentes.",
-      },
-    );
-  }
-
-  const effectiveAssigned = Math.max(
-    inventory.assigned_qty,
-    assignedPassengerIds.size,
-  );
-  const availableQty = Math.max(
-    inventory.total_qty - effectiveAssigned - inventory.blocked_qty,
-    0,
-  );
-  if (availableQty <= 0) {
-    return groupApiError(
-      res,
-      409,
-      "No quedan cupos disponibles para asignar.",
-      {
-        code: "GROUP_INVENTORY_NO_AVAILABILITY",
-        solution: "Aumentá cupos o liberá asignaciones antes de continuar.",
-      },
-    );
-  }
-
   try {
     const result = await prisma.$transaction(async (tx) => {
+      await lockGroupPassenger(tx, {
+        agencyId: auth.id_agency,
+        groupId: group.id_travel_group,
+        passengerId: passenger.id_travel_group_passenger,
+      });
+      await lockGroupInventoryServiceIds(tx, {
+        agencyId: auth.id_agency,
+        groupId: group.id_travel_group,
+        serviceIds: [encodedServiceId],
+      });
+      const lockedInventory = await tx.travelGroupInventory.findUniqueOrThrow({
+        where: {
+          id_travel_group_inventory: inventory.id_travel_group_inventory,
+        },
+      });
+      const rows = await tx.travelGroupClientPayment.findMany({
+        where: {
+          id_agency: auth.id_agency,
+          travel_group_id: group.id_travel_group,
+          service_ref: serviceRef,
+          status: { not: "CANCELADA" },
+        },
+        select: {
+          travel_group_passenger_id: true,
+          concept: true,
+          status_reason: true,
+          metadata: true,
+        },
+      });
+      const activeAssignments = rows.filter(isGroupServiceAssignment);
+      const assignedPassengerIds = new Set(
+        activeAssignments.map((item) => item.travel_group_passenger_id),
+      );
+      if (assignedPassengerIds.has(passenger.id_travel_group_passenger)) {
+        throw new GroupFinanceRequestError({
+          status: 409,
+          code: "GROUP_INVENTORY_ALREADY_ASSIGNED",
+          message: "Ese servicio ya está asignado al pasajero activo.",
+          solution: "Seleccioná otro pasajero o revisá las asignaciones.",
+        });
+      }
+      const effectiveAssigned = Math.max(
+        lockedInventory.assigned_qty,
+        assignedPassengerIds.size,
+      );
+      const availableQty = Math.max(
+        lockedInventory.total_qty -
+          effectiveAssigned -
+          lockedInventory.blocked_qty,
+        0,
+      );
+      if (availableQty <= 0) {
+        throw new GroupFinanceRequestError({
+          status: 409,
+          code: "GROUP_INVENTORY_NO_AVAILABILITY",
+          message: "No quedan cupos disponibles para asignar.",
+          solution: "Aumentá cupos o liberá asignaciones antes de continuar.",
+        });
+      }
+      const saleUnitPrice =
+        resolveInventoryEstimatedSaleUnitPrice(lockedInventory);
+      if (
+        requestedSaleAmount === undefined &&
+        (saleUnitPrice == null || saleUnitPrice <= 0)
+      ) {
+        throw new GroupFinanceRequestError({
+          status: 400,
+          code: "GROUP_INVENTORY_SALE_PRICE_REQUIRED",
+          message: "El servicio no tiene venta unitaria estimada para asignar.",
+          solution: "Editá el servicio y cargá una venta unitaria estimada.",
+        });
+      }
+      const saleAmount = requestedSaleAmount ?? saleUnitPrice ?? 0;
       const agencyPaymentId = await getNextAgencyCounter(
         tx,
         auth.id_agency,
@@ -432,20 +528,24 @@ export default async function handler(
           travel_group_departure_id: passenger.travel_group_departure_id,
           travel_group_passenger_id: passenger.id_travel_group_passenger,
           client_id: passengerClientId,
-          concept: `Asignación: ${inventory.label}`.slice(0, 250),
+          concept: `Asignación: ${lockedInventory.label}`.slice(0, 250),
           service_ref: serviceRef,
           amount: new Prisma.Decimal(saleAmount.toFixed(2)),
           currency:
-            String(inventory.currency || "ARS")
+            String(lockedInventory.currency || "ARS")
               .trim()
               .toUpperCase() || "ARS",
           due_date: new Date(),
           status: "PENDIENTE",
+          metadata: groupClientPaymentRecordMetadata(
+            GROUP_CLIENT_PAYMENT_RECORD_TYPE.SERVICE_ASSIGNMENT,
+            { inventory_id: lockedInventory.id_travel_group_inventory },
+          ),
         },
       });
       const updatedInventory = await tx.travelGroupInventory.update({
         where: {
-          id_travel_group_inventory: inventory.id_travel_group_inventory,
+          id_travel_group_inventory: lockedInventory.id_travel_group_inventory,
         },
         data: {
           assigned_qty: assignedPassengerIds.size + 1,
@@ -460,6 +560,12 @@ export default async function handler(
       assigned_qty: result.inventory.assigned_qty,
     });
   } catch (error) {
+    if (isGroupFinanceRequestError(error)) {
+      return groupApiError(res, error.status, error.message, {
+        code: error.code,
+        solution: error.solution,
+      });
+    }
     console.error("[groups][inventories][assign]", error);
     return groupApiError(res, 500, "No pudimos asignar el servicio.", {
       code: "GROUP_INVENTORY_ASSIGN_ERROR",

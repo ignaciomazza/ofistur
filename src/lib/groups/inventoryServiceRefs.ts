@@ -179,13 +179,17 @@ export function mapInventoryToServiceLike(
     bookingId: number;
     fallbackCurrency?: string | null;
     fallbackDestination?: string | null;
+    salePriceOverride?: unknown;
+    currencyOverride?: string | null;
   },
 ): Record<string, unknown> {
   const id = encodeInventoryServiceId(row.id_travel_group_inventory);
   const currency = normalizeCurrencyCode(
-    row.currency || args.fallbackCurrency || "ARS",
+    args.currencyOverride || row.currency || args.fallbackCurrency || "ARS",
   );
-  const salePrice = resolveInventorySaleUnitPrice(row);
+  const salePrice =
+    toNonNegativeMoney(args.salePriceOverride) ??
+    resolveInventorySaleUnitPrice(row);
   const costPrice = resolveInventoryCostTotal(row);
   const type =
     String(row.service_type || row.inventory_type || "GRUPAL").trim() ||

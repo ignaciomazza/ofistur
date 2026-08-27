@@ -72,7 +72,9 @@ type InventoryFinancialMeta = {
   transferFeePct?: unknown;
 };
 
-function parseInventoryMeta(note: string | null | undefined): InventoryFinancialMeta | null {
+function parseInventoryMeta(
+  note: string | null | undefined,
+): InventoryFinancialMeta | null {
   const raw = String(note || "");
   const start = raw.indexOf(INVENTORY_META_PREFIX);
   const end = raw.indexOf(INVENTORY_META_SUFFIX);
@@ -140,6 +142,11 @@ export type GroupFinanceSummaryInvoice = {
   status?: string | null;
 };
 
+export type GroupFinanceSummaryPassengerSaleOverride = {
+  travel_group_passenger_id: number;
+  saleTotals: Record<string, number>;
+};
+
 export type GroupFinanceSummaryCurrencyTotal = {
   currency: string;
   assignedSale: number;
@@ -148,6 +155,7 @@ export type GroupFinanceSummaryCurrencyTotal = {
   passengerDebt: number;
   passengerCredit: number;
   assignedCost: number;
+  operatorCost: number;
   estimatedTaxes: number;
   transferFees: number;
   adjustments: number;
@@ -187,6 +195,7 @@ export type BuildGroupFinanceSummaryArgs = {
   operatorPayments: GroupFinanceSummaryOperatorPayment[];
   operatorDues: GroupFinanceSummaryOperatorDue[];
   invoices: GroupFinanceSummaryInvoice[];
+  passengerSaleOverrides?: GroupFinanceSummaryPassengerSaleOverride[];
   transferFeePct?: number | string | null;
   billingAdjustments?: BillingAdjustmentConfig[] | null;
 };
@@ -200,6 +209,7 @@ type InventoryMetrics = {
   unitCost: number;
   saleUnit: number;
   saleTotal: number;
+  costTotal: number;
   taxesTotal: number;
   transferFeeRate: number;
 };
@@ -223,6 +233,7 @@ function makeMutableCurrencyTotal(currency: string): MutableCurrencyTotal {
     assignedSale: 0,
     collected: 0,
     assignedCost: 0,
+    operatorCost: 0,
     estimatedTaxes: 0,
     transferFees: 0,
     adjustments: 0,
@@ -247,7 +258,10 @@ function addCurrencyAmount(
 }
 
 function pct(numerator: number, denominator: number): number | null {
-  if (!Number.isFinite(denominator) || Math.abs(denominator) <= MONEY_TOLERANCE) {
+  if (
+    !Number.isFinite(denominator) ||
+    Math.abs(denominator) <= MONEY_TOLERANCE
+  ) {
     return null;
   }
   return round2((numerator / denominator) * 100);
@@ -266,10 +280,11 @@ function buildInventoryMetrics(
     positiveMoneyOrNull(meta?.costTotalPrice) ??
     round2(storedUnitCost * Math.max(totalQty, 1));
   const unitCost = totalQty > 0 ? round2(costTotal / totalQty) : storedUnitCost;
-  const saleUnit = resolveInventoryEstimatedSaleUnitPrice({
-    total_qty: inventory.total_qty,
-    note: inventory.note ?? null,
-  }) ?? 0;
+  const saleUnit =
+    resolveInventoryEstimatedSaleUnitPrice({
+      total_qty: inventory.total_qty,
+      note: inventory.note ?? null,
+    }) ?? 0;
   const saleTotalFromMeta = positiveMoneyOrNull(meta?.saleTotalPrice);
   const saleTotal =
     String(meta?.pricingMode || "")
@@ -294,6 +309,7 @@ function buildInventoryMetrics(
     unitCost,
     saleUnit,
     saleTotal,
+    costTotal,
     taxesTotal,
     transferFeeRate: normalizeFeeRate(
       meta?.transferFeePct as number | string | null | undefined,
@@ -306,9 +322,13 @@ function isCancelledStatus(status: unknown): boolean {
   const normalized = String(status || "")
     .trim()
     .toUpperCase();
-  return ["CANCELADA", "CANCELADO", "CANCELLED", "CANCELED", "ANULADA"].includes(
-    normalized,
-  );
+  return [
+    "CANCELADA",
+    "CANCELADO",
+    "CANCELLED",
+    "CANCELED",
+    "ANULADA",
+  ].includes(normalized);
 }
 
 function sortedAssignments(
@@ -329,16 +349,26 @@ export function buildGroupFinanceSummary(
   const totals = new Map<string, MutableCurrencyTotal>();
   const serviceRows = new Map<string, GroupFinanceSummaryServiceRow>();
   const inventoryById = new Map<number, InventoryMetrics>();
+  const assignedSaleByPassengerCurrency = new Map<string, number>();
+  const transferFeesByPassengerCurrency = new Map<string, number>();
 
   for (const inventory of args.inventories) {
     const metrics = buildInventoryMetrics(inventory, transferFeeRate);
     inventoryById.set(metrics.inventoryId, metrics);
+    addCurrencyAmount(
+      totals,
+      metrics.currency,
+      "operatorCost",
+      metrics.costTotal,
+    );
   }
 
   const seenAssignmentKeys = new Set<string>();
   for (const assignment of sortedAssignments(args.assignments)) {
     if (isCancelledStatus(assignment.status)) continue;
-    const inventoryId = decodeInventoryServiceId(Number(assignment.service_ref));
+    const inventoryId = decodeInventoryServiceId(
+      Number(assignment.service_ref),
+    );
     if (!inventoryId) continue;
     const inventory = inventoryById.get(inventoryId);
     if (!inventory) continue;
@@ -366,6 +396,21 @@ export function buildGroupFinanceSummary(
     );
 
     addCurrencyAmount(totals, assignmentCurrency, "assignedSale", assignedSale);
+    const passengerCurrencyKey = `${assignment.travel_group_passenger_id}:${assignmentCurrency}`;
+    assignedSaleByPassengerCurrency.set(
+      passengerCurrencyKey,
+      round2(
+        (assignedSaleByPassengerCurrency.get(passengerCurrencyKey) ?? 0) +
+          assignedSale,
+      ),
+    );
+    transferFeesByPassengerCurrency.set(
+      passengerCurrencyKey,
+      round2(
+        (transferFeesByPassengerCurrency.get(passengerCurrencyKey) ?? 0) +
+          transferFees,
+      ),
+    );
     addCurrencyAmount(totals, assignmentCurrency, "assignedCost", assignedCost);
     addCurrencyAmount(
       totals,
@@ -376,19 +421,18 @@ export function buildGroupFinanceSummary(
     addCurrencyAmount(totals, assignmentCurrency, "transferFees", transferFees);
 
     const serviceKey = `${inventoryId}:${assignmentCurrency}`;
-    const serviceRow =
-      serviceRows.get(serviceKey) ?? {
-        inventoryId,
-        serviceRef: inventory.serviceRef,
-        label: inventory.label,
-        currency: assignmentCurrency,
-        assignedCount: 0,
-        assignedSale: 0,
-        assignedCost: 0,
-        estimatedTaxes: 0,
-        transferFees: 0,
-        estimatedMargin: 0,
-      };
+    const serviceRow = serviceRows.get(serviceKey) ?? {
+      inventoryId,
+      serviceRef: inventory.serviceRef,
+      label: inventory.label,
+      currency: assignmentCurrency,
+      assignedCount: 0,
+      assignedSale: 0,
+      assignedCost: 0,
+      estimatedTaxes: 0,
+      transferFees: 0,
+      estimatedMargin: 0,
+    };
     serviceRow.assignedCount += 1;
     serviceRow.assignedSale = round2(serviceRow.assignedSale + assignedSale);
     serviceRow.assignedCost = round2(serviceRow.assignedCost + assignedCost);
@@ -400,6 +444,39 @@ export function buildGroupFinanceSummary(
       serviceRow.estimatedMargin + estimatedMargin,
     );
     serviceRows.set(serviceKey, serviceRow);
+  }
+
+  for (const override of args.passengerSaleOverrides ?? []) {
+    const passengerPrefix = `${override.travel_group_passenger_id}:`;
+    const currencies = new Set(
+      Object.keys(override.saleTotals).map(normalizeCurrencyCode),
+    );
+    for (const key of assignedSaleByPassengerCurrency.keys()) {
+      if (!key.startsWith(passengerPrefix)) continue;
+      currencies.add(key.slice(passengerPrefix.length));
+    }
+    for (const currency of currencies) {
+      const automaticSale =
+        assignedSaleByPassengerCurrency.get(
+          `${override.travel_group_passenger_id}:${currency}`,
+        ) ?? 0;
+      const overriddenSale = round2(
+        Math.max(0, toAmountNumber(override.saleTotals[currency])),
+      );
+      const saleDelta = round2(overriddenSale - automaticSale);
+      const automaticTransferFees =
+        transferFeesByPassengerCurrency.get(
+          `${override.travel_group_passenger_id}:${currency}`,
+        ) ?? 0;
+      const overriddenTransferFees = round2(overriddenSale * transferFeeRate);
+      addCurrencyAmount(totals, currency, "assignedSale", saleDelta);
+      addCurrencyAmount(
+        totals,
+        currency,
+        "transferFees",
+        round2(overriddenTransferFees - automaticTransferFees),
+      );
+    }
   }
 
   const collectedByCurrency: Record<string, number> = {};
@@ -457,20 +534,6 @@ export function buildGroupFinanceSummary(
     }
   }
 
-  for (const due of args.operatorDues) {
-    if (isCancelledStatus(due.status)) continue;
-    const status = String(due.status || "")
-      .trim()
-      .toUpperCase();
-    if (status === "PAGADA" || status === "PAGO") continue;
-    addCurrencyAmount(
-      totals,
-      due.currency || "ARS",
-      "operatorDebt",
-      toAmountNumber(due.amount),
-    );
-  }
-
   for (const invoice of args.invoices) {
     if (isCancelledStatus(invoice.status)) continue;
     addCurrencyAmount(
@@ -507,9 +570,12 @@ export function buildGroupFinanceSummary(
           total.transferFees -
           total.adjustments,
       );
+      const operatorDebt = round2(
+        Math.max(0, total.operatorCost - total.operatorPaid),
+      );
       const operatorReference = Math.max(
-        total.assignedCost,
-        total.operatorPaid + total.operatorDebt,
+        total.operatorCost,
+        total.operatorPaid,
       );
       return {
         ...total,
@@ -519,13 +585,14 @@ export function buildGroupFinanceSummary(
         passengerDebt: round2(Math.max(0, passengerBalance)),
         passengerCredit: round2(Math.max(0, -passengerBalance)),
         assignedCost: round2(total.assignedCost),
+        operatorCost: round2(total.operatorCost),
         estimatedTaxes: round2(total.estimatedTaxes),
         transferFees: round2(total.transferFees),
         adjustments: round2(total.adjustments),
         taxesAndFees,
         estimatedNetCommission,
         operatorPaid: round2(total.operatorPaid),
-        operatorDebt: round2(total.operatorDebt),
+        operatorDebt,
         invoiced: round2(total.invoiced),
         invoicePending,
         collectionPct: pct(total.collected, total.assignedSale),
@@ -538,6 +605,7 @@ export function buildGroupFinanceSummary(
         row.assignedSale,
         row.collected,
         row.assignedCost,
+        row.operatorCost,
         row.operatorPaid,
         row.operatorDebt,
         row.invoiced,

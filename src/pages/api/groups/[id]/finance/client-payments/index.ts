@@ -4,6 +4,11 @@ import prisma from "@/lib/prisma";
 import { getNextAgencyCounter } from "@/lib/agencyCounters";
 import { groupApiError } from "@/lib/groups/apiErrors";
 import {
+  GROUP_CLIENT_PAYMENT_RECORD_TYPE,
+  groupClientPaymentRecordMetadata,
+  isGroupPaymentInstallment,
+} from "@/lib/groups/clientPaymentRecordType";
+import {
   deriveClientPaymentStatus,
   isMissingGroupFinanceTableError,
   normalizeCurrencyCode,
@@ -30,6 +35,7 @@ type PaymentRow = {
   created_at: Date;
   concept: string | null;
   service_ref: string | null;
+  metadata: unknown;
   booking_id: number | null;
   agency_client_id: number | null;
   first_name: string | null;
@@ -37,7 +43,8 @@ type PaymentRow = {
 };
 
 function buildClientPaymentResponse(row: PaymentRow) {
-  const dueDate = row.due_date instanceof Date ? row.due_date : new Date(row.due_date);
+  const dueDate =
+    row.due_date instanceof Date ? row.due_date : new Date(row.due_date);
   const derived = deriveClientPaymentStatus(row.status, dueDate);
   const contextId = row.booking_id ?? 0;
   return {
@@ -69,11 +76,16 @@ function buildClientPaymentResponse(row: PaymentRow) {
   };
 }
 
-function splitAmounts(total: Prisma.Decimal, installments: number): Prisma.Decimal[] {
+function splitAmounts(
+  total: Prisma.Decimal,
+  installments: number,
+): Prisma.Decimal[] {
   const normalizedInstallments = Math.max(1, Math.trunc(installments));
   const totalCents = total.mul(100);
   const base = totalCents.div(normalizedInstallments).floor();
-  const remainder = totalCents.minus(base.mul(normalizedInstallments)).toNumber();
+  const remainder = totalCents
+    .minus(base.mul(normalizedInstallments))
+    .toNumber();
   return Array.from({ length: normalizedInstallments }, (_, idx) => {
     const cents = base.plus(idx < remainder ? 1 : 0);
     return cents.div(100).toDecimalPlaces(2);
@@ -85,7 +97,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   if (!ctx) return;
 
   const passengerId = parseOptionalPositiveInt(
-    Array.isArray(req.query.passengerId) ? req.query.passengerId[0] : req.query.passengerId,
+    Array.isArray(req.query.passengerId)
+      ? req.query.passengerId[0]
+      : req.query.passengerId,
   );
   const scope = parseScopeFilter(
     Array.isArray(req.query.scope) ? req.query.scope[0] : req.query.scope,
@@ -107,7 +121,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   if (scope.departureId === null) {
     filters.push(Prisma.sql`p."travel_group_departure_id" IS NULL`);
   } else if (typeof scope.departureId === "number") {
-    filters.push(Prisma.sql`p."travel_group_departure_id" = ${scope.departureId}`);
+    filters.push(
+      Prisma.sql`p."travel_group_departure_id" = ${scope.departureId}`,
+    );
   }
 
   const whereSql = Prisma.join(filters, " AND ");
@@ -128,6 +144,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
         p."created_at",
         p."concept",
         p."service_ref",
+        p."metadata",
         tp."booking_id",
         c."agency_client_id",
         c."first_name",
@@ -143,7 +160,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
 
     return res.status(200).json({
       success: true,
-      payments: rows.map(buildClientPaymentResponse),
+      payments: rows
+        .filter(isGroupPaymentInstallment)
+        .map(buildClientPaymentResponse),
     });
   } catch (error) {
     if (isMissingGroupFinanceTableError(error)) {
@@ -239,9 +258,14 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
     );
   }
   if (parsedDueDates.length !== rawDueDates.length) {
-    return groupApiError(res, 400, "Una o más fechas de vencimiento son inválidas.", {
-      code: "GROUP_FINANCE_DUE_DATES_INVALID",
-    });
+    return groupApiError(
+      res,
+      400,
+      "Una o más fechas de vencimiento son inválidas.",
+      {
+        code: "GROUP_FINANCE_DUE_DATES_INVALID",
+      },
+    );
   }
 
   const currency = normalizeCurrencyCode(body.currency);
@@ -250,13 +274,17 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       ? body.concept.trim().slice(0, 250)
       : null;
   const serviceRef =
-    body.serviceId === undefined || body.serviceId === null || body.serviceId === ""
+    body.serviceId === undefined ||
+    body.serviceId === null ||
+    body.serviceId === ""
       ? null
       : String(body.serviceId);
 
   const installmentCount = Math.max(
     1,
-    Number.isFinite(Number(body.count)) ? Number(body.count) : parsedDueDates.length,
+    Number.isFinite(Number(body.count))
+      ? Number(body.count)
+      : parsedDueDates.length,
   );
   const hasAmounts = Array.isArray(body.amounts);
 
@@ -274,9 +302,14 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       );
     }
     if (amounts.some((item) => item.lte(0))) {
-      return groupApiError(res, 400, "Todos los montos deben ser mayores a cero.", {
-        code: "GROUP_FINANCE_AMOUNTS_INVALID",
-      });
+      return groupApiError(
+        res,
+        400,
+        "Todos los montos deben ser mayores a cero.",
+        {
+          code: "GROUP_FINANCE_AMOUNTS_INVALID",
+        },
+      );
     }
     amountsPerInstallment = amounts;
   } else {
@@ -300,6 +333,9 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
 
   const createdRows = await prisma.$transaction(async (tx) => {
     const rows: PaymentRow[] = [];
+    const metadata = groupClientPaymentRecordMetadata(
+      GROUP_CLIENT_PAYMENT_RECORD_TYPE.PAYMENT_INSTALLMENT,
+    );
     for (let idx = 0; idx < parsedDueDates.length; idx += 1) {
       const agencyPaymentId = await getNextAgencyCounter(
         tx,
@@ -320,6 +356,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           "currency",
           "due_date",
           "status",
+          "metadata",
           "updated_at"
         ) VALUES (
           ${agencyPaymentId},
@@ -334,6 +371,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           ${currency},
           ${parsedDueDates[idx]},
           ${"PENDIENTE"},
+          ${metadata}::jsonb,
           NOW()
         )
         RETURNING
@@ -351,6 +389,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
           "created_at",
           "concept",
           "service_ref",
+          "metadata",
           NULL::INTEGER AS "booking_id",
           NULL::INTEGER AS "agency_client_id",
           NULL::TEXT AS "first_name",
@@ -385,7 +424,10 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   });
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse,
+) {
   if (req.method === "GET") return handleGet(req, res);
   if (req.method === "POST") return handlePost(req, res);
   res.setHeader("Allow", ["GET", "POST"]);

@@ -15,6 +15,10 @@ import {
 import { readGroupReceiptPaymentsFromMetadata } from "@/lib/groups/groupReceiptMetadata";
 import { computePassengerPendingValue } from "@/lib/groups/passengerPending";
 import { readPassengerSaleConfig } from "@/lib/groups/passengerSaleTotals";
+import {
+  isGroupPaymentInstallment,
+  isGroupServiceAssignment,
+} from "@/lib/groups/clientPaymentRecordType";
 
 function pickParam(value: string | string[] | undefined): string | null {
   if (!value) return null;
@@ -188,21 +192,32 @@ export default async function handler(
     >();
     if (passengerScopeIds.length > 0) {
       try {
-        const pendingAgg = await prisma.travelGroupClientPayment.groupBy({
-          by: ["travel_group_passenger_id"],
+        const pendingRows = await prisma.travelGroupClientPayment.findMany({
           where: {
             id_agency: auth.id_agency,
             travel_group_id: group.id_travel_group,
             travel_group_passenger_id: { in: passengerScopeIds },
             status: "PENDIENTE",
           },
-          _sum: { amount: true },
-          _count: { _all: true },
+          select: {
+            travel_group_passenger_id: true,
+            amount: true,
+            concept: true,
+            status_reason: true,
+            metadata: true,
+          },
         });
-        for (const row of pendingAgg) {
+        for (const row of pendingRows.filter(isGroupPaymentInstallment)) {
+          const previous = pendingByPassengerId.get(
+            row.travel_group_passenger_id,
+          ) ?? { amount: "0", count: 0 };
+          const amount = new Prisma.Decimal(previous.amount)
+            .plus(row.amount)
+            .toDecimalPlaces(2)
+            .toString();
           pendingByPassengerId.set(row.travel_group_passenger_id, {
-            amount: row._sum.amount?.toString() ?? "0",
-            count: row._count._all ?? 0,
+            amount,
+            count: previous.count + 1,
           });
         }
       } catch (error) {
@@ -274,9 +289,12 @@ export default async function handler(
           service_ref: true,
           amount: true,
           currency: true,
+          concept: true,
+          status_reason: true,
+          metadata: true,
         },
       });
-      for (const row of assignmentRows) {
+      for (const row of assignmentRows.filter(isGroupServiceAssignment)) {
         const inventoryId = decodeInventoryServiceId(Number(row.service_ref));
         if (!inventoryId || !inventorySaleById.has(inventoryId)) continue;
 

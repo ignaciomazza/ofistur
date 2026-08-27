@@ -13,12 +13,11 @@ import {
   toAmountNumber,
   toDecimal,
 } from "@/lib/groups/financeShared";
-import { validateGroupReceiptDebt } from "@/lib/groups/groupReceiptDebtValidation";
+import { validateGroupReceiptDebtForPassenger } from "@/lib/groups/groupReceiptDebtContext";
 import {
-  decodeInventoryServiceId,
-  encodeInventoryServiceId,
-  resolveInventorySaleUnitPrice,
-} from "@/lib/groups/inventoryServiceRefs";
+  GroupFinanceRequestError,
+  isGroupFinanceRequestError,
+} from "@/lib/groups/groupFinanceMutationGuards";
 import { hasSchemaColumn } from "@/lib/schemaColumns";
 import {
   normalizeGroupReceiptPdfItems,
@@ -61,7 +60,9 @@ type ReceiptRow = {
 
 function toIsoDate(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
+  return Number.isFinite(date.getTime())
+    ? date.toISOString()
+    : new Date().toISOString();
 }
 
 function buildReceiptResponse(
@@ -70,7 +71,10 @@ function buildReceiptResponse(
 ) {
   const numericAgencyId = row.agency_travel_group_receipt_id;
   const fallbackNumber = row.id_travel_group_receipt;
-  const receiptNumber = String(numericAgencyId ?? fallbackNumber).padStart(6, "0");
+  const receiptNumber = String(numericAgencyId ?? fallbackNumber).padStart(
+    6,
+    "0",
+  );
   const contextId = row.booking_id ?? 0;
   const verificationState = resolveGroupReceiptVerificationState({
     hasVerificationColumns,
@@ -95,9 +99,12 @@ function buildReceiptResponse(
     currency: row.currency,
     payment_method: row.payment_method,
     payment_fee_amount:
-      row.payment_fee_amount == null ? null : toAmountNumber(row.payment_fee_amount),
+      row.payment_fee_amount == null
+        ? null
+        : toAmountNumber(row.payment_fee_amount),
     account: row.account,
-    base_amount: row.base_amount == null ? null : toAmountNumber(row.base_amount),
+    base_amount:
+      row.base_amount == null ? null : toAmountNumber(row.base_amount),
     base_currency: row.base_currency,
     counter_amount:
       row.counter_amount == null ? null : toAmountNumber(row.counter_amount),
@@ -135,7 +142,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   if (!ctx) return;
 
   const passengerId = parseOptionalPositiveInt(
-    Array.isArray(req.query.passengerId) ? req.query.passengerId[0] : req.query.passengerId,
+    Array.isArray(req.query.passengerId)
+      ? req.query.passengerId[0]
+      : req.query.passengerId,
   );
   const scope = parseScopeFilter(
     Array.isArray(req.query.scope) ? req.query.scope[0] : req.query.scope,
@@ -156,7 +165,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   if (scope.departureId === null) {
     filters.push(Prisma.sql`r."travel_group_departure_id" IS NULL`);
   } else if (typeof scope.departureId === "number") {
-    filters.push(Prisma.sql`r."travel_group_departure_id" = ${scope.departureId}`);
+    filters.push(
+      Prisma.sql`r."travel_group_departure_id" = ${scope.departureId}`,
+    );
   }
   const whereSql = Prisma.join(filters, " AND ");
 
@@ -216,7 +227,9 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
 
     return res.status(200).json({
       success: true,
-      receipts: rows.map((row) => buildReceiptResponse(row, hasVerificationColumns)),
+      receipts: rows.map((row) =>
+        buildReceiptResponse(row, hasVerificationColumns),
+      ),
     });
   } catch (error) {
     if (isMissingGroupFinanceTableError(error)) {
@@ -287,6 +300,7 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       travel_group_departure_id: true,
       client_id: true,
       booking_id: true,
+      metadata: true,
     },
   });
   if (!passenger) {
@@ -301,9 +315,14 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
 
   const amount = toDecimal(Number(body.amount)).toDecimalPlaces(2);
   if (amount.lte(0)) {
-    return groupApiError(res, 400, "El monto del recibo debe ser mayor a cero.", {
-      code: "GROUP_FINANCE_AMOUNT_INVALID",
-    });
+    return groupApiError(
+      res,
+      400,
+      "El monto del recibo debe ser mayor a cero.",
+      {
+        code: "GROUP_FINANCE_AMOUNT_INVALID",
+      },
+    );
   }
 
   const issueDate = parseDateInput(body.issue_date) ?? new Date();
@@ -332,7 +351,9 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
       : amountCurrency;
 
   const baseAmount =
-    body.base_amount === null || body.base_amount === undefined || body.base_amount === ""
+    body.base_amount === null ||
+    body.base_amount === undefined ||
+    body.base_amount === ""
       ? null
       : toDecimal(Number(body.base_amount)).toDecimalPlaces(2);
   const baseCurrency =
@@ -399,142 +420,58 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   }
 
   let finalServiceIds = Array.from(new Set(serviceIds));
-  if (finalServiceIds.length > 0) {
-    const inventoryServiceByEncoded = new Map<number, number>();
-    const regularServiceIds: number[] = [];
-    for (const serviceId of finalServiceIds) {
-      const inventoryId = decodeInventoryServiceId(serviceId);
-      if (inventoryId) {
-        inventoryServiceByEncoded.set(serviceId, inventoryId);
-      } else {
-        regularServiceIds.push(serviceId);
-      }
-    }
-
-    const inventoryIds = Array.from(new Set(inventoryServiceByEncoded.values()));
-    const [regularServices, inventoryRows, existingReceipts] = await Promise.all([
-      regularServiceIds.length > 0
-        ? prisma.service.findMany({
-            where: {
-              id_agency: ctx.auth.id_agency,
-              id_service: { in: regularServiceIds },
-            },
-            select: {
-              id_service: true,
-              currency: true,
-              sale_price: true,
-              card_interest: true,
-              taxableCardInterest: true,
-              vatOnCardInterest: true,
-            },
-          })
-        : Promise.resolve([]),
-      inventoryIds.length > 0
-        ? prisma.travelGroupInventory.findMany({
-            where: {
-              id_agency: ctx.auth.id_agency,
-              travel_group_id: ctx.group.id_travel_group,
-              id_travel_group_inventory: { in: inventoryIds },
-              ...(passenger.travel_group_departure_id == null
-                ? { travel_group_departure_id: null }
-                : {
-                    OR: [
-                      { travel_group_departure_id: null },
-                      {
-                        travel_group_departure_id:
-                          passenger.travel_group_departure_id,
-                      },
-                    ],
-                  }),
-            },
-            select: {
-              id_travel_group_inventory: true,
-              currency: true,
-              unit_cost: true,
-              total_qty: true,
-              note: true,
-            },
-          })
-        : Promise.resolve([]),
-      prisma.travelGroupReceipt.findMany({
-        where: {
-          id_agency: ctx.auth.id_agency,
-          travel_group_id: ctx.group.id_travel_group,
-          travel_group_passenger_id: passenger.id_travel_group_passenger,
-        },
-        select: {
-          service_refs: true,
-          amount: true,
-          amount_currency: true,
-          payment_fee_amount: true,
-          base_amount: true,
-          base_currency: true,
-          metadata: true,
-        },
-      }),
-    ]);
-
-    const normalizedRegularServices = regularServices.map((row) => ({
-      id_service: row.id_service,
-      currency: row.currency,
-      sale_price: toAmountNumber(row.sale_price),
-      card_interest: toAmountNumber(row.card_interest),
-      taxableCardInterest: toAmountNumber(row.taxableCardInterest),
-      vatOnCardInterest: toAmountNumber(row.vatOnCardInterest),
-    }));
-
-    const inventoryServices = inventoryRows.map((row) => ({
-      id_service: encodeInventoryServiceId(row.id_travel_group_inventory),
-      currency: row.currency,
-      sale_price: resolveInventorySaleUnitPrice(row),
-      card_interest: 0,
-      taxableCardInterest: 0,
-      vatOnCardInterest: 0,
-    }));
-
-    const validation = validateGroupReceiptDebt({
-      selectedServiceIds: finalServiceIds,
-      services: [...normalizedRegularServices, ...inventoryServices],
-      existingReceipts: existingReceipts.map((receipt) => ({
-        ...receipt,
-        payments: readGroupReceiptPaymentsFromMetadata(receipt.metadata),
-      })),
-      currentReceipt: {
-        amount: toAmountNumber(amount),
-        amountCurrency,
-        paymentFeeAmount: paymentFeeAmount ? toAmountNumber(paymentFeeAmount) : 0,
-        baseAmount: baseAmount ? toAmountNumber(baseAmount) : null,
-        baseCurrency,
-        payments: normalizedPayments,
-      },
-    });
-    if (!validation.ok) {
-      return groupApiError(res, validation.status, validation.message, {
-        code: validation.code,
-      });
-    }
-    finalServiceIds = validation.normalizedServiceIds;
-  }
 
   const metadata = withGroupReceiptPdfItemsInMetadata(
     withGroupReceiptPaymentsInMetadata({}, normalizedPayments),
     pdfItems,
   );
-  const [hasVerificationStatus, hasVerifiedAt, hasVerifiedBy] = await Promise.all([
-    hasSchemaColumn("TravelGroupReceipt", "verification_status"),
-    hasSchemaColumn("TravelGroupReceipt", "verified_at"),
-    hasSchemaColumn("TravelGroupReceipt", "verified_by"),
-  ]);
+  const [hasVerificationStatus, hasVerifiedAt, hasVerifiedBy] =
+    await Promise.all([
+      hasSchemaColumn("TravelGroupReceipt", "verification_status"),
+      hasSchemaColumn("TravelGroupReceipt", "verified_at"),
+      hasSchemaColumn("TravelGroupReceipt", "verified_by"),
+    ]);
   const hasVerificationColumns =
     hasVerificationStatus && hasVerifiedAt && hasVerifiedBy;
 
-  const created = await prisma.$transaction(async (tx) => {
-    const agencyReceiptId = await getNextAgencyCounter(
-      tx,
-      ctx.auth.id_agency,
-      "travel_group_receipt",
-    );
-    const rows = await tx.$queryRaw<ReceiptRow[]>(Prisma.sql`
+  let created: ReceiptRow;
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      const validation = await validateGroupReceiptDebtForPassenger(tx, {
+        agencyId: ctx.auth.id_agency,
+        groupId: ctx.group.id_travel_group,
+        passenger: {
+          id: passenger.id_travel_group_passenger,
+          departureId: passenger.travel_group_departure_id,
+          metadata: passenger.metadata,
+        },
+        selectedServiceIds: finalServiceIds,
+        currentReceipt: {
+          amount: toAmountNumber(amount),
+          amountCurrency,
+          paymentFeeAmount: paymentFeeAmount
+            ? toAmountNumber(paymentFeeAmount)
+            : 0,
+          baseAmount: baseAmount ? toAmountNumber(baseAmount) : null,
+          baseCurrency,
+          payments: normalizedPayments,
+        },
+      });
+      if (!validation.ok) {
+        throw new GroupFinanceRequestError({
+          status: validation.status,
+          code: validation.code,
+          message: validation.message,
+        });
+      }
+      finalServiceIds = validation.normalizedServiceIds;
+
+      const agencyReceiptId = await getNextAgencyCounter(
+        tx,
+        ctx.auth.id_agency,
+        "travel_group_receipt",
+      );
+      const rows = await tx.$queryRaw<ReceiptRow[]>(Prisma.sql`
       INSERT INTO "TravelGroupReceipt" (
         "agency_travel_group_receipt_id",
         "id_agency",
@@ -613,24 +550,33 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
         }
         NULL::INTEGER AS "booking_id"
     `);
-    const createdReceipt = rows[0];
-    await settleGroupReceiptClientPayments(tx, {
-      idAgency: ctx.auth.id_agency,
-      groupId: ctx.group.id_travel_group,
-      passengerId: passenger.id_travel_group_passenger,
-      clientIds: finalClientIds,
-      receiptId: createdReceipt.id_travel_group_receipt,
-      issueDate,
-      paidByUserId: ctx.auth.id_user,
-      amount,
-      amountCurrency,
-      paymentFeeAmount,
-      baseAmount,
-      baseCurrency,
-      payments: normalizedPayments,
+      const createdReceipt = rows[0];
+      await settleGroupReceiptClientPayments(tx, {
+        idAgency: ctx.auth.id_agency,
+        groupId: ctx.group.id_travel_group,
+        passengerId: passenger.id_travel_group_passenger,
+        clientIds: finalClientIds,
+        receiptId: createdReceipt.id_travel_group_receipt,
+        issueDate,
+        paidByUserId: ctx.auth.id_user,
+        amount,
+        amountCurrency,
+        paymentFeeAmount,
+        baseAmount,
+        baseCurrency,
+        payments: normalizedPayments,
+      });
+      return createdReceipt;
     });
-    return createdReceipt;
-  });
+  } catch (error) {
+    if (isGroupFinanceRequestError(error)) {
+      return groupApiError(res, error.status, error.message, {
+        code: error.code,
+        solution: error.solution,
+      });
+    }
+    throw error;
+  }
 
   return res.status(201).json({
     success: true,
@@ -638,7 +584,10 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   });
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse,
+) {
   if (req.method === "GET") return handleGet(req, res);
   if (req.method === "POST") return handlePost(req, res);
   res.setHeader("Allow", ["GET", "POST"]);

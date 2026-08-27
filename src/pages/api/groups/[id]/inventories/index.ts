@@ -12,6 +12,7 @@ import {
   requireAuth,
 } from "@/lib/groups/apiShared";
 import { groupApiError } from "@/lib/groups/apiErrors";
+import { isGroupServiceAssignment } from "@/lib/groups/clientPaymentRecordType";
 import { encodeInventoryServiceId } from "@/lib/groups/inventoryServiceRefs";
 
 type Body = {
@@ -170,11 +171,14 @@ export default async function handler(
               select: {
                 service_ref: true,
                 travel_group_passenger_id: true,
+                concept: true,
+                status_reason: true,
+                metadata: true,
               },
             })
           : [];
       const assignedByServiceRef = new Map<string, Set<number>>();
-      for (const row of assignedRows) {
+      for (const row of assignedRows.filter(isGroupServiceAssignment)) {
         const serviceRef = String(row.service_ref || "");
         if (!serviceRef) continue;
         const set = assignedByServiceRef.get(serviceRef) ?? new Set<number>();

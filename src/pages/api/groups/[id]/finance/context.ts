@@ -9,9 +9,11 @@ import {
 } from "@/lib/groups/financeShared";
 import {
   buildSyntheticContextBookingId,
+  encodeInventoryServiceId,
   isSyntheticContextBookingId,
   mapInventoryToServiceLike,
 } from "@/lib/groups/inventoryServiceRefs";
+import { isGroupServiceAssignment } from "@/lib/groups/clientPaymentRecordType";
 
 function pickQueryValue(value: string | string[] | undefined): string | null {
   if (!value) return null;
@@ -443,13 +445,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const fallbackCurrency = normalizeCurrencyCode(
     (booking as { currency?: string | null } | null)?.currency || "ARS",
   );
-  const inventoryServices = inventories.map((row) =>
-    mapInventoryToServiceLike(row, {
+  const inventoryServiceRefs = inventories.map((row) =>
+    String(encodeInventoryServiceId(row.id_travel_group_inventory)),
+  );
+  const passengerAssignments =
+    passengerId && inventoryServiceRefs.length > 0
+      ? await prisma.travelGroupClientPayment.findMany({
+          where: {
+            id_agency: ctx.auth.id_agency,
+            travel_group_id: ctx.group.id_travel_group,
+            travel_group_passenger_id: passengerId,
+            service_ref: { in: inventoryServiceRefs },
+            status: { not: "CANCELADA" },
+          },
+          select: {
+            service_ref: true,
+            amount: true,
+            currency: true,
+            concept: true,
+            status_reason: true,
+            metadata: true,
+          },
+        })
+      : [];
+  const assignmentByServiceRef = new Map(
+    passengerAssignments
+      .filter(isGroupServiceAssignment)
+      .map((item) => [String(item.service_ref || ""), item] as const),
+  );
+  const inventoryServices = inventories.map((row) => {
+    const assignment = assignmentByServiceRef.get(
+      String(encodeInventoryServiceId(row.id_travel_group_inventory)),
+    );
+    return mapInventoryToServiceLike(row, {
       bookingId: resolvedContextId,
       fallbackCurrency,
       fallbackDestination: ctx.group.name,
-    }),
-  );
+      salePriceOverride: assignment?.amount,
+      currencyOverride: assignment?.currency,
+    });
+  });
 
   const bookingServices = Array.isArray(booking?.services)
     ? (booking.services as unknown as Array<Record<string, unknown>>)

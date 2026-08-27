@@ -6,20 +6,33 @@ import type { ServiceLite } from "@/types/receipts";
 const SERVICES_CACHE_TTL_MS = 15_000;
 
 const servicesCache = new Map<
-  number,
+  string,
   {
     value: unknown[];
     expiresAt: number;
   }
 >();
-const servicesInflight = new Map<number, Promise<unknown[]>>();
+const servicesInflight = new Map<string, Promise<unknown[]>>();
+
+export function buildGroupServicesCacheKey(
+  contextId: number,
+  cacheScope?: string | number | null,
+): string {
+  return `${String(cacheScope ?? "global")}::${contextId}`;
+}
 
 export function useServicesForGroupContext<T = ServiceLite>(args: {
   contextId: number | null;
   loadServicesForContext?: (contextId: number) => Promise<T[]>;
   enabled?: boolean;
+  cacheScope?: string | number | null;
 }) {
-  const { contextId, loadServicesForContext, enabled = true } = args;
+  const {
+    contextId,
+    loadServicesForContext,
+    enabled = true,
+    cacheScope,
+  } = args;
   const [services, setServices] = useState<T[]>([]);
   const [loadingServices, setLoadingServices] = useState(false);
   const loaderRef = useRef(loadServicesForContext);
@@ -38,7 +51,8 @@ export function useServicesForGroupContext<T = ServiceLite>(args: {
     }
 
     let alive = true;
-    const cached = servicesCache.get(contextId);
+    const cacheKey = buildGroupServicesCacheKey(contextId, cacheScope);
+    const cached = servicesCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       setServices((cached.value as T[]) || []);
       setLoadingServices(false);
@@ -47,16 +61,16 @@ export function useServicesForGroupContext<T = ServiceLite>(args: {
       };
     }
     if (cached && cached.expiresAt <= Date.now()) {
-      servicesCache.delete(contextId);
+      servicesCache.delete(cacheKey);
     }
 
     setLoadingServices(true);
-    let task = servicesInflight.get(contextId);
+    let task = servicesInflight.get(cacheKey);
     if (!task) {
       task = Promise.resolve(loader(contextId))
         .then((items) => {
           const normalized = Array.isArray(items) ? items : [];
-          servicesCache.set(contextId, {
+          servicesCache.set(cacheKey, {
             value: normalized as unknown[],
             expiresAt: Date.now() + SERVICES_CACHE_TTL_MS,
           });
@@ -64,9 +78,9 @@ export function useServicesForGroupContext<T = ServiceLite>(args: {
         })
         .catch(() => [])
         .finally(() => {
-          servicesInflight.delete(contextId);
+          servicesInflight.delete(cacheKey);
         });
-      servicesInflight.set(contextId, task);
+      servicesInflight.set(cacheKey, task);
     }
 
     task
@@ -81,7 +95,7 @@ export function useServicesForGroupContext<T = ServiceLite>(args: {
     return () => {
       alive = false;
     };
-  }, [contextId, enabled]);
+  }, [cacheScope, contextId, enabled]);
 
   return { services, loadingServices };
 }
