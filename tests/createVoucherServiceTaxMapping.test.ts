@@ -126,7 +126,7 @@ describe("createVoucherService tax mapping", () => {
     expect(payload.ImpIVA).toBe(0);
     expect(payload.ImpTotConc).toBe(0);
     expect(payload.ImpOpEx).toBe(6030);
-    expect(payload.Iva).toEqual([]);
+    expect(payload).not.toHaveProperty("Iva");
   });
 
   it("moves zero-IVA taxable bases to ImpOpEx for legacy/incorrect service data", async () => {
@@ -149,7 +149,7 @@ describe("createVoucherService tax mapping", () => {
     expect(payload.ImpIVA).toBe(0);
     expect(payload.ImpOpEx).toBe(1000);
     expect(payload.ImpTotConc).toBe(0);
-    expect(payload.Iva).toEqual([]);
+    expect(payload).not.toHaveProperty("Iva");
   });
 
   it("preserves split between no gravado and exento when service data provides both", async () => {
@@ -178,7 +178,44 @@ describe("createVoucherService tax mapping", () => {
     expect(payload.ImpIVA).toBe(0);
     expect(payload.ImpTotConc).toBe(200);
     expect(payload.ImpOpEx).toBe(1000);
-    expect(payload.Iva).toEqual([]);
+    expect(payload).not.toHaveProperty("Iva");
+  });
+
+  it("omits Iva for Renatours' exempt USD invoice rejected with ARCA 10018", async () => {
+    mocks.afipClient.ElectronicBilling.createVoucher.mockImplementationOnce(
+      async (payload: Record<string, unknown>) => {
+        if (payload.ImpIVA === 0 && "Iva" in payload) {
+          throw new Error(
+            "(10018) Si ImpIva es igual a 0 el objeto Iva y AlicIva no deben informarse.",
+          );
+        }
+        return { CAE: "12345678901234", CAEFchVto: "20260930" };
+      },
+    );
+
+    const response = await createVoucherService(
+      reqStub,
+      6,
+      "12345678",
+      96,
+      [baseServiceDetail({ sale_price: 1770, exempt: 1721 })],
+      "DOL",
+      1514.5,
+      "2026-09-21",
+    );
+
+    expect(response.success).toBe(true);
+    const payload =
+      mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      ImpTotal: 1770,
+      ImpNeto: 0,
+      ImpIVA: 0,
+      ImpOpEx: 1770,
+      MonId: "DOL",
+      MonCotiz: 1514.5,
+    });
+    expect(payload).not.toHaveProperty("Iva");
   });
 
   it("maps mixed gravado + exento into taxable IVA lines plus ImpOpEx", async () => {

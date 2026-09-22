@@ -599,6 +599,7 @@ export async function createInvoices(
       const recoverAttempt = async (
         current: InvoiceIssuanceAttempt,
         allowRetryWhenAbsent: boolean,
+        rejectionMessage?: string,
       ): Promise<AttemptRecoveryDecision> => {
         if (!isJsonObject(current.prepared_payload)) {
           const message =
@@ -640,6 +641,7 @@ export async function createInvoices(
             };
           }
           const message =
+            rejectionMessage ||
             "ARCA no autorizó este comprobante. Podés reintentar la operación con la misma selección.";
           await markInvoiceAttemptFailed(
             current.id_invoice_issuance_attempt,
@@ -773,7 +775,7 @@ export async function createInvoices(
             current.status === INVOICE_ATTEMPT_STATUS.PROCESSING ||
             current.status === INVOICE_ATTEMPT_STATUS.AUTHORIZED
           ) {
-            const recovered = await recoverAttempt(current, false);
+            const recovered = await recoverAttempt(current, false, resp.message);
             if (recovered.kind === "AUTHORIZED") {
               authorizedDetails = recovered.details;
               authorizedQrBase64 = recovered.qrBase64;

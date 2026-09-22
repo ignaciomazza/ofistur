@@ -108,6 +108,16 @@ function buildAfipAmounts(amountArs: number, cbteTipo: number): {
     };
   }
 
+  if ([11, 12, 13, 15].includes(cbteTipo)) {
+    return {
+      impTotal,
+      impTotConc: 0,
+      impNeto: impTotal,
+      impIva: 0,
+      iva: [],
+    };
+  }
+
   if (!shouldUseIvaBreakdown(cbteTipo)) {
     return {
       impTotal,
@@ -250,7 +260,9 @@ async function emitWithAfip(params: {
     ImpTrib: 0,
     MonId: "PES",
     MonCotiz: 1,
-    Iva: amounts.iva,
+    ...(amounts.impIva > 0 && amounts.iva.length > 0
+      ? { Iva: amounts.iva }
+      : {}),
   };
 
   const created = await afip.ElectronicBilling.createVoucher(payload);

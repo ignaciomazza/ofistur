@@ -202,9 +202,10 @@ describe("issueFiscalForCharge", () => {
     const payload = mocks.afipClient.ElectronicBilling.createVoucher.mock.calls[0][0];
     expect(payload.CbteTipo).toBe(11);
     expect(payload.ImpTotal).toBe(1000);
-    expect(payload.ImpTotConc).toBe(1000);
-    expect(payload.ImpNeto).toBe(0);
+    expect(payload.ImpTotConc).toBe(0);
+    expect(payload.ImpOpEx).toBe(0);
+    expect(payload.ImpNeto).toBe(1000);
     expect(payload.ImpIVA).toBe(0);
-    expect(payload.Iva).toEqual([]);
+    expect(payload).not.toHaveProperty("Iva");
   });
 });

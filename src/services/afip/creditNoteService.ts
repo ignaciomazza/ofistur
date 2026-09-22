@@ -356,7 +356,9 @@ export async function createCreditNoteVoucher(
       ImpIVA: totalIVA,
       MonId: currency,
       MonCotiz: cotiz,
-      Iva: mergedIva as unknown as Prisma.JsonArray,
+      ...(totalIVA > 0 && mergedIva.length > 0
+        ? { Iva: mergedIva as unknown as Prisma.JsonArray }
+        : {}),
       CondicionIVAReceptorId: condId,
     };
 

@@ -887,6 +887,9 @@ export default function ServicesPage() {
     if (m.includes("cbtnro") || m.includes("cbtenro")) {
       return "Numero de comprobante invalido. Revisá el punto de venta en ARCA.";
     }
+    if (m.includes("10018")) {
+      return "ARCA rechazó el formato del IVA de esta factura. Avisá a soporte con el código 10018; no cambies los importes para reintentar.";
+    }
     if (
       m.includes("iva") ||
       m.includes("impuesto") ||

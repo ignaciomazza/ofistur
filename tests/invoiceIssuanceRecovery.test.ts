@@ -78,6 +78,7 @@ vi.mock("@/services/invoiceIssuanceAttempts", () => ({
 }));
 
 import { createInvoices } from "@/services/invoices";
+import { markInvoiceAttemptFailed } from "@/services/invoiceIssuanceAttempts";
 
 const request = {} as NextApiRequest;
 const service = {
@@ -236,6 +237,43 @@ describe("invoice issuance retry recovery", () => {
           invoice_id: invoice.id_invoice,
         }),
       }),
+    );
+  });
+
+  it("preserves ARCA's rejection after confirming the voucher was not authorized", async () => {
+    const rejection =
+      "(10018) Si ImpIva es igual a 0 el objeto Iva y AlicIva no deben informarse.";
+    mocks.ensureInvoiceAttempt.mockResolvedValue({
+      attempt: { ...attemptBase, status: "PENDING" },
+      hashMatches: true,
+    });
+    mocks.claimInvoiceAttempt.mockResolvedValue(true);
+    mocks.createVoucherService.mockResolvedValue({
+      success: false,
+      message: rejection,
+    });
+    mocks.reloadInvoiceAttempt.mockResolvedValue({
+      ...attemptBase,
+      status: "PROCESSING",
+      prepared_payload: { PtoVta: 4, CbteTipo: 6, CbteDesde: 2 },
+    });
+    mocks.recoverPreparedVoucherService.mockResolvedValue({
+      status: "NOT_FOUND",
+    });
+
+    const result = await createInvoices(request, {
+      idempotencyKey: "invoice-request-1234",
+      bookingId: 2230,
+      services: [77],
+      clientIds: [4936],
+      tipoFactura: 6,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe(rejection);
+    expect(markInvoiceAttemptFailed).toHaveBeenCalledWith(
+      attemptBase.id_invoice_issuance_attempt,
+      rejection,
     );
   });
 });

@@ -647,7 +647,9 @@ export async function createVoucherService(
       ImpIVA: totalIVA,
       MonId: currency,
       MonCotiz: cotiz,
-      Iva: mergedIvaEntries as unknown as Prisma.JsonArray,
+      ...(totalIVA > 0 && mergedIvaEntries.length > 0
+        ? { Iva: mergedIvaEntries as unknown as Prisma.JsonArray }
+        : {}),
       CondicionIVAReceptorId: condId,
     };
 

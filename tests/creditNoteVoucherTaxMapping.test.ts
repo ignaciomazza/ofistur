@@ -139,7 +139,7 @@ describe("createCreditNoteVoucher tax mapping", () => {
     expect(payload.ImpIVA).toBe(0);
     expect(payload.ImpTotConc).toBe(0);
     expect(payload.ImpOpEx).toBe(1000);
-    expect(payload.Iva).toEqual([]);
+    expect(payload).not.toHaveProperty("Iva");
   });
 
   it("splits no gravado and exento into their dedicated AFIP fields", async () => {
@@ -162,7 +162,7 @@ describe("createCreditNoteVoucher tax mapping", () => {
     expect(payload.ImpIVA).toBe(0);
     expect(payload.ImpTotConc).toBe(200);
     expect(payload.ImpOpEx).toBe(1000);
-    expect(payload.Iva).toEqual([]);
+    expect(payload).not.toHaveProperty("Iva");
   });
 
   it("maps mixed gravado + exento into IVA taxable lines plus ImpOpEx", async () => {
