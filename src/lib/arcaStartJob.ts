@@ -65,10 +65,13 @@ export async function startArcaJob(input: StartJobInput) {
       }
     }
     await tx.arcaConnectionJob.updateMany({
-      where: { agencyId: input.agencyId, status: "requires_action" },
+      where: { agencyId: input.agencyId, status: { in: ["requires_action", "blocked_provider"] } },
       data: {
         status: "error",
         passwordEncrypted: null,
+        stagedCertEncrypted: null,
+        stagedKeyEncrypted: null,
+        longJobId: null,
         lastError: "Se inició una conexión nueva.",
         completedAt: new Date(),
       },
@@ -76,7 +79,9 @@ export async function startArcaJob(input: StartJobInput) {
     return tx.arcaConnectionJob.create({
       data: {
         agencyId: input.agencyId,
-        action: input.action,
+        // Any new attempt for an existing connection creates fresh credentials.
+        // The previous config stays active until verification succeeds.
+        action: current ? "rotate" : input.action,
         status: "running",
         step: "create_cert",
         services: input.services,

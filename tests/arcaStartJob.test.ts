@@ -62,6 +62,14 @@ describe("starting an ARCA connection", () => {
     expect(activeCuit).toBe("20123456789");
   });
 
+  it("treats Connect on an existing agency as a fresh replacement", async () => {
+    const { startArcaJob } = await import("@/lib/arcaStartJob");
+    await startArcaJob({ ...input, action: "connect" });
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "rotate", step: "create_cert" }),
+    });
+  });
+
   it("blocks a new CUIT when booking or group invoices exist", async () => {
     groupInvoices = 1;
     const { startArcaJob } = await import("@/lib/arcaStartJob");

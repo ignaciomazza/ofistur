@@ -78,7 +78,7 @@ export async function advanceAutomaticJob(jobId: number) {
     prisma.arcaConnectionJob.update({ where: { id: jobId }, data });
 
   try {
-    if (job.step === "create_cert") {
+    if (job.step === "create_cert" && job.action !== "rotate") {
       const active = await prisma.agencyArcaConfig.findUnique({ where: { agencyId: job.agencyId } });
       if (active?.taxIdRepresentado === job.taxIdRepresentado &&
           active.certEncrypted && active.keyEncrypted &&
@@ -241,11 +241,16 @@ export async function advanceAutomaticJob(jobId: number) {
         const all = points.map((p) => Number(p.number)).filter((n) => Number.isInteger(n) && n > 0);
         const active = await prisma.agencyArcaConfig.findUnique({ where: { agencyId: job.agencyId } });
         const preferred = active?.taxIdRepresentado === job.taxIdRepresentado ? active.selectedSalesPoint : null;
-        if (usable.length) {
+        // An ambiguous response may occur after ARCA created the requested point.
+        // Recover that exact point instead of creating another one on retry.
+        const requestedPoint = job.action === "rotate" && job.stagedSalesPoint != null &&
+          usable.includes(job.stagedSalesPoint) ? job.stagedSalesPoint : null;
+        if (requestedPoint || (usable.length && job.action !== "rotate")) {
           return update({
             detectedTaxRegime: inferred,
             stagedSalesPoints: usable,
-            stagedSalesPoint: preferred && usable.includes(preferred) ? preferred : Math.min(...usable),
+            stagedSalesPoint: requestedPoint ??
+              (preferred && usable.includes(preferred) ? preferred : Math.min(...usable)),
             step: "verify", longJobId: null, status: "running", retryCount: 0,
           });
         }

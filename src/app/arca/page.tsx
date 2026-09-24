@@ -173,7 +173,7 @@ export default function ArcaPage() {
   const statusLabel = useMemo(() => {
     if (job && ["pending", "running", "waiting"].includes(job.status))
       return "Conectando";
-    if (providerBlocked) return "Revisión de Ofistur";
+    if (providerBlocked) return "Cupo agotado";
     if (job?.status === "requires_action") return "Requiere acción";
     if (job?.status === "error") return config?.status === "connected" ? "Conexión anterior activa" : "Error";
     if (config?.status === "connected") return "Conectado";
@@ -189,7 +189,7 @@ export default function ArcaPage() {
       return "border border-sky-700/60 bg-sky-200/50 text-sky-900 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-100";
     if (statusLabel === "Requiere acción")
       return "border border-amber-700/60 bg-amber-200/50 text-amber-900 dark:border-amber-400/50 dark:bg-amber-500/20 dark:text-amber-100";
-    if (statusLabel === "Revisión de Ofistur")
+    if (statusLabel === "Cupo agotado")
       return "border border-amber-700/60 bg-amber-200/50 text-amber-900 dark:border-amber-400/50 dark:bg-amber-500/20 dark:text-amber-100";
     if (statusLabel === "Error")
       return "border border-rose-700/60 bg-rose-200/50 text-rose-900 dark:border-rose-400/50 dark:bg-rose-500/20 dark:text-rose-100";
@@ -525,7 +525,7 @@ export default function ArcaPage() {
 
         {providerBlocked && (
           <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
-            La conexión quedó pausada por un límite de la cuenta de Ofistur. Estamos revisándolo; no hace falta que generes otro certificado ni cambies tus datos. La conexión anterior, si estaba activa, se conserva.
+            No se pudo completar la conexión: Afip SDK alcanzó el cupo de CUITs del plan de Ofistur. Los datos que ingresaste no causaron este error. La conexión anterior se conserva. Un administrador de Ofistur debe ampliar el cupo para habilitar nuevas conexiones.
           </div>
         )}
 
@@ -883,7 +883,7 @@ export default function ArcaPage() {
                         <div className="rounded-2xl border border-amber-700/50 bg-amber-200/60 p-4 text-amber-900 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-100">
                           <p className="text-xs font-medium">
                             {job?.status === "blocked_provider"
-                              ? "Cuando Ofistur resuelva el límite, ingresá tu clave para continuar desde este paso."
+                              ? "Después de ampliar el cupo, ingresá tu clave para retomar este intento."
                               : job?.step === "list_points" || job?.step === "detect_regime"
                               ? "Confirmá el régimen fiscal y reingresá tu clave para continuar."
                               : "Necesitamos tu clave fiscal para continuar."}
@@ -928,9 +928,9 @@ export default function ArcaPage() {
 
                       {providerBlocked && (
                         <p className="text-xs text-amber-800 dark:text-amber-200">
-                          Ofistur debe revisar su cupo de CUITs en Afip SDK. {job?.status === "blocked_provider"
-                            ? "Cuando esté resuelto, podrás continuar desde este paso ingresando nuevamente la clave fiscal."
-                            : "Cuando esté resuelto, iniciá una nueva conexión con tus datos."}
+                          El límite pertenece al plan de Afip SDK de Ofistur. Regenerar certificados o borrar datos de esta agencia no libera CUITs de ese plan. {job?.status === "blocked_provider"
+                            ? "Este intento puede retomarse cuando se amplíe el cupo."
+                            : "Podrás iniciar otro intento cuando se amplíe el cupo."}
                         </p>
                       )}
 
@@ -951,7 +951,7 @@ export default function ArcaPage() {
                               Conectando...
                             </span>
                           ) : (
-                            "Conectar ARCA"
+                            config ? "Recrear conexión" : "Conectar ARCA"
                           )}
                         </button>
                         <button
@@ -969,8 +969,9 @@ export default function ArcaPage() {
                       )}
 
                       <p className="text-xs text-sky-950/60 dark:text-white/60">
-                        Si tuviste un error, podés reintentar. La delegación
-                        queda solo como alternativa de respaldo documentada.
+                        {config
+                          ? "Al reconectar, se crearán un certificado y un punto de venta nuevos. La conexión anterior seguirá guardada hasta que la nueva funcione."
+                          : "La delegación manual queda como alternativa de respaldo documentada."}
                       </p>
                     </motion.div>
                   )}
@@ -1195,12 +1196,12 @@ export default function ArcaPage() {
                         Rotando...
                       </span>
                     ) : (
-                      "Rotar certificado"
+                      "Recrear conexión"
                     )}
                   </button>
                 </div>
                 <p className="mt-3 text-xs text-sky-950/60 dark:text-white/60">
-                  Rotar reemplaza el certificado solo cuando la nueva conexión funciona. Desconectar suspende la facturación en Ofistur y conserva los datos para volver a conectar; no revoca el certificado en ARCA.
+                  Recrear genera un certificado y un punto de venta nuevos, y reemplaza la configuración guardada solo cuando la nueva conexión funciona. Los comprobantes anteriores se conservan. Desconectar suspende la facturación en Ofistur; no revoca certificados ni elimina puntos de venta en ARCA.
                 </p>
               </div>
             </div>

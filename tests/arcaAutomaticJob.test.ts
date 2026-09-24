@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { encryptSecret } from "@/lib/arcaSecrets";
+import prisma from "@/lib/prisma";
 
 let job: Record<string, unknown>;
 let config: Record<string, unknown> | null;
@@ -63,6 +64,7 @@ describe("automatic ARCA connection", () => {
     job = {
       id: 1,
       agencyId: 99,
+      action: "connect",
       status: "running",
       step: "create_cert",
       services: ["wsfe"],
@@ -92,6 +94,7 @@ describe("automatic ARCA connection", () => {
     getWsfeAuthorization.mockReset();
     getConstanciaAuthorization.mockReset();
     getPadronAuthorization.mockReset();
+    vi.mocked(prisma.agencyArcaConfig.findUnique).mockClear();
   });
 
   it("preserves the active issuer when the provider rejects certificate creation", async () => {
@@ -120,6 +123,19 @@ describe("automatic ARCA connection", () => {
     );
     expect(job.stagedCertEncrypted).toBeUndefined();
     expect(config?.taxIdRepresentado).toBe("30987654321");
+  });
+
+  it("creates a fresh certificate when reconnecting the same issuer", async () => {
+    job = { ...job, action: "rotate", taxIdRepresentado: "30987654321" };
+    runAutomation.mockResolvedValue({ status: "pending", id: "new-certificate" });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(prisma.agencyArcaConfig.findUnique).not.toHaveBeenCalled();
+    expect(runAutomation).toHaveBeenCalledWith(
+      "create-cert-prod",
+      expect.objectContaining({ cuit: "30987654321" }),
+      null,
+    );
   });
 
   it("checks an existing WSFE authorization before creating another one", async () => {
@@ -206,6 +222,37 @@ describe("automatic ARCA connection", () => {
     expect(job.step).toBe("verify");
     expect(job.stagedSalesPoint).toBe(3);
     expect(config?.selectedSalesPoint).toBe(3);
+  });
+
+  it("creates a new sales point during a deliberate reconnection", async () => {
+    job = { ...job, action: "rotate", step: "list_points", taxIdRepresentado: "30987654321", detectedTaxRegime: "ri" };
+    runAutomation.mockResolvedValue({
+      status: "complete",
+      data: [{ number: "3", system: "RECE para aplicativo y web services" }],
+    });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(job.step).toBe("create_point");
+    expect(job.stagedSalesPoint).toBe(4);
+    expect(config?.selectedSalesPoint).toBe(3);
+  });
+
+  it("recovers the requested point if ARCA created it before an ambiguous response", async () => {
+    job = {
+      ...job, action: "rotate", step: "list_points", taxIdRepresentado: "30987654321",
+      detectedTaxRegime: "ri", stagedSalesPoint: 4,
+    };
+    runAutomation.mockResolvedValue({
+      status: "complete",
+      data: [
+        { number: "3", system: "RECE para aplicativo y web services" },
+        { number: "4", system: "RECE para aplicativo y web services" },
+      ],
+    });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(job.step).toBe("verify");
+    expect(job.stagedSalesPoint).toBe(4);
   });
 
   it("connects a monotributista using a compatible Web Services point", async () => {
