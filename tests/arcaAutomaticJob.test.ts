@@ -12,10 +12,12 @@ const getTaxpayerDetails = vi.fn();
 const getWsfeAuthorization = vi.fn();
 const getConstanciaAuthorization = vi.fn();
 const getPadronAuthorization = vi.fn();
+const afipOptions = vi.fn();
 
 vi.mock("@/services/arca/automationV2", () => ({ runAutomation }));
 vi.mock("@afipsdk/afip.js", () => ({
   default: class {
+    constructor(options: unknown) { afipOptions(options); }
     ElectronicBilling = { getSalesPoints, getTokenAuthorization: getWsfeAuthorization };
     RegisterInscriptionProof = { getTaxpayerDetails, getTokenAuthorization: getConstanciaAuthorization };
     RegisterScopeThirteen = { getTokenAuthorization: getPadronAuthorization };
@@ -60,6 +62,9 @@ vi.mock("@/lib/prisma", () => ({
 
 describe("automatic ARCA connection", () => {
   beforeEach(() => {
+    process.env.AFIP_SDK_ACCESS_TOKEN = "test-default-token";
+    delete process.env.AFIP_SDK_BYPASS_TAX_ID;
+    delete process.env.AFIP_SDK_BYPASS_ACCESS_TOKEN;
     process.env.ARCA_SECRETS_KEY = Buffer.from("01234567890123456789012345678901").toString("base64");
     job = {
       id: 1,
@@ -94,6 +99,7 @@ describe("automatic ARCA connection", () => {
     getWsfeAuthorization.mockReset();
     getConstanciaAuthorization.mockReset();
     getPadronAuthorization.mockReset();
+    afipOptions.mockReset();
     vi.mocked(prisma.agencyArcaConfig.findUnique).mockClear();
   });
 
@@ -152,6 +158,25 @@ describe("automatic ARCA connection", () => {
     expect(job.step).toBe("detect_regime");
     expect(getWsfeAuthorization).toHaveBeenCalledWith(true);
     expect(runAutomation).not.toHaveBeenCalled();
+  });
+
+  it("uses the temporary account when verifying Bag's certificate", async () => {
+    process.env.AFIP_SDK_BYPASS_TAX_ID = "30718124561";
+    process.env.AFIP_SDK_BYPASS_ACCESS_TOKEN = "temporary-account";
+    job = {
+      ...job,
+      taxIdRepresentado: "30718124561",
+      step: "probe_ws",
+      stagedCertEncrypted: encryptSecret("certificado-existente"),
+      stagedKeyEncrypted: encryptSecret("clave-existente"),
+    };
+    getWsfeAuthorization.mockResolvedValue({ token: "test", sign: "test" });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(afipOptions).toHaveBeenCalledWith(expect.objectContaining({
+      CUIT: 30718124561,
+      access_token: "temporary-account",
+    }));
   });
 
   it("authorizes only a service that ARCA reports as missing", async () => {

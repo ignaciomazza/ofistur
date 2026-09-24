@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import crypto from "crypto";
 import { jwtVerify, type JWTPayload } from "jose";
 import { decryptSecret } from "@/lib/arcaSecrets";
+import { getAfipSdkAccessToken } from "@/services/afip/accessToken";
 
 /** ------------------------------------------------------------------------
  *  Tipos mínimos para usar el SDK sin "any"
@@ -131,8 +132,7 @@ function buildAfip(opts: {
     cert: opts.cert,
     key: opts.key,
     production: opts.production ?? process.env.AFIP_ENV === "production",
-    access_token:
-      process.env.AFIP_SDK_ACCESS_TOKEN || process.env.ACCESS_TOKEN,
+    access_token: getAfipSdkAccessToken(opts.CUIT),
   });
 }
 

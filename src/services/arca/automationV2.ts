@@ -1,20 +1,20 @@
 // Afip SDK Automations v1. Credentials and responses are never logged.
+import { getAfipSdkAccessToken } from "@/services/afip/accessToken";
 export type AutomationResult =
   | { status: "complete"; data: unknown }
   | { status: "pending"; id: string }
   | { status: "error"; error: string; retryable: boolean };
-
-function token() {
-  const value = process.env.AFIP_SDK_ACCESS_TOKEN || process.env.ACCESS_TOKEN;
-  if (!value) throw new Error("Falta token de Afip SDK");
-  return value;
-}
 
 export async function runAutomation(
   automation: string,
   params: Record<string, unknown>,
   id?: string | null,
 ): Promise<AutomationResult> {
+  const cuit = params.cuit;
+  if (typeof cuit !== "string" && typeof cuit !== "number") {
+    throw new Error("Falta el CUIT representado para Afip SDK.");
+  }
+  const accessToken = getAfipSdkAccessToken(cuit);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
@@ -23,7 +23,7 @@ export async function runAutomation(
       {
         method: id ? "GET" : "POST",
         headers: {
-          Authorization: `Bearer ${token()}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
         ...(!id ? { body: JSON.stringify({ automation, params }) } : {}),

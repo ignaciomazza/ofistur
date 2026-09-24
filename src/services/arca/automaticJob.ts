@@ -7,6 +7,7 @@ import { runAutomation } from "@/services/arca/automationV2";
 import { extractPemPair } from "@/services/arca/pem";
 import { classifyTaxRegime } from "@/services/arca/taxRegime";
 import { arcaErrorMessage, isInvalidCertificate, isMissingServiceAuthorization, isProviderCuitLimit } from "@/services/arca/connectionErrors";
+import { getAfipSdkAccessToken } from "@/services/afip/accessToken";
 
 type Regime = "mono" | "ri";
 type SalesPoint = {
@@ -106,7 +107,7 @@ export async function advanceAutomaticJob(jobId: number) {
         cert: decryptSecret(job.stagedCertEncrypted),
         key: decryptSecret(job.stagedKeyEncrypted),
         production: true,
-        access_token: process.env.AFIP_SDK_ACCESS_TOKEN || process.env.ACCESS_TOKEN,
+        access_token: getAfipSdkAccessToken(job.taxIdRepresentado),
       });
       try {
         // WSAA can confirm access even when the agency has no point of sale yet.
@@ -154,7 +155,7 @@ export async function advanceAutomaticJob(jobId: number) {
         cert: decryptSecret(job.stagedCertEncrypted),
         key: decryptSecret(job.stagedKeyEncrypted),
         production: true,
-        access_token: process.env.AFIP_SDK_ACCESS_TOKEN || process.env.ACCESS_TOKEN,
+        access_token: getAfipSdkAccessToken(job.taxIdRepresentado),
       });
       const details = await client.RegisterInscriptionProof.getTaxpayerDetails(Number(job.taxIdRepresentado));
       const regime = classifyTaxRegime(details);
@@ -280,7 +281,7 @@ export async function advanceAutomaticJob(jobId: number) {
         cert: decryptSecret(job.stagedCertEncrypted),
         key: decryptSecret(job.stagedKeyEncrypted),
         production: true,
-        access_token: process.env.AFIP_SDK_ACCESS_TOKEN || process.env.ACCESS_TOKEN,
+        access_token: getAfipSdkAccessToken(job.taxIdRepresentado),
       });
       const salesPoints = await client.ElectronicBilling.getSalesPoints();
       const verified = salesPoints.map((p: { Nro: number }) => p.Nro);
