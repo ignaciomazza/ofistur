@@ -321,6 +321,8 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
   let created: GroupInvoiceRow;
   try {
     created = await prisma.$transaction(async (tx) => {
+      // Serialize a group invoice with an ARCA issuer switch for this agency.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(77445::integer, ${ctx.auth.id_agency}::integer)`;
       await lockGroupPassenger(tx, {
         agencyId: ctx.auth.id_agency,
         groupId: ctx.group.id_travel_group,

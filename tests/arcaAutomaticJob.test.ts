@@ -3,18 +3,28 @@ import { encryptSecret } from "@/lib/arcaSecrets";
 
 let job: Record<string, unknown>;
 let config: Record<string, unknown> | null;
+let agencyTaxId: string;
+let invoiceCount: number;
 const runAutomation = vi.fn();
 const getSalesPoints = vi.fn();
+const getTaxpayerDetails = vi.fn();
+const getWsfeAuthorization = vi.fn();
+const getConstanciaAuthorization = vi.fn();
+const getPadronAuthorization = vi.fn();
 
 vi.mock("@/services/arca/automationV2", () => ({ runAutomation }));
 vi.mock("@afipsdk/afip.js", () => ({
   default: class {
-    ElectronicBilling = { getSalesPoints };
+    ElectronicBilling = { getSalesPoints, getTokenAuthorization: getWsfeAuthorization };
+    RegisterInscriptionProof = { getTaxpayerDetails, getTokenAuthorization: getConstanciaAuthorization };
+    RegisterScopeThirteen = { getTokenAuthorization: getPadronAuthorization };
   },
 }));
 vi.mock("@/services/afip/afipConfig", () => ({ invalidateAfipCache: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
-  default: {
+  default: (() => {
+    const client = {
+    $executeRaw: vi.fn(async () => 1),
     arcaConnectionJob: {
       findUnique: vi.fn(() => ({ ...job })),
       update: vi.fn(({ data }) => {
@@ -29,8 +39,22 @@ vi.mock("@/lib/prisma", () => ({
         return { ...config };
       }),
     },
-    $transaction: vi.fn((ops: Array<Promise<unknown>>) => Promise.all(ops)),
-  },
+    agency: {
+      findUnique: vi.fn(async () => ({ tax_id: agencyTaxId })),
+      update: vi.fn(async ({ data }) => {
+        agencyTaxId = data.tax_id;
+        return { tax_id: agencyTaxId };
+      }),
+    },
+    invoice: { count: vi.fn(async () => invoiceCount) },
+    travelGroupInvoice: { count: vi.fn(async () => 0) },
+    invoiceIssuanceAttempt: { count: vi.fn(async () => 0) },
+  };
+  return {
+    ...client,
+    $transaction: vi.fn((callback: (tx: typeof client) => Promise<unknown>) => callback(client)),
+  };
+  })(),
 }));
 
 describe("automatic ARCA connection", () => {
@@ -60,8 +84,14 @@ describe("automatic ARCA connection", () => {
       keyEncrypted: "clave-anterior",
       selectedSalesPoint: 3,
     };
+    agencyTaxId = "30987654321";
+    invoiceCount = 0;
     runAutomation.mockReset();
     getSalesPoints.mockReset();
+    getTaxpayerDetails.mockReset();
+    getWsfeAuthorization.mockReset();
+    getConstanciaAuthorization.mockReset();
+    getPadronAuthorization.mockReset();
   });
 
   it("preserves the active issuer when the provider rejects certificate creation", async () => {
@@ -72,10 +102,94 @@ describe("automatic ARCA connection", () => {
     });
     const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
     await advanceAutomaticJob(1);
-    expect(job.status).toBe("error");
+    expect(job.status).toBe("blocked_provider");
     expect(job.passwordEncrypted).toBeNull();
     expect(config?.taxIdRepresentado).toBe("30987654321");
     expect(config?.status).toBe("connected");
+    expect(agencyTaxId).toBe("30987654321");
+  });
+
+  it("creates a new certificate instead of reusing another issuer's credentials", async () => {
+    runAutomation.mockResolvedValue({ status: "pending", id: "automation-1" });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(runAutomation).toHaveBeenCalledWith(
+      "create-cert-prod",
+      expect.objectContaining({ cuit: "20123456789", username: "20123456789" }),
+      null,
+    );
+    expect(job.stagedCertEncrypted).toBeUndefined();
+    expect(config?.taxIdRepresentado).toBe("30987654321");
+  });
+
+  it("checks an existing WSFE authorization before creating another one", async () => {
+    job = {
+      ...job,
+      step: "probe_ws",
+      stagedCertEncrypted: encryptSecret("certificado-existente"),
+      stagedKeyEncrypted: encryptSecret("clave-existente"),
+    };
+    getWsfeAuthorization.mockResolvedValue({ token: "test", sign: "test" });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(job.stagedServices).toEqual(["wsfe"]);
+    expect(job.step).toBe("detect_regime");
+    expect(getWsfeAuthorization).toHaveBeenCalledWith(true);
+    expect(runAutomation).not.toHaveBeenCalled();
+  });
+
+  it("authorizes only a service that ARCA reports as missing", async () => {
+    job = {
+      ...job,
+      step: "probe_ws",
+      stagedCertEncrypted: encryptSecret("certificado-existente"),
+      stagedKeyEncrypted: encryptSecret("clave-existente"),
+    };
+    getWsfeAuthorization.mockRejectedValue({ data: { message: "No se encuentra autorizado a usar el servicio wsfe" } });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(job.step).toBe("auth_ws");
+    expect(job.stagedServices).toEqual([]);
+    expect(runAutomation).not.toHaveBeenCalled();
+  });
+
+  it("pauses on the provider CUIT limit while retaining staged credentials", async () => {
+    const stagedCertEncrypted = encryptSecret("certificado-existente");
+    job = {
+      ...job,
+      step: "probe_ws",
+      stagedCertEncrypted,
+      stagedKeyEncrypted: encryptSecret("clave-existente"),
+    };
+    getWsfeAuthorization.mockRejectedValue({ data: { message: "Alcanzaste el límite de CUITs que podés usar en este período" } });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(job.status).toBe("blocked_provider");
+    expect(job.passwordEncrypted).toBeNull();
+    expect(job.stagedCertEncrypted).toBe(stagedCertEncrypted);
+    expect(config?.status).toBe("connected");
+    expect(runAutomation).not.toHaveBeenCalled();
+  });
+
+  it("uses the observed fiscal regime when an existing authorization works", async () => {
+    job = {
+      ...job,
+      step: "probe_ws",
+      services: ["ws_sr_constancia_inscripcion"],
+      stagedCertEncrypted: encryptSecret("certificado-existente"),
+      stagedKeyEncrypted: encryptSecret("clave-existente"),
+    };
+    getConstanciaAuthorization.mockResolvedValue({ token: "test", sign: "test" });
+    getTaxpayerDetails.mockResolvedValue({
+      datosRegimenGeneral: { impuesto: { idImpuesto: 30, estadoImpuesto: "AC" } },
+    });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(job.step).toBe("detect_regime");
+    await advanceAutomaticJob(1);
+    expect(job.detectedTaxRegime).toBe("ri");
+    expect(job.regimeConfirmedByArca).toBe(true);
+    expect(job.step).toBe("list_points");
   });
 
   it("reuses a compatible point of sale for the same issuer", async () => {
@@ -130,5 +244,26 @@ describe("automatic ARCA connection", () => {
     expect(config?.salesPointsDetected).toEqual([5]);
     expect(config?.taxRegime).toBe("ri");
     expect(config?.taxRegimeCheckedAt).toBeNull();
+    expect(agencyTaxId).toBe("20123456789");
+  });
+
+  it("does not replace an issuer if an invoice appeared during reconnection", async () => {
+    invoiceCount = 1;
+    job = {
+      ...job,
+      step: "verify",
+      detectedTaxRegime: "ri",
+      stagedCertEncrypted: encryptSecret("certificado-nuevo"),
+      stagedKeyEncrypted: encryptSecret("clave-nueva"),
+      stagedServices: ["wsfe", "ws_sr_constancia_inscripcion"],
+      stagedSalesPoint: 5,
+      stagedSalesPoints: [5],
+    };
+    getSalesPoints.mockResolvedValue([{ Nro: 5 }]);
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    await advanceAutomaticJob(1);
+    expect(job.status).toBe("error");
+    expect(config?.taxIdRepresentado).toBe("30987654321");
+    expect(agencyTaxId).toBe("30987654321");
   });
 });

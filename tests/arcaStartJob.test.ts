@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let activeCuit = "20123456789";
 let issuedInvoices = 0;
 let groupInvoices = 0;
+let unfinishedAttempts = 0;
 const create = vi.fn();
 const start = vi.fn();
 
@@ -22,6 +23,7 @@ vi.mock("@/lib/prisma", () => {
     agency: { findUnique: vi.fn(async () => ({ tax_id: activeCuit })) },
     invoice: { count: vi.fn(async () => issuedInvoices) },
     travelGroupInvoice: { count: vi.fn(async () => groupInvoices) },
+    invoiceIssuanceAttempt: { count: vi.fn(async () => unfinishedAttempts) },
   };
   return {
     default: {
@@ -37,6 +39,7 @@ describe("starting an ARCA connection", () => {
     activeCuit = "20123456789";
     issuedInvoices = 0;
     groupInvoices = 0;
+    unfinishedAttempts = 0;
     create.mockReset().mockResolvedValue({ id: 1 });
     start.mockReset().mockResolvedValue({ runId: "run-1" });
   });
@@ -63,8 +66,16 @@ describe("starting an ARCA connection", () => {
     groupInvoices = 1;
     const { startArcaJob } = await import("@/lib/arcaStartJob");
     await expect(startArcaJob({ ...input, cuitRepresentado: "30987654321" }))
-      .rejects.toThrow("facturas emitidas con otro CUIT");
+      .rejects.toThrow("historial fiscal");
     expect(create).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it("blocks a CUIT change while an invoice could still be authorized", async () => {
+    unfinishedAttempts = 1;
+    const { startArcaJob } = await import("@/lib/arcaStartJob");
+    await expect(startArcaJob({ ...input, cuitRepresentado: "30987654321" }))
+      .rejects.toThrow("historial fiscal");
+    expect(create).not.toHaveBeenCalled();
   });
 });

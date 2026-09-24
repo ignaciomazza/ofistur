@@ -50,12 +50,18 @@ export async function startArcaJob(input: StartJobInput) {
     ]);
     const priorCuit = String(current?.taxIdRepresentado || agency?.tax_id || "").replace(/\D/g, "");
     if (priorCuit && priorCuit !== input.cuitRepresentado) {
-      const [issued, groupInvoices] = await Promise.all([
-        tx.invoice.count({ where: { id_agency: input.agencyId, status: "Autorizada" } }),
+      const [issued, groupInvoices, unfinishedAttempts] = await Promise.all([
+        tx.invoice.count({ where: { id_agency: input.agencyId } }),
         tx.travelGroupInvoice.count({ where: { id_agency: input.agencyId } }),
+        tx.invoiceIssuanceAttempt.count({
+          where: {
+            id_agency: input.agencyId,
+            status: { in: ["PENDING", "PREPARING", "PROCESSING", "AUTHORIZED", "REVIEW_REQUIRED"] },
+          },
+        }),
       ]);
-      if (issued > 0 || groupInvoices > 0) {
-        throw new ArcaJobStartConflict("Esta agencia ya tiene facturas emitidas con otro CUIT. Consultá soporte antes de cambiar el emisor fiscal.");
+      if (issued > 0 || groupInvoices > 0 || unfinishedAttempts > 0) {
+        throw new ArcaJobStartConflict("Esta agencia ya tiene comprobantes o emisiones en curso con otro CUIT. Para conservar su historial fiscal, creá una agencia nueva para el nuevo emisor.");
       }
     }
     await tx.arcaConnectionJob.updateMany({

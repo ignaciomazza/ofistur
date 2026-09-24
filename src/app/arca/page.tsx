@@ -167,17 +167,20 @@ export default function ArcaPage() {
   });
 
   const prefillingRef = useRef(false);
+  const providerBlocked = job?.status === "blocked_provider" ||
+    Boolean(job?.lastError && /l[ií]mite.{0,30}cuit/i.test(job.lastError));
 
   const statusLabel = useMemo(() => {
     if (job && ["pending", "running", "waiting"].includes(job.status))
       return "Conectando";
+    if (providerBlocked) return "Revisión de Ofistur";
     if (job?.status === "requires_action") return "Requiere acción";
     if (job?.status === "error") return config?.status === "connected" ? "Conexión anterior activa" : "Error";
     if (config?.status === "connected") return "Conectado";
     if (config?.status === "disconnected") return "Desconectado";
     if (config?.status === "error") return "Error";
     return "Sin conexión";
-  }, [config, job]);
+  }, [config, job, providerBlocked]);
 
   const statusTone = useMemo(() => {
     if (statusLabel === "Conectado")
@@ -185,6 +188,8 @@ export default function ArcaPage() {
     if (statusLabel === "Conectando")
       return "border border-sky-700/60 bg-sky-200/50 text-sky-900 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-100";
     if (statusLabel === "Requiere acción")
+      return "border border-amber-700/60 bg-amber-200/50 text-amber-900 dark:border-amber-400/50 dark:bg-amber-500/20 dark:text-amber-100";
+    if (statusLabel === "Revisión de Ofistur")
       return "border border-amber-700/60 bg-amber-200/50 text-amber-900 dark:border-amber-400/50 dark:bg-amber-500/20 dark:text-amber-100";
     if (statusLabel === "Error")
       return "border border-rose-700/60 bg-rose-200/50 text-rose-900 dark:border-rose-400/50 dark:bg-rose-500/20 dark:text-rose-100";
@@ -195,6 +200,8 @@ export default function ArcaPage() {
 
   const cuitDigits = form.cuitRepresentado.replace(/\D/g, "");
   const hasValidCuit = cuitDigits.length === 11;
+  const changingIssuer = Boolean(config?.taxIdRepresentado && hasValidCuit &&
+    config.taxIdRepresentado.replace(/\D/g, "") !== cuitDigits);
   const aliasReady = form.alias.trim().length > 0 || hasValidCuit;
   const aliasNeedsCuit = !form.alias.trim() && !hasValidCuit;
 
@@ -278,7 +285,7 @@ export default function ArcaPage() {
   useEffect(() => {
     if (!job || !token) return;
     if (
-      !["pending", "running", "waiting", "requires_action"].includes(job.status)
+      !["pending", "running", "waiting", "requires_action", "blocked_provider"].includes(job.status)
     )
       return;
 
@@ -516,7 +523,13 @@ export default function ArcaPage() {
           </div>
         </div>
 
-        {job?.status === "error" && config?.status === "connected" && (
+        {providerBlocked && (
+          <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+            La conexión quedó pausada por un límite de la cuenta de Ofistur. Estamos revisándolo; no hace falta que generes otro certificado ni cambies tus datos. La conexión anterior, si estaba activa, se conserva.
+          </div>
+        )}
+
+        {job?.status === "error" && !providerBlocked && config?.status === "connected" && (
           <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
             La reconexión no terminó. La conexión anterior sigue activa. {job.lastError}
           </div>
@@ -655,6 +668,12 @@ export default function ArcaPage() {
                           </div>
                         </div>
                       </div>
+
+                      {changingIssuer && (
+                        <p className="rounded-2xl border border-amber-700/40 bg-amber-100/70 p-3 text-xs text-amber-950 dark:border-amber-300/30 dark:bg-amber-500/10 dark:text-amber-100">
+                          Estás cambiando el CUIT emisor. Se creará un certificado para el nuevo CUIT y la conexión anterior se reemplazará solo cuando la nueva funcione. Si esta agencia ya emitió comprobantes, usá una agencia nueva para conservar el historial fiscal de cada emisor.
+                        </p>
+                      )}
 
                       <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-2">
@@ -852,7 +871,7 @@ export default function ArcaPage() {
                               {job?.services.length ?? form.services.length}
                             </span>
                           </div>
-                          {job?.lastError && (
+                          {job?.lastError && !providerBlocked && (
                             <p className="whitespace-pre-wrap break-words text-xs text-rose-700 dark:text-rose-200">
                               Detalle ARCA: {job.lastError}
                             </p>
@@ -860,14 +879,17 @@ export default function ArcaPage() {
                         </div>
                       </div>
 
-                      {job?.status === "requires_action" && (
+                      {(job?.status === "requires_action" || job?.status === "blocked_provider") && (
                         <div className="rounded-2xl border border-amber-700/50 bg-amber-200/60 p-4 text-amber-900 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-100">
                           <p className="text-xs font-medium">
-                            {job?.step === "list_points" || job?.step === "detect_regime"
+                            {job?.status === "blocked_provider"
+                              ? "Cuando Ofistur resuelva el límite, ingresá tu clave para continuar desde este paso."
+                              : job?.step === "list_points" || job?.step === "detect_regime"
                               ? "Confirmá el régimen fiscal y reingresá tu clave para continuar."
                               : "Necesitamos tu clave fiscal para continuar."}
                           </p>
-                          {(job?.step === "list_points" || job?.step === "detect_regime") && (
+                          {job?.status === "requires_action" &&
+                            (job.step === "list_points" || job.step === "detect_regime") && (
                             <select
                               value={resumeRegime}
                               onChange={(event) => setResumeRegime(event.target.value as "" | "mono" | "ri")}
@@ -890,7 +912,9 @@ export default function ArcaPage() {
                             />
                             <button
                               type="button"
-                              disabled={!resumePassword.trim() || ((job?.step === "list_points" || job?.step === "detect_regime") && !resumeRegime) || resuming}
+                              disabled={!resumePassword.trim() ||
+                                (job?.status === "requires_action" &&
+                                  (job.step === "list_points" || job.step === "detect_regime") && !resumeRegime) || resuming}
                               onClick={handleResume}
                               className="rounded-full border border-amber-700/60 bg-amber-200/70 px-4 py-2 text-xs font-medium text-amber-900 shadow-sm transition-transform hover:scale-95 active:scale-90 disabled:cursor-not-allowed dark:border-amber-300/40 dark:bg-amber-500/20 dark:text-white"
                             >
@@ -900,6 +924,14 @@ export default function ArcaPage() {
                             </button>
                           </div>
                         </div>
+                      )}
+
+                      {providerBlocked && (
+                        <p className="text-xs text-amber-800 dark:text-amber-200">
+                          Ofistur debe revisar su cupo de CUITs en Afip SDK. {job?.status === "blocked_provider"
+                            ? "Cuando esté resuelto, podrás continuar desde este paso ingresando nuevamente la clave fiscal."
+                            : "Cuando esté resuelto, iniciá una nueva conexión con tus datos."}
+                        </p>
                       )}
 
                       <div className="flex flex-wrap items-center gap-3">

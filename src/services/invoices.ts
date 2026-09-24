@@ -877,6 +877,7 @@ export async function createInvoices(
 
       try {
         const created = await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(77445::integer, ${booking.id_agency}::integer)`;
           const agencyInvoiceId = await getNextAgencyCounter(
             tx,
             booking.id_agency,

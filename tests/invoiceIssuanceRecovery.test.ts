@@ -3,6 +3,7 @@ import type { NextApiRequest } from "next";
 
 const mocks = vi.hoisted(() => {
   const tx = {
+    $executeRaw: vi.fn(async () => 1),
     invoice: { create: vi.fn(), findUnique: vi.fn() },
     invoiceItem: { create: vi.fn() },
     invoiceIssuanceAttempt: { update: vi.fn() },

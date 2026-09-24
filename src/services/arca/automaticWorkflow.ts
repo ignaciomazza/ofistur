@@ -25,7 +25,7 @@ export async function connectArcaWorkflow(jobId: number) {
   // Each iteration is an observable, retryable step. The browser only reads progress.
   for (let i = 0; i < 150; i++) {
     const state = await advance(jobId);
-    if (["completed", "error", "requires_action"].includes(state.status)) return;
+    if (["completed", "error", "requires_action", "blocked_provider"].includes(state.status)) return;
     await sleep(state.retryCount ? "15s" : "5s");
   }
   await expire(jobId);

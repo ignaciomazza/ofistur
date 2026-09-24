@@ -43,7 +43,7 @@ export default async function handler(
       hasPassword: Boolean(password),
       passwordLength: password.length,
     });
-    if (job.status !== "requires_action") {
+    if (!["requires_action", "blocked_provider"].includes(job.status)) {
       return res.status(409).json({ error: "Esta conexión no requiere reanudar." });
     }
     const newer = await prisma.arcaConnectionJob.findFirst({
@@ -52,14 +52,16 @@ export default async function handler(
     });
     if (newer) return res.status(409).json({ error: "Hay una conexión más reciente. Actualizá la página." });
     const regime = (req.body ?? {}).taxRegime;
-    if (["detect_regime", "list_points"].includes(job.step) && !job.detectedTaxRegime && !["mono", "ri"].includes(regime)) {
+    if (job.status === "requires_action" && ["detect_regime", "list_points"].includes(job.step) &&
+        !job.detectedTaxRegime && !["mono", "ri"].includes(regime)) {
       return res.status(400).json({ error: "Seleccioná el régimen fiscal confirmado en ARCA." });
     }
     const resumed = await prisma.arcaConnectionJob.updateMany({
-      where: { id: jobId, agencyId: auth.id_agency, status: "requires_action" },
+      where: { id: jobId, agencyId: auth.id_agency, status: job.status },
       data: {
         passwordEncrypted: encryptSecret(password),
-        detectedTaxRegime: ["mono", "ri"].includes(regime) ? regime : job.detectedTaxRegime,
+        detectedTaxRegime: job.status === "requires_action" && ["mono", "ri"].includes(regime)
+          ? regime : job.detectedTaxRegime,
         status: "running", lastError: null, retryCount: 0,
       },
     });
@@ -71,7 +73,7 @@ export default async function handler(
     } catch {
       await prisma.arcaConnectionJob.update({
         where: { id: jobId },
-        data: { status: "requires_action", passwordEncrypted: null, lastError: "No se pudo reanudar el proceso automático." },
+        data: { status: job.status, passwordEncrypted: null, lastError: "No se pudo reanudar el proceso automático." },
       });
       return res.status(503).json({ error: "No se pudo reanudar el proceso automático." });
     }

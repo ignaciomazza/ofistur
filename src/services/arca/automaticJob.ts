@@ -1,4 +1,4 @@
-import { X509Certificate } from "crypto";
+import { createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import Afip from "@afipsdk/afip.js";
 import prisma from "@/lib/prisma";
 import { decryptSecret, encryptSecret } from "@/lib/arcaSecrets";
@@ -6,6 +6,7 @@ import { invalidateAfipCache } from "@/services/afip/afipConfig";
 import { runAutomation } from "@/services/arca/automationV2";
 import { extractPemPair } from "@/services/arca/pem";
 import { classifyTaxRegime } from "@/services/arca/taxRegime";
+import { arcaErrorMessage, isInvalidCertificate, isMissingServiceAuthorization, isProviderCuitLimit } from "@/services/arca/connectionErrors";
 
 type Regime = "mono" | "ri";
 type SalesPoint = {
@@ -23,9 +24,11 @@ function safeMessage(value: string, password?: string) {
     .slice(0, 320);
 }
 
-function certificateValid(cert: string): boolean {
+function certificateValid(cert: string, key?: string): boolean {
   try {
-    return new Date(new X509Certificate(cert).validTo).getTime() > Date.now() + 7 * 86400_000;
+    const certificate = new X509Certificate(cert);
+    return new Date(certificate.validTo).getTime() > Date.now() + 7 * 86400_000 &&
+      (!key || certificate.checkPrivateKey(createPrivateKey(key)));
   } catch {
     return false;
   }
@@ -45,14 +48,17 @@ function compatible(point: SalesPoint, regime: Regime): boolean {
 }
 
 async function fail(jobId: number, message: string, action = false, password?: string) {
+  const providerBlocked = isProviderCuitLimit(message);
   return prisma.arcaConnectionJob.update({
     where: { id: jobId },
     data: {
-      status: action ? "requires_action" : "error",
+      status: providerBlocked ? "blocked_provider" : action ? "requires_action" : "error",
+      // Keep the provider's reference ID for support; the UI shows a separate,
+      // actionable explanation to the agency.
       lastError: safeMessage(message, password),
       longJobId: null,
       passwordEncrypted: null,
-      ...(!action ? {
+      ...(!action && !providerBlocked ? {
         completedAt: new Date(),
         stagedCertEncrypted: null,
         stagedKeyEncrypted: null,
@@ -63,7 +69,7 @@ async function fail(jobId: number, message: string, action = false, password?: s
 
 export async function advanceAutomaticJob(jobId: number) {
   const job = await prisma.arcaConnectionJob.findUnique({ where: { id: jobId } });
-  if (!job || ["completed", "error", "requires_action"].includes(job.status)) return job;
+  if (!job || ["completed", "error", "requires_action", "blocked_provider"].includes(job.status)) return job;
   if (!job.passwordEncrypted) return fail(jobId, "La clave fiscal expiró. Volvé a ingresarla.", true);
 
   const password = decryptSecret(job.passwordEncrypted);
@@ -76,15 +82,63 @@ export async function advanceAutomaticJob(jobId: number) {
       const active = await prisma.agencyArcaConfig.findUnique({ where: { agencyId: job.agencyId } });
       if (active?.taxIdRepresentado === job.taxIdRepresentado &&
           active.certEncrypted && active.keyEncrypted &&
-          certificateValid(decryptSecret(active.certEncrypted))) {
+          certificateValid(decryptSecret(active.certEncrypted), decryptSecret(active.keyEncrypted))) {
         return update({
           alias: active.alias,
           stagedCertEncrypted: active.certEncrypted,
           stagedKeyEncrypted: active.keyEncrypted,
-          stagedServices: active.authorizedServices,
-          step: "auth_ws",
+          stagedServices: [],
+          currentServiceIndex: 0,
+          step: "probe_ws",
           status: "running",
         });
+      }
+    }
+
+    if (job.step === "probe_ws") {
+      const service = job.services[job.currentServiceIndex];
+      if (!service) return update({ step: "detect_regime", status: "running", retryCount: 0 });
+      if (!job.stagedCertEncrypted || !job.stagedKeyEncrypted) {
+        return fail(jobId, "Falta certificado para verificar los servicios.");
+      }
+      const client = new Afip({
+        CUIT: Number(job.taxIdRepresentado),
+        cert: decryptSecret(job.stagedCertEncrypted),
+        key: decryptSecret(job.stagedKeyEncrypted),
+        production: true,
+        access_token: process.env.AFIP_SDK_ACCESS_TOKEN || process.env.ACCESS_TOKEN,
+      });
+      try {
+        // WSAA can confirm access even when the agency has no point of sale yet.
+        // Force a fresh ticket so a cached authorization cannot mask a revoked one.
+        if (service === "wsfe") await client.ElectronicBilling.getTokenAuthorization(true);
+        else if (service === "ws_sr_constancia_inscripcion") {
+          await client.RegisterInscriptionProof.getTokenAuthorization(true);
+        } else if (service === "ws_sr_padron_a13") {
+          await client.RegisterScopeThirteen.getTokenAuthorization(true);
+        }
+        const next = job.currentServiceIndex + 1;
+        return update({
+          stagedServices: Array.from(new Set([...job.stagedServices, service])),
+          currentServiceIndex: next,
+          step: next >= job.services.length ? "detect_regime" : "probe_ws",
+          status: "running", retryCount: 0,
+        });
+      } catch (error) {
+        const message = arcaErrorMessage(error);
+        if (isProviderCuitLimit(message)) return fail(jobId, message, false, password);
+        if (isMissingServiceAuthorization(message)) {
+          return update({ step: "auth_ws", status: "running", retryCount: 0 });
+        }
+        if (isInvalidCertificate(message)) {
+          return update({
+            step: "renew_cert", status: "running", retryCount: 0,
+            alias: `${job.alias.slice(0, 20)}${randomBytes(4).toString("hex")}`,
+            stagedCertEncrypted: null, stagedKeyEncrypted: null, stagedServices: [],
+            currentServiceIndex: 0, detectedTaxRegime: null, regimeConfirmedByArca: false,
+          });
+        }
+        throw error;
       }
     }
 
@@ -111,7 +165,7 @@ export async function advanceAutomaticJob(jobId: number) {
     }
 
     const service = job.services[job.currentServiceIndex];
-    const task = job.step === "create_cert" ? "create-cert-prod" :
+    const task = job.step === "create_cert" || job.step === "renew_cert" ? "create-cert-prod" :
       job.step === "auth_ws" && service ? "auth-web-service-prod" :
       job.step === "list_points" ? "list-sales-points" :
       job.step === "create_point" ? "create-sales-point" : null;
@@ -148,21 +202,20 @@ export async function advanceAutomaticJob(jobId: number) {
         if (task === "create-sales-point" && /ya existe|already exists|duplicad/i.test(result.error)) {
           return update({ step: "list_points", longJobId: null, status: "running", retryCount: 0 });
         }
+        if (isProviderCuitLimit(result.error)) return fail(jobId, result.error, false, password);
         if (result.retryable && job.retryCount < 3) {
           return update({ retryCount: job.retryCount + 1, status: "waiting", lastError: safeMessage(result.error, password) });
         }
-        const quotaHint = /l[ií]mite de cuits/i.test(result.error)
-          ? " Revisá el cupo de CUITs del plan de Afip SDK de OFISTUR."
-          : "";
-        return fail(jobId, result.error + quotaHint, false, password);
+        return fail(jobId, result.error, false, password);
       }
 
       if (task === "create-cert-prod") {
         const pair = extractPemPair(result.data);
-        if (!certificateValid(pair.certPem)) return fail(jobId, "ARCA devolvió un certificado inválido o vencido.");
+        if (!certificateValid(pair.certPem, pair.keyPem)) return fail(jobId, "ARCA devolvió un certificado o clave inválidos.");
         return update({
           stagedCertEncrypted: encryptSecret(pair.certPem),
           stagedKeyEncrypted: encryptSecret(pair.keyPem),
+          stagedServices: [], currentServiceIndex: 0,
           step: "auth_ws", longJobId: null, status: "running", retryCount: 0,
         });
       }
@@ -231,8 +284,44 @@ export async function advanceAutomaticJob(jobId: number) {
         if (job.retryCount < 12) return update({ retryCount: job.retryCount + 1, status: "waiting" });
         return fail(jobId, "ARCA aún no habilitó el punto de venta para Web Services. Reintentá más tarde.", true);
       }
-      await prisma.$transaction([
-        prisma.agencyArcaConfig.upsert({
+      const activated = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(77445::integer, ${job.agencyId}::integer)`;
+        const [current, agency] = await Promise.all([
+          tx.agencyArcaConfig.findUnique({
+            where: { agencyId: job.agencyId },
+            select: { taxIdRepresentado: true },
+          }),
+          tx.agency.findUnique({
+            where: { id_agency: job.agencyId },
+            select: { tax_id: true },
+          }),
+        ]);
+        const agencyCuit = String(agency?.tax_id ?? "").replace(/\D/g, "");
+        const changingIssuer =
+          (current?.taxIdRepresentado && current.taxIdRepresentado !== job.taxIdRepresentado) ||
+          (agencyCuit && agencyCuit !== job.taxIdRepresentado);
+        if (changingIssuer) {
+          const [invoices, groupInvoices, unfinishedAttempts] = await Promise.all([
+            tx.invoice.count({ where: { id_agency: job.agencyId } }),
+            tx.travelGroupInvoice.count({ where: { id_agency: job.agencyId } }),
+            tx.invoiceIssuanceAttempt.count({
+              where: {
+                id_agency: job.agencyId,
+                status: { in: ["PENDING", "PREPARING", "PROCESSING", "AUTHORIZED", "REVIEW_REQUIRED"] },
+              },
+            }),
+          ]);
+          if (invoices || groupInvoices || unfinishedAttempts) return false;
+        }
+        await tx.agency.update({
+          where: { id_agency: job.agencyId },
+          data: {
+            tax_id: job.taxIdRepresentado,
+            afip_cert_base64: null,
+            afip_key_base64: null,
+          },
+        });
+        await tx.agencyArcaConfig.upsert({
           where: { agencyId: job.agencyId },
           create: {
             agencyId: job.agencyId,
@@ -264,22 +353,27 @@ export async function advanceAutomaticJob(jobId: number) {
             taxRegimeCheckedAt: job.regimeConfirmedByArca ? new Date() : null,
             status: "connected", lastError: null, lastOkAt: new Date(),
           },
-        }),
-        prisma.arcaConnectionJob.update({
+        });
+        await tx.arcaConnectionJob.update({
           where: { id: jobId },
           data: {
             status: "completed", step: "done", completedAt: new Date(),
             passwordEncrypted: null, stagedCertEncrypted: null,
             stagedKeyEncrypted: null, longJobId: null, lastError: null,
           },
-        }),
-      ]);
+        });
+        return true;
+      });
+      if (!activated) {
+        return fail(jobId, "Se emitieron comprobantes o quedó una emisión pendiente con el CUIT anterior durante la reconexión. Creá una agencia nueva para ese emisor.");
+      }
       invalidateAfipCache(job.agencyId);
       return prisma.arcaConnectionJob.findUnique({ where: { id: jobId } });
     }
     return fail(jobId, "Paso de conexión desconocido.");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Error inesperado en ARCA";
+    const message = arcaErrorMessage(error);
+    if (isProviderCuitLimit(message)) return fail(jobId, message, false, password);
     if (job.retryCount < 3) {
       return update({ retryCount: job.retryCount + 1, status: "waiting", lastError: safeMessage(message, password) });
     }
