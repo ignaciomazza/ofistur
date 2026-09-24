@@ -482,6 +482,7 @@ type Props = {
   availableServices: Service[];
   operators: Operator[];
   onCreated?: () => void;
+  initiallyOpen?: boolean;
 };
 
 // respuesta mínima del investment creado
@@ -515,8 +516,9 @@ export default function OperatorPaymentForm({
   availableServices,
   operators,
   onCreated,
+  initiallyOpen = false,
 }: Props) {
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(initiallyOpen);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;

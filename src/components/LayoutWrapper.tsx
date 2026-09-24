@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Header from "./Header";
 import SideBar from "./SideBar";
-import VantaBackground from "./VantaBackground";
 import SubscriptionStatusBanner from "@/components/billing/SubscriptionStatusBanner";
 
 export default function LayoutWrapper({
@@ -25,7 +24,9 @@ export default function LayoutWrapper({
   const isQr = pathname === "/qr";
   const isQuoteStudio = /^\/quotes\/[^/]+\/template$/.test(pathname);
   const isTemplatesStudio = pathname === "/templates";
-  const isBookingVoucherStudio = /^\/bookings\/services\/[^/]+\/template$/.test(pathname);
+  const isBookingVoucherStudio = /^\/bookings\/services\/[^/]+\/template$/.test(
+    pathname,
+  );
   const isTemplateConfigStudio = /^\/template-config\/[^/]+$/.test(pathname);
   const isStudioPage =
     isQuoteStudio ||
@@ -42,7 +43,6 @@ export default function LayoutWrapper({
   }, [isLanding]);
 
   const showSidebar = !isLoginPage && !isLanding && !isQr && !isStudioPage; // ✅ sin sidebar en landing y modo estudio
-  const showVanta = !isLoginPage; // mantenemos Vanta (en light queda bien)
 
   // Bloqueo del scroll cuando el menú lateral está abierto (mejor UX móvil)
   useEffect(() => {
@@ -59,7 +59,6 @@ export default function LayoutWrapper({
 
   return (
     <div className="flex min-h-screen flex-col text-sky-950 dark:text-white">
-      {showVanta && <VantaBackground />}
       {!isQr && (
         <Header
           toggleMenu={toggleMenu}
@@ -98,7 +97,7 @@ export default function LayoutWrapper({
               ? sidebarHidden
                 ? "md:mx-auto md:max-w-7xl md:px-8"
                 : "md:pl-56 md:pr-8"
-            : ""
+              : ""
           }`}
         >
           {showSidebar && <SubscriptionStatusBanner />}

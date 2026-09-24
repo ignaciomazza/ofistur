@@ -15,6 +15,7 @@ type Props = {
   booking: Booking;
   availableServices: Service[];
   onCreated?: () => void;
+  initiallyOpen?: boolean;
 };
 
 const STATUS_OPTS = [
@@ -85,8 +86,9 @@ export default function OperatorDueForm({
   booking,
   availableServices,
   onCreated,
+  initiallyOpen = false,
 }: Props) {
-  const [isFormVisible, setIsFormVisible] = useState(false);
+  const [isFormVisible, setIsFormVisible] = useState(initiallyOpen);
 
   // === Servicios de esta reserva (embebidos o provistos) ===
   const servicesFromBooking = useMemo<Service[]>(

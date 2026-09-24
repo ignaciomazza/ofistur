@@ -2,7 +2,6 @@
 "use client";
 
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { pdf } from "@react-pdf/renderer";
 import {
   Variant,
   isBlank,
@@ -13,8 +12,15 @@ import {
   countWeirdChars,
 } from "@/lib/whitespace";
 import { sanitizeBlockTextStyle } from "@/lib/blockTextStyle";
-import TemplatePdfDocument from "./TemplatePdfDocument";
 import type { TemplateConfig, ContentBlock, Agency } from "@/types/templates";
+
+async function loadPdfRenderer() {
+  const [{ pdf }, { default: TemplatePdfDocument }] = await Promise.all([
+    import("@react-pdf/renderer"),
+    import("./TemplatePdfDocument"),
+  ]);
+  return { pdf, TemplatePdfDocument };
+}
 
 /* ========================================================================
  * Tipos mínimos
@@ -396,6 +402,7 @@ async function findOffenderBlock(
   baseProps: Omit<TemplatePdfDownloadProps, "blocks">,
   blocks: ContentBlock[],
 ): Promise<number | null> {
+  const { pdf, TemplatePdfDocument } = await loadPdfRenderer();
   const src = toArray(blocks);
   for (let i = 0; i < src.length; i++) {
     try {
@@ -556,7 +563,8 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       const docAgency = docOverrides?.agency ?? agency;
       const docCoverUrl =
         docOverrides?.selectedCoverUrl ??
-        (selectedCoverUrl ?? selectedCoverUrlFromCfg);
+        selectedCoverUrl ??
+        selectedCoverUrlFromCfg;
 
       if (debug) {
         console.groupCollapsed(
@@ -575,6 +583,7 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
         console.groupEnd();
       }
 
+      const { pdf, TemplatePdfDocument } = await loadPdfRenderer();
       const doc = (
         <TemplatePdfDocument
           rCfg={cfg}
@@ -673,7 +682,11 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
 
       // 3) Hard (single-line)
       try {
-        const blob = await buildOnce("hard", "forzado single-line", docOverrides);
+        const blob = await buildOnce(
+          "hard",
+          "forzado single-line",
+          docOverrides,
+        );
         saveBlob(blob, fileName);
         if (onDownloaded) await onDownloaded(fileName);
         return;
@@ -686,7 +699,10 @@ const TemplatePdfDownload: React.FC<TemplatePdfDownloadProps> = (props) => {
       // 5) Diagnóstico por bloque (texto)
       if (debug) console.log("[PDF][DIAG] starting offender search…");
       const fullSanitized = sanitizeBlocks(effectiveBlocks, "full");
-      const offenderIdx = await findOffenderBlock(docPropsForRun, fullSanitized);
+      const offenderIdx = await findOffenderBlock(
+        docPropsForRun,
+        fullSanitized,
+      );
       if (offenderIdx != null && offenderIdx >= 0 && debug) {
         const b = fullSanitized[offenderIdx]!;
         console.warn(

@@ -4,18 +4,10 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Area,
-  AreaChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  PieChart,
-  Pie,
-  Cell,
-  type TooltipProps,
-} from "recharts";
+  ChartVentasUp,
+  ChartAdminDown,
+  ChartControlEquipo,
+} from "./LandingCharts";
 import Spinner from "@/components/Spinner";
 import { authFetch } from "@/utils/authFetch";
 import { trackCompleteRegistration, trackContact } from "@/lib/meta/pixel";
@@ -512,23 +504,42 @@ type TutorialVideo = {
 
 function TutorialVideoCard({ title, desc, videoUrl }: TutorialVideo) {
   const finalUrl = getYouTubeEmbed(videoUrl);
+  const [playing, setPlaying] = useState(false);
+  const playbackUrl = `${finalUrl}${finalUrl.includes("?") ? "&" : "?"}autoplay=1`;
 
   return (
     <motion.div
-      className="flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-white/10 shadow-md shadow-sky-950/10 backdrop-blur"
+      className="flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-white/20 shadow-md shadow-sky-950/10"
       {...viewPreset}
-      {...hoverPreset}
     >
-      <div className="relative aspect-video w-full bg-black/80">
-        {finalUrl ? (
+      <div className="relative aspect-video w-full bg-gradient-to-br from-slate-900 via-sky-950 to-slate-800">
+        {playing && finalUrl ? (
           <iframe
             className="absolute inset-0 size-full rounded-t-3xl"
-            src={finalUrl}
+            src={playbackUrl}
             title={title}
-            loading="lazy"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
           />
+        ) : finalUrl ? (
+          <button
+            type="button"
+            onClick={() => setPlaying(true)}
+            className="absolute inset-0 flex size-full flex-col items-center justify-center gap-3 text-white transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-sky-300"
+            aria-label={`Reproducir ${title}`}
+          >
+            <span className="grid size-16 place-items-center rounded-full border border-white/30 bg-white/15 shadow-lg">
+              <svg
+                viewBox="0 0 24 24"
+                className="size-7 translate-x-0.5"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M7 4.5a1 1 0 0 1 1.53-.85l11 7.5a1 1 0 0 1 0 1.7l-11 7.5A1 1 0 0 1 7 19.5z" />
+              </svg>
+            </span>
+            <span className="text-xs font-medium tracking-wide">Ver video</span>
+          </button>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-[11px] tracking-wide text-white/60">
             VIDEO
@@ -563,211 +574,6 @@ function RoleCard({ title, bullets }: { title: string; bullets: string[] }) {
         ))}
       </ul>
     </motion.div>
-  );
-}
-
-/* ===========================
- * Charts utils (SSR-safe) + Glass Tooltip
- * =========================== */
-function useMounted() {
-  const [m, setM] = useState(false);
-  useEffect(() => setM(true), []);
-  return m;
-}
-
-function ChartCard({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <motion.div
-      className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-md shadow-sky-950/10 backdrop-blur"
-      {...viewPreset}
-      {...hoverPreset}
-    >
-      <div className="flex items-baseline justify-between">
-        <p className="text-sm font-semibold text-sky-950">{title}</p>
-        {subtitle && (
-          <span className="text-[11px] text-sky-950/70">{subtitle}</span>
-        )}
-      </div>
-      <div className="mt-3 h-40 w-full">{children}</div>
-    </motion.div>
-  );
-}
-
-function GlassTooltip(props: TooltipProps<number, string>) {
-  const { active, label, payload } = props;
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/10 p-3 text-sky-950 shadow-md backdrop-blur">
-      {label && <p className="mb-1 text-xs opacity-70">{label}</p>}
-      <div className="space-y-1 text-sky-950">
-        {payload.map((p, i) => (
-          <p key={i} className="text-sm">
-            <span className="font-medium">{p.name || p.dataKey}:</span>{" "}
-            {p.value}
-          </p>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ===========================
- * Charts marketing
- * =========================== */
-function ChartVentasUp() {
-  const mounted = useMounted();
-  const data = [
-    { m: "Ene", v: 40 },
-    { m: "Feb", v: 48 },
-    { m: "Mar", v: 55 },
-    { m: "Abr", v: 63 },
-    { m: "May", v: 70 },
-    { m: "Jun", v: 82 },
-  ];
-  return (
-    <ChartCard title="Más tiempo vendiendo" subtitle="+42% foco comercial">
-      {mounted ? (
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data}>
-            <defs>
-              <linearGradient id="gVentas" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.4} />
-                <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.05} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid vertical={false} stroke="#e5eef7" />
-            <XAxis
-              dataKey="m"
-              tickLine={false}
-              axisLine={false}
-              stroke="#475569"
-              fontSize={12}
-            />
-            <YAxis hide />
-            <Tooltip content={<GlassTooltip />} />
-            <Area
-              type="monotone"
-              dataKey="v"
-              name="Horas útiles en ventas"
-              stroke="#0ea5e9"
-              strokeWidth={2}
-              fill="url(#gVentas)"
-              activeDot={{ r: 4 }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      ) : (
-        <Skeleton />
-      )}
-    </ChartCard>
-  );
-}
-
-function ChartAdminDown() {
-  const mounted = useMounted();
-  const data = [
-    { m: "Ene", v: 40 },
-    { m: "Feb", v: 36 },
-    { m: "Mar", v: 30 },
-    { m: "Abr", v: 26 },
-    { m: "May", v: 22 },
-    { m: "Jun", v: 18 },
-  ];
-  return (
-    <ChartCard
-      title="Menos trabajo repetitivo"
-      subtitle="-55% tareas operativas"
-    >
-      {mounted ? (
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data}>
-            <defs>
-              <linearGradient id="gAdmin" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.35} />
-                <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.05} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid vertical={false} stroke="#e5eef7" />
-            <XAxis
-              dataKey="m"
-              tickLine={false}
-              axisLine={false}
-              stroke="#475569"
-              fontSize={12}
-            />
-            <YAxis hide />
-            <Tooltip content={<GlassTooltip />} />
-            <Area
-              type="monotone"
-              dataKey="v"
-              name="Horas en planillas / correcciones"
-              stroke="#64748b"
-              strokeWidth={2}
-              fill="url(#gAdmin)"
-              activeDot={{ r: 4 }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      ) : (
-        <Skeleton />
-      )}
-    </ChartCard>
-  );
-}
-
-function ChartControlEquipo() {
-  const mounted = useMounted();
-  const pct = 92;
-  const pie = [
-    { name: "Equipo alineado", value: pct },
-    { name: "Caos / retrabajo", value: 100 - pct },
-  ];
-  const colors = ["#0ea5e9", "#e2e8f0"];
-
-  return (
-    <ChartCard title="Equipo alineado" subtitle="Visibilidad en tiempo real">
-      {mounted ? (
-        <div className="relative size-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Tooltip content={<GlassTooltip />} />
-              <Pie
-                data={pie}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={50}
-                outerRadius={64}
-                startAngle={90}
-                endAngle={-270}
-                stroke="none"
-              >
-                {pie.map((_, i) => (
-                  <Cell key={i} fill={colors[i]} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="pointer-events-none absolute inset-0 grid place-items-center">
-            <div className="text-center">
-              <div className="text-2xl font-semibold text-sky-950">{pct}%</div>
-              <div className="text-[11px] text-sky-950/70">
-                claridad operativa
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <Skeleton />
-      )}
-    </ChartCard>
   );
 }
 
@@ -1720,7 +1526,9 @@ export default function LandingClient() {
         <div className="grid gap-6 sm:gap-7 md:grid-cols-[1fr,1.2fr] lg:grid-cols-[1fr,1.3fr]">
           {/* CTA card */}
           <Card>
-            <h3 className="text-lg font-semibold">¿Preferís coordinar un Meet?</h3>
+            <h3 className="text-lg font-semibold">
+              ¿Preferís coordinar un Meet?
+            </h3>
             <p className="mt-2 text-sm text-sky-950/80">
               Te respondemos por WhatsApp para agendar un Meet y ver tu caso.
             </p>
@@ -1835,13 +1643,6 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
       </AnimatePresence>
     </div>
   );
-}
-
-/* ===========================
- * Skeleton chart
- * =========================== */
-function Skeleton() {
-  return <div className="size-full animate-pulse rounded-xl bg-white/20" />;
 }
 
 /* ===========================

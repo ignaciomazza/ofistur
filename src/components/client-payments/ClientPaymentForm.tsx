@@ -23,6 +23,7 @@ type Props = {
   onCreated?: () => void;
   defaultClientId?: number | null;
   lockClient?: boolean;
+  initiallyOpen?: boolean;
 };
 
 type AmountMode = "total" | "per_equal" | "per_custom";
@@ -120,8 +121,9 @@ export default function ClientPaymentForm({
   onCreated,
   defaultClientId = null,
   lockClient = false,
+  initiallyOpen = false,
 }: Props) {
-  const [isFormVisible, setIsFormVisible] = useState(false);
+  const [isFormVisible, setIsFormVisible] = useState(initiallyOpen);
 
   // Pax que paga (prefill: titular al abrir)
   const [payerClientId, setPayerClientId] = useState<number | null>(null);

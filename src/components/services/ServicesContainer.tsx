@@ -9,26 +9,116 @@ import { useRouter } from "next/navigation";
 import { toast, ToastContainer } from "react-toastify";
 
 import Spinner from "@/components/Spinner";
-import ServiceForm from "@/components/services/ServiceForm";
 import ServiceList from "@/components/services/ServiceList";
-import InvoiceForm, {
-  type InvoiceFormData,
-} from "@/components/invoices/InvoiceForm";
+import type { InvoiceFormData } from "@/components/invoices/InvoiceForm";
 import InvoiceCard from "@/components/invoices/InvoiceCard";
-import ReceiptForm from "@/components/receipts/ReceiptForm";
 import ReceiptList from "@/components/receipts/ReceiptList";
-import CreditNoteForm, {
-  type CreditNoteFormData,
-} from "@/components/credit-notes/CreditNoteForm";
+import type { CreditNoteFormData } from "@/components/credit-notes/CreditNoteForm";
 import CreditNoteCard from "@/components/credit-notes/CreditNoteCard";
 import NoteComposer from "@/components/notes/NoteComposer";
 import RichNote from "@/components/notes/RichNote";
-import OperatorPaymentForm from "@/components/investments/OperatorPaymentForm";
 import OperatorPaymentList from "@/components/investments/OperatorPaymentList";
-import ClientPaymentForm from "@/components/client-payments/ClientPaymentForm";
 import ClientPaymentList from "@/components/client-payments/ClientPaymentList";
-import OperatorDueForm from "@/components/operator-dues/OperatorDueForm";
 import OperatorDueList from "@/components/operator-dues/OperatorDueList";
+
+const DeferredServiceForm = dynamic(
+  () => import("@/components/services/ServiceForm"),
+  {
+    loading: () => (
+      <FormLoading
+        id="service-form"
+        title="Cargando formulario de servicio..."
+      />
+    ),
+  },
+);
+const DeferredInvoiceForm = dynamic(
+  () => import("@/components/invoices/InvoiceForm"),
+  { loading: () => <FormLoading title="Cargando factura..." /> },
+);
+const DeferredCreditNoteForm = dynamic(
+  () => import("@/components/credit-notes/CreditNoteForm"),
+  { loading: () => <FormLoading title="Cargando nota de crédito..." /> },
+);
+const DeferredReceiptForm = dynamic(
+  () => import("@/components/receipts/ReceiptForm"),
+  {
+    loading: () => <FormLoading id="receipt-form" title="Cargando recibo..." />,
+  },
+);
+const DeferredOperatorPaymentForm = dynamic(
+  () => import("@/components/investments/OperatorPaymentForm"),
+  { loading: () => <FormLoading title="Cargando pago al operador..." /> },
+);
+const DeferredOperatorDueForm = dynamic(
+  () => import("@/components/operator-dues/OperatorDueForm"),
+  { loading: () => <FormLoading title="Cargando vencimiento..." /> },
+);
+const DeferredClientPaymentForm = dynamic(
+  () => import("@/components/client-payments/ClientPaymentForm"),
+  { loading: () => <FormLoading title="Cargando plan de pagos..." /> },
+);
+
+function FormLoading({ id, title }: { id?: string; title: string }) {
+  return (
+    <div
+      id={id}
+      className="mb-6 rounded-3xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-sky-950/70 dark:text-white/70"
+      role="status"
+    >
+      {title}
+    </div>
+  );
+}
+
+function DeferredFormTrigger({
+  id,
+  title,
+  onClick,
+  preload,
+}: {
+  id: string;
+  title: string;
+  onClick: () => void;
+  preload: () => void;
+}) {
+  return (
+    <div
+      id={id}
+      className="mb-6 rounded-3xl border border-white/10 bg-white/20 px-4 py-3 text-sky-950 shadow-md shadow-sky-950/10 dark:bg-white/[0.05] dark:text-white"
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        onPointerEnter={preload}
+        onFocus={preload}
+        className="flex w-full items-center gap-3 text-left"
+        aria-expanded={false}
+      >
+        <span
+          className="grid size-9 place-items-center rounded-full bg-sky-100 text-sky-950 shadow-sm shadow-sky-950/20 dark:bg-white/10 dark:text-white"
+          aria-hidden="true"
+        >
+          <svg
+            className="size-5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 4.5v15m7.5-7.5h-15"
+            />
+          </svg>
+        </span>
+        <span className="text-lg font-semibold">{title}</span>
+      </button>
+    </div>
+  );
+}
+
 const LazyBookingFilesSection = dynamic(
   () => import("@/components/bookings/BookingFilesSection"),
   {
@@ -207,9 +297,7 @@ function normalizeIdList(value: unknown): number[] {
   return out;
 }
 
-function normalizeServiceAllocationsForEdit(
-  value: unknown,
-): Array<{
+function normalizeServiceAllocationsForEdit(value: unknown): Array<{
   service_id: number;
   amount_service: number | string;
   service_currency?: string | null;
@@ -253,7 +341,8 @@ function normalizeServiceAllocationsForEdit(
       ...(Number.isFinite(amountPayment) && amountPayment > 0
         ? { amount_payment: amountPayment }
         : {}),
-      ...(typeof rec.payment_currency === "string" && rec.payment_currency.trim()
+      ...(typeof rec.payment_currency === "string" &&
+      rec.payment_currency.trim()
         ? { payment_currency: rec.payment_currency }
         : {}),
       ...(Number.isFinite(fxRate) && fxRate > 0 ? { fx_rate: fxRate } : {}),
@@ -521,6 +610,13 @@ export default function ServicesContainer(props: ServicesContainerProps) {
   } = props;
 
   const router = useRouter();
+  const [serviceFormActivated, setServiceFormActivated] = useState(false);
+  const [operatorPaymentFormActivated, setOperatorPaymentFormActivated] =
+    useState(false);
+  const [operatorDueFormActivated, setOperatorDueFormActivated] =
+    useState(false);
+  const [clientPaymentFormActivated, setClientPaymentFormActivated] =
+    useState(false);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -1045,6 +1141,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
   const [operatorDuesLoading, setOperatorDuesLoading] = useState(false);
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
   const [receiptFormVisible, setReceiptFormVisible] = useState(false);
+  const [receiptFormActivated, setReceiptFormActivated] = useState(false);
   const editingReceiptServiceIds = useMemo(() => {
     if (!editingReceipt) return [];
     const fromServiceIds = normalizeIdList(editingReceipt.serviceIds);
@@ -1055,9 +1152,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
   }, [editingReceipt]);
   const editingReceiptServiceAllocations = useMemo(
     () =>
-      normalizeServiceAllocationsForEdit(
-        editingReceipt?.service_allocations,
-      ),
+      normalizeServiceAllocationsForEdit(editingReceipt?.service_allocations),
     [editingReceipt],
   );
   const bookingServiceIds = useMemo(() => {
@@ -1282,9 +1377,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
         const json: unknown = await res.json().catch(() => null);
         const rawReceipt =
           (isRecord(json) && isRecord(json.receipt) ? json.receipt : null) ||
-          (isRecord(json) &&
-          isRecord(json.data) &&
-          isRecord(json.data.receipt)
+          (isRecord(json) && isRecord(json.data) && isRecord(json.data.receipt)
             ? json.data.receipt
             : null);
         if (!rawReceipt) return null;
@@ -1297,7 +1390,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
         const serviceIds = normalizeIdList(
           rawReceipt.serviceIds ?? receipt.serviceIds,
         );
-        const clientIds = normalizeIdList(rawReceipt.clientIds ?? receipt.clientIds);
+        const clientIds = normalizeIdList(
+          rawReceipt.clientIds ?? receipt.clientIds,
+        );
         const serviceAllocations = normalizeServiceAllocationsForEdit(
           rawReceipt.service_allocations,
         );
@@ -1312,7 +1407,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
           ...(rawReceipt as Partial<ReceiptWithPayments>),
           id_receipt: resolvedId,
           receipt_number: String(
-            rawReceipt.receipt_number ?? rawReceipt.number ?? receipt.receipt_number,
+            rawReceipt.receipt_number ??
+              rawReceipt.number ??
+              receipt.receipt_number,
           ),
           serviceIds,
           clientIds,
@@ -1328,6 +1425,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
 
   const startEditReceipt = useCallback(
     (receipt: Receipt) => {
+      setReceiptFormActivated(true);
       setEditingReceipt(receipt);
       setReceiptFormVisible(true);
 
@@ -1929,7 +2027,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
               {isBillingFormVisible && (
                 <div className="mt-4">
                   {billingMode === "invoice" ? (
-                    <InvoiceForm
+                    <DeferredInvoiceForm
                       formData={invoiceFormData}
                       availableServices={availableServices}
                       handleChange={handleInvoiceChange}
@@ -1943,7 +2041,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                       containerClassName="mb-0"
                     />
                   ) : (
-                    <CreditNoteForm
+                    <DeferredCreditNoteForm
                       formData={creditNoteFormData}
                       invoices={invoices}
                       handleChange={handleCreditNoteChange}
@@ -2442,23 +2540,37 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                 <p className="text-2xl font-medium">Servicios</p>
               </div>
 
-              <ServiceForm
-                token={token}
-                formData={formData}
-                operators={operators}
-                operatorsReady={operatorsReady}
-                handleChange={handleChange}
-                handleSubmit={handleSubmit}
-                editingServiceId={editingServiceId}
-                isFormVisible={isFormVisible}
-                setIsFormVisible={setIsFormVisible}
-                onBillingUpdate={onBillingUpdate}
-                agencyTransferFeePct={agencyTransferFeePct}
-                transferFeeReady={agencyTransferFeeReady}
-                canOverrideBillingMode={canOverrideBillingMode}
-                useBookingSaleTotal={useBookingSaleTotal}
-                passengerCategoryCounts={passengerCategoryCounts}
-              />
+              {serviceFormActivated || isFormVisible ? (
+                <DeferredServiceForm
+                  token={token}
+                  formData={formData}
+                  operators={operators}
+                  operatorsReady={operatorsReady}
+                  handleChange={handleChange}
+                  handleSubmit={handleSubmit}
+                  editingServiceId={editingServiceId}
+                  isFormVisible={isFormVisible}
+                  setIsFormVisible={setIsFormVisible}
+                  onBillingUpdate={onBillingUpdate}
+                  agencyTransferFeePct={agencyTransferFeePct}
+                  transferFeeReady={agencyTransferFeeReady}
+                  canOverrideBillingMode={canOverrideBillingMode}
+                  useBookingSaleTotal={useBookingSaleTotal}
+                  passengerCategoryCounts={passengerCategoryCounts}
+                />
+              ) : (
+                <DeferredFormTrigger
+                  id="service-form"
+                  title="Agregar Servicio"
+                  preload={() => {
+                    void import("@/components/services/ServiceForm");
+                  }}
+                  onClick={() => {
+                    setServiceFormActivated(true);
+                    setIsFormVisible(true);
+                  }}
+                />
+              )}
 
               {!hasServices && canShowBookingSaleTotalsForm && (
                 <div className="mt-8 rounded-3xl border border-sky-900/10 bg-white/35 p-4 text-sky-950 shadow-sm shadow-sky-950/5 backdrop-blur dark:border-white/10 dark:bg-white/[0.04] dark:text-white">
@@ -2494,13 +2606,17 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                               useBookingSaleTotal
                                 ? "bg-sky-500/70"
                                 : "bg-sky-950/20 dark:bg-white/20",
-                              saleModeSaving ? "cursor-not-allowed opacity-60" : "",
+                              saleModeSaving
+                                ? "cursor-not-allowed opacity-60"
+                                : "",
                             ].join(" ")}
                           >
                             <span
                               className={[
                                 "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-                                useBookingSaleTotal ? "translate-x-4" : "translate-x-1",
+                                useBookingSaleTotal
+                                  ? "translate-x-4"
+                                  : "translate-x-1",
                               ].join(" ")}
                             />
                           </button>
@@ -2539,7 +2655,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                               disabled={!saleTotalsDirty || saleTotalsSaving}
                               className="shrink-0 rounded-full border border-sky-900/15 bg-white/70 px-4 py-2 text-xs font-medium text-sky-950 shadow-sm shadow-sky-950/10 transition active:scale-95 disabled:opacity-50 dark:border-white/10 dark:bg-white/10 dark:text-white"
                             >
-                              {saleTotalsSaving ? "Guardando..." : "Guardar venta"}
+                              {saleTotalsSaving
+                                ? "Guardando..."
+                                : "Guardar venta"}
                             </button>
                           )}
                         </div>
@@ -2568,6 +2686,7 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                     setExpandedServiceId={setExpandedServiceId}
                     startEditingService={(service) => {
                       setEditingServiceId(service.id_service);
+                      setServiceFormActivated(true);
                       setFormData({
                         ...service,
                         destination: service.destination ?? "",
@@ -2605,7 +2724,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                               {canEditSaleMode ? (
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs font-medium text-sky-950/80 dark:text-white/80">
-                                    {useBookingSaleTotal ? "Activo" : "Inactivo"}
+                                    {useBookingSaleTotal
+                                      ? "Activo"
+                                      : "Inactivo"}
                                   </span>
                                   <button
                                     type="button"
@@ -2649,7 +2770,10 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                           {useBookingSaleTotal && (
                             <div className="mt-4 space-y-2 rounded-2xl border border-sky-900/10 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
                               {saleTotalCurrencies.map((cur, idx) => (
-                                <div key={cur} className="flex items-center gap-2">
+                                <div
+                                  key={cur}
+                                  className="flex items-center gap-2"
+                                >
                                   <input
                                     type="text"
                                     inputMode="decimal"
@@ -2718,8 +2842,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                   </div>
 
                   {canUseReceiptsForm &&
-                    (services.length > 0 || receipts.length > 0) && (
-                      <ReceiptForm
+                    (services.length > 0 || receipts.length > 0) &&
+                    (receiptFormActivated || receiptFormVisible ? (
+                      <DeferredReceiptForm
                         key={
                           editingReceipt?.id_receipt ?? "booking-receipt-new"
                         }
@@ -2728,7 +2853,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                         isFormVisible={receiptFormVisible}
                         setIsFormVisible={setReceiptFormVisible}
                         bookingId={booking.id_booking}
-                        bookingDisplayId={booking.agency_booking_id ?? undefined}
+                        bookingDisplayId={
+                          booking.agency_booking_id ?? undefined
+                        }
                         allowAgency={false}
                         enableAttachAction={!editingReceipt}
                         initialServiceIds={editingReceiptServiceIds}
@@ -2839,7 +2966,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
 
                               return {
                                 id_service: Number.isFinite(id) ? id : 0,
-                                agency_service_id: Number.isFinite(agencyServiceId)
+                                agency_service_id: Number.isFinite(
+                                  agencyServiceId,
+                                )
                                   ? agencyServiceId
                                   : undefined,
                                 description:
@@ -2918,7 +3047,9 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                           };
 
                           const arr =
-                            (await tryFetch(`/api/services?bookingId=${bId}`)) ??
+                            (await tryFetch(
+                              `/api/services?bookingId=${bId}`,
+                            )) ??
                             (await tryFetch(`/api/bookings/${bId}/services`)) ??
                             (await tryFetch(
                               `/api/bookings/${bId}?include=services`,
@@ -3054,7 +3185,19 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                           editingReceipt ? cancelEditReceipt : undefined
                         }
                       />
-                    )}
+                    ) : (
+                      <DeferredFormTrigger
+                        id="receipt-form"
+                        title="Agregar Recibo"
+                        preload={() => {
+                          void import("@/components/receipts/ReceiptForm");
+                        }}
+                        onClick={() => {
+                          setReceiptFormActivated(true);
+                          setReceiptFormVisible(true);
+                        }}
+                      />
+                    ))}
 
                   {receipts.length > 0 && (
                     <ReceiptList
@@ -3083,16 +3226,30 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                   <div className="mb-4 mt-8 flex items-center justify-center gap-2">
                     <p className="text-2xl font-medium">Pagos al Operador</p>
                   </div>
-                  <OperatorPaymentForm
-                    token={token}
-                    booking={booking!}
-                    availableServices={services}
-                    operators={operators}
-                    onCreated={() => {
-                      setPaymentsReloadKey((k) => k + 1);
-                      onPaymentCreated?.();
-                    }}
-                  />
+                  {operatorPaymentFormActivated ? (
+                    <DeferredOperatorPaymentForm
+                      token={token}
+                      booking={booking!}
+                      availableServices={services}
+                      operators={operators}
+                      initiallyOpen
+                      onCreated={() => {
+                        setPaymentsReloadKey((k) => k + 1);
+                        onPaymentCreated?.();
+                      }}
+                    />
+                  ) : (
+                    <DeferredFormTrigger
+                      id="operator-payment-form"
+                      title="Cargar Pago a Operador"
+                      preload={() => {
+                        void import(
+                          "@/components/investments/OperatorPaymentForm"
+                        );
+                      }}
+                      onClick={() => setOperatorPaymentFormActivated(true)}
+                    />
+                  )}
                   <OperatorPaymentList
                     token={token}
                     bookingId={booking.id_booking}
@@ -3237,17 +3394,30 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                       </p>
                     </div>
 
-                    {canCreateOperatorDues && (
-                      <OperatorDueForm
-                        token={token}
-                        booking={booking}
-                        availableServices={services}
-                        onCreated={() => {
-                          const ac = new AbortController();
-                          void fetchOperatorDues(ac.signal);
-                        }}
-                      />
-                    )}
+                    {canCreateOperatorDues &&
+                      (operatorDueFormActivated ? (
+                        <DeferredOperatorDueForm
+                          token={token}
+                          booking={booking}
+                          availableServices={services}
+                          initiallyOpen
+                          onCreated={() => {
+                            const ac = new AbortController();
+                            void fetchOperatorDues(ac.signal);
+                          }}
+                        />
+                      ) : (
+                        <DeferredFormTrigger
+                          id="operator-due-form"
+                          title="Cargar vencimiento"
+                          preload={() => {
+                            void import(
+                              "@/components/operator-dues/OperatorDueForm"
+                            );
+                          }}
+                          onClick={() => setOperatorDueFormActivated(true)}
+                        />
+                      ))}
 
                     <OperatorDueList
                       dues={operatorDues}
@@ -3278,13 +3448,26 @@ export default function ServicesContainer(props: ServicesContainerProps) {
                     role === "gerente" ||
                     role === "vendedor" ||
                     role === "lider") &&
-                    booking && (
-                      <ClientPaymentForm
+                    booking &&
+                    (clientPaymentFormActivated ? (
+                      <DeferredClientPaymentForm
                         token={token}
                         booking={booking}
+                        initiallyOpen
                         onCreated={handleClientPaymentCreated}
                       />
-                    )}
+                    ) : (
+                      <DeferredFormTrigger
+                        id="client-payment-form"
+                        title="Cargar plan de pagos"
+                        preload={() => {
+                          void import(
+                            "@/components/client-payments/ClientPaymentForm"
+                          );
+                        }}
+                        onClick={() => setClientPaymentFormActivated(true)}
+                      />
+                    ))}
 
                   <ClientPaymentList
                     payments={clientPayments}

@@ -6,14 +6,6 @@ import ThemeToggle from "@/components/ThemeToggle";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import {
-  motion,
-  AnimatePresence,
-  useScroll,
-  useSpring,
-  useTransform,
-  useMotionTemplate,
-} from "framer-motion";
 
 interface HeaderProps {
   toggleMenu: () => void;
@@ -30,7 +22,7 @@ const WA_URL = `https://wa.me/${WA_NUMBER}?text=${WA_MSG}`;
 /* ---------- Botones renovados (solo light) ---------- */
 function WhatsAppBtn() {
   return (
-    <motion.a
+    <a
       href={WA_URL}
       target="_blank"
       rel="noopener noreferrer"
@@ -38,26 +30,20 @@ function WhatsAppBtn() {
         "inline-flex items-center gap-2 rounded-full",
         "border border-emerald-300/50 bg-emerald-50/70 px-3.5 py-1.5",
         "text-sm font-medium text-emerald-900 shadow-sm",
-        "transition-colors hover:bg-emerald-50/90",
+        "transition-[background-color,transform] hover:-translate-y-0.5 hover:bg-emerald-50/90 active:scale-[0.98]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40",
       ].join(" ")}
-      whileHover={{ y: -1 }}
-      whileTap={{ scale: 0.98 }}
       aria-label="Escribir por WhatsApp"
     >
       <IconWhatsApp className="size-4" />
       <span>WhatsApp</span>
-    </motion.a>
+    </a>
   );
 }
 
 function PlatformBtn() {
   return (
-    <motion.div
-      whileHover={{ y: -1 }}
-      whileTap={{ scale: 0.98 }}
-      className="inline-flex"
-    >
+    <div className="inline-flex transition-transform hover:-translate-y-0.5 active:scale-[0.98]">
       <Link
         href="/login"
         className={[
@@ -84,7 +70,7 @@ function PlatformBtn() {
         </svg>
         Plataforma
       </Link>
-    </motion.div>
+    </div>
   );
 }
 
@@ -99,55 +85,26 @@ export default function Header({
   const isLoginPage = pathname === "/login";
   const isLanding = pathname === "/";
 
-  /* ---------- Animación fluida de la isla (landing) ---------- */
-  const { scrollY } = useScroll();
-  const scale = useSpring(useTransform(scrollY, [0, 120], [1, 0.985]), {
-    stiffness: 220,
-    damping: 28,
-    mass: 0.35,
-  });
-  const translateY = useSpring(useTransform(scrollY, [0, 120], [0, 2]), {
-    stiffness: 220,
-    damping: 28,
-    mass: 0.35,
-  });
-  const blurPx = useSpring(useTransform(scrollY, [0, 120], [14, 20]), {
-    stiffness: 220,
-    damping: 28,
-    mass: 0.35,
-  });
-  const backdrop = useMotionTemplate`blur(${blurPx}px) saturate(1.35)`;
-  const shadowSpread = useSpring(useTransform(scrollY, [0, 120], [0.1, 0.18]), {
-    stiffness: 220,
-    damping: 28,
-    mass: 0.35,
-  });
-  const boxShadow = useMotionTemplate`0 10px 30px rgba(15 23 42 / ${shadowSpread})`;
-
   const [open, setOpen] = useState(false);
   const islandRef = useRef<HTMLDivElement | null>(null);
   const [panelTop, setPanelTop] = useState<number>(96); // fallback seguro
 
-  // Medimos la altura real de la isla para anclar el panel móvil justo debajo (evita cortes)
-  const measure = () => {
-    const el = islandRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect(); // top relativo al viewport
-    const gap = 10; // separación visual
-    setPanelTop(Math.max(72, rect.top + rect.height + gap));
-  };
-
   useLayoutEffect(() => {
-    measure();
-    const onResize = () => measure();
-    const onScroll = () => measure();
-    window.addEventListener("resize", onResize);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("scroll", onScroll);
+    if (!isLanding || !open || !islandRef.current) return;
+    const island = islandRef.current;
+    const measure = () => {
+      const rect = island.getBoundingClientRect();
+      setPanelTop(Math.max(72, rect.bottom + 10));
     };
-  }, []);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(island);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [isLanding, open]);
 
   // Bloqueo del scroll del body cuando el menú está abierto (mejor UX móvil)
   useEffect(() => {
@@ -166,21 +123,14 @@ export default function Header({
     return (
       <>
         <div className="pointer-events-none fixed inset-x-0 top-3 z-[70] flex justify-center sm:top-4 sm:px-4">
-          <motion.div
-            style={{ scale, y: translateY }}
-            initial={{ y: -10, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ duration: 0.28, ease: "easeOut" }}
-            className="pointer-events-auto w-full"
-          >
+          <div className="pointer-events-auto w-full">
             <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
-              <motion.div
+              <div
                 ref={islandRef}
-                style={{ backdropFilter: backdrop, boxShadow }}
                 className={[
                   "mx-auto flex items-center justify-between gap-2",
                   "rounded-[22px] sm:rounded-[28px]",
-                  "border border-white/30 bg-white/55",
+                  "border border-white/30 bg-white/55 shadow-lg shadow-sky-950/10 backdrop-blur-md",
                 ].join(" ")}
               >
                 {/* Paddings fijos para evitar saltos */}
@@ -264,71 +214,60 @@ export default function Header({
                     </button>
                   </div>
                 </div>
-              </motion.div>
+              </div>
             </div>
-          </motion.div>
+          </div>
         </div>
 
         {/* Menú móvil (anclado bajo la isla, nunca se corta) */}
-        <AnimatePresence>
-          {open && (
-            <>
-              <motion.button
-                key="overlay"
-                onClick={() => setOpen(false)}
-                className="fixed inset-0 z-[65] bg-black/20 backdrop-blur-[2px] md:hidden"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                aria-label="Cerrar menú"
-              />
-              <motion.div
-                key="panel"
-                initial={{ y: -20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -8, opacity: 0 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-                className="fixed z-[75] md:hidden"
-                style={{
-                  top: panelTop + 10,
-                  left: 0,
-                  right: 0,
-                  // márgenes seguros a los lados (safe areas + padding)
-                  paddingLeft: "clamp(0.75rem, 3vw, 2rem)",
-                  paddingRight: "clamp(0.75rem, 3vw, 2rem)",
-                }}
-              >
-                <div className="mx-auto w-full max-w-7xl">
-                  <div className="rounded-2xl border border-white/30 bg-white/75 p-3 text-sky-950 shadow-xl backdrop-blur-xl">
-                    <ul className="divide-y divide-white/30">
-                      {[
-                        { href: "#producto", label: "Producto" },
-                        { href: "#roles", label: "Para roles" },
-                        { href: "#seguridad", label: "Seguridad" },
-                        { href: "#faq", label: "FAQ" },
-                        { href: "#contacto", label: "Contacto" },
-                      ].map((item) => (
-                        <li key={item.href}>
-                          <a
-                            href={item.href}
-                            onClick={() => setOpen(false)}
-                            className="block px-2 py-3"
-                          >
-                            {item.label}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-                      <WhatsAppBtn />
-                      <PlatformBtn />
-                    </div>
+        {open && (
+          <>
+            <button
+              onClick={() => setOpen(false)}
+              className="fixed inset-0 z-[65] bg-black/20 backdrop-blur-[2px] md:hidden"
+              aria-label="Cerrar menú"
+            />
+            <div
+              className="fixed z-[75] md:hidden"
+              style={{
+                top: panelTop + 10,
+                left: 0,
+                right: 0,
+                // márgenes seguros a los lados (safe areas + padding)
+                paddingLeft: "clamp(0.75rem, 3vw, 2rem)",
+                paddingRight: "clamp(0.75rem, 3vw, 2rem)",
+              }}
+            >
+              <div className="mx-auto w-full max-w-7xl">
+                <div className="rounded-2xl border border-white/30 bg-white/75 p-3 text-sky-950 shadow-xl backdrop-blur-xl">
+                  <ul className="divide-y divide-white/30">
+                    {[
+                      { href: "#producto", label: "Producto" },
+                      { href: "#roles", label: "Para roles" },
+                      { href: "#seguridad", label: "Seguridad" },
+                      { href: "#faq", label: "FAQ" },
+                      { href: "#contacto", label: "Contacto" },
+                    ].map((item) => (
+                      <li key={item.href}>
+                        <a
+                          href={item.href}
+                          onClick={() => setOpen(false)}
+                          className="block px-2 py-3"
+                        >
+                          {item.label}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                    <WhatsAppBtn />
+                    <PlatformBtn />
                   </div>
                 </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+              </div>
+            </div>
+          </>
+        )}
       </>
     );
   }
