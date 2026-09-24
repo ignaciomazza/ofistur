@@ -10,7 +10,7 @@ vi.mock("workflow/api", () => ({ start }));
 vi.mock("@/services/arca/automaticWorkflow", () => ({ connectArcaWorkflow: vi.fn() }));
 vi.mock("@/lib/prisma", () => {
   const tx = {
-    $queryRaw: vi.fn(async () => [{ pg_advisory_xact_lock: null }]),
+    $executeRaw: vi.fn(async () => 1),
     arcaConnectionJob: {
       findFirst: vi.fn(async () => null),
       updateMany: vi.fn(async () => ({ count: 0 })),

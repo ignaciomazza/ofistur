@@ -16,6 +16,8 @@ type StartJobInput = {
   password: string;
 };
 
+export class ArcaJobStartConflict extends Error {}
+
 export async function startArcaJob(input: StartJobInput) {
   logArca("info", "Start ARCA job", {
     agencyId: input.agencyId,
@@ -28,11 +30,14 @@ export async function startArcaJob(input: StartJobInput) {
     passwordLength: input.password.length,
   });
   const job = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(77445, ${input.agencyId})`;
+    // Prisma binds JavaScript numbers as bigint. PostgreSQL's two-key advisory
+    // lock accepts integer, integer, so cast both arguments explicitly.
+    // The lock returns void, which Prisma cannot deserialize via $queryRaw.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(77445::integer, ${input.agencyId}::integer)`;
     const active = await tx.arcaConnectionJob.findFirst({
       where: { agencyId: input.agencyId, status: { in: ["pending", "running", "waiting"] } },
     });
-    if (active) throw new Error("Ya hay una conexión ARCA en curso.");
+    if (active) throw new ArcaJobStartConflict("Ya hay una conexión ARCA en curso.");
     const [current, agency] = await Promise.all([
       tx.agencyArcaConfig.findUnique({
         where: { agencyId: input.agencyId },
@@ -50,7 +55,7 @@ export async function startArcaJob(input: StartJobInput) {
         tx.travelGroupInvoice.count({ where: { id_agency: input.agencyId } }),
       ]);
       if (issued > 0 || groupInvoices > 0) {
-        throw new Error("Esta agencia ya tiene facturas emitidas con otro CUIT. Consultá soporte antes de cambiar el emisor fiscal.");
+        throw new ArcaJobStartConflict("Esta agencia ya tiene facturas emitidas con otro CUIT. Consultá soporte antes de cambiar el emisor fiscal.");
       }
     }
     await tx.arcaConnectionJob.updateMany({

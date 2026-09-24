@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
 import { getAuthContext, hasArcaAccess } from "@/lib/arcaAuth";
 import { validateArcaSecretsKey } from "@/lib/arcaSecrets";
-import { startArcaJob } from "@/lib/arcaStartJob";
+import { ArcaJobStartConflict, startArcaJob } from "@/lib/arcaStartJob";
 import { logArca } from "@/services/arca/logger";
 
 const ConnectSchema = z.object({
@@ -16,14 +16,6 @@ const ConnectSchema = z.object({
 
 function normalizeCuit(value: string): string {
   return value.replace(/\D/g, "");
-}
-
-function ensureCuit(value: string, label: string): string {
-  const digits = normalizeCuit(value);
-  if (digits.length !== 11) {
-    throw new Error(`${label} inválido (11 dígitos)`);
-  }
-  return digits;
 }
 
 function normalizeServices(input?: string[]): string[] {
@@ -75,11 +67,11 @@ export default async function handler(
       });
     }
     const body = ConnectSchema.parse(req.body ?? {});
-    const cuitRepresentado = ensureCuit(
-      body.cuitRepresentado,
-      "CUIT representado",
-    );
-    const cuitLogin = ensureCuit(body.cuitLogin, "CUIT login");
+    const cuitRepresentado = normalizeCuit(body.cuitRepresentado);
+    const cuitLogin = normalizeCuit(body.cuitLogin);
+    if (cuitRepresentado.length !== 11 || cuitLogin.length !== 11) {
+      return res.status(400).json({ error: "CUIT representado y CUIT login deben tener 11 dígitos." });
+    }
     const services = normalizeServices(body.services);
     const baseAlias = (body.alias ?? "").trim();
     const alias =
@@ -113,8 +105,13 @@ export default async function handler(
       job,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Datos inválidos";
-    logArca("warn", "API connect error", { error: msg });
-    return res.status(400).json({ error: msg });
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: err.issues[0]?.message ?? "Datos inválidos" });
+    }
+    if (err instanceof ArcaJobStartConflict) {
+      return res.status(409).json({ error: err.message });
+    }
+    logArca("error", "API connect error", { error: err instanceof Error ? err.message : "Error inesperado" });
+    return res.status(503).json({ error: "No se pudo iniciar la conexión ARCA. Volvé a intentar en unos minutos." });
   }
 }
