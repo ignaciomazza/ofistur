@@ -26,3 +26,7 @@ export function isMissingServiceAuthorization(message: string): boolean {
 export function isInvalidCertificate(message: string): boolean {
   return /certificad[oa].{0,55}(?:revocad[oa]|vencid[oa]|inv[aá]lid[oa])|(?:revoked|expired|invalid).{0,40}certificat/i.test(message);
 }
+
+export function isMissingCertificateAdministration(message: string): boolean {
+  return /no se encontr[oó].{0,70}administraci[oó]n de certificados digitales.{0,70}servicios habilitados/i.test(message);
+}

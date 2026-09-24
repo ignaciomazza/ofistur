@@ -144,6 +144,56 @@ describe("automatic ARCA connection", () => {
     );
   });
 
+  it("enables certificate administration and resumes fresh certificate creation", async () => {
+    job = { ...job, action: "rotate", taxIdRepresentado: "30718124561", taxIdLogin: "27393476198" };
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    runAutomation.mockResolvedValueOnce({
+      status: "error", retryable: false,
+      error: 'No se encontró el servicio "Administración de Certificados Digitales" entre los servicios habilitados en ARCA.',
+    });
+    await advanceAutomaticJob(1);
+    expect(job.step).toBe("enable_cert_admin");
+    expect(job.status).toBe("running");
+    expect(config?.status).toBe("connected");
+
+    runAutomation.mockResolvedValueOnce({ status: "pending", id: "relation-1" });
+    await advanceAutomaticJob(1);
+    expect(runAutomation).toHaveBeenLastCalledWith("add-relation", expect.objectContaining({
+      cuit: "30718124561",
+      username: "27393476198",
+      service: "web://arfe_certificado",
+      delegate_to: "27393476198",
+    }), null);
+    expect(job.longJobId).toBe("relation-1");
+
+    runAutomation.mockResolvedValueOnce({ status: "complete", data: { status: "created" } });
+    await advanceAutomaticJob(1);
+    expect(runAutomation).toHaveBeenLastCalledWith("add-relation", expect.any(Object), "relation-1");
+    expect(job.step).toBe("create_cert_after_relation");
+    expect(job.longJobId).toBeNull();
+
+    runAutomation.mockResolvedValueOnce({ status: "pending", id: "certificate-1" });
+    await advanceAutomaticJob(1);
+    expect(runAutomation).toHaveBeenLastCalledWith("create-cert-prod", expect.objectContaining({
+      cuit: "30718124561", alias: job.alias,
+    }), null);
+    expect(job.longJobId).toBe("certificate-1");
+  });
+
+  it("does not loop if certificate administration remains unavailable after enabling it", async () => {
+    job = { ...job, step: "create_cert_after_relation" };
+    runAutomation.mockResolvedValue({
+      status: "error", retryable: false,
+      error: 'No se encontró el servicio "Administración de Certificados Digitales" entre los servicios habilitados en ARCA.',
+    });
+    const { advanceAutomaticJob } = await import("@/services/arca/automaticJob");
+    for (let attempt = 0; attempt < 4; attempt++) await advanceAutomaticJob(1);
+    expect(job.status).toBe("error");
+    expect(job.passwordEncrypted).toBeNull();
+    expect(runAutomation).toHaveBeenCalledTimes(4);
+    expect(runAutomation).not.toHaveBeenCalledWith("add-relation", expect.anything(), expect.anything());
+  });
+
   it("checks an existing WSFE authorization before creating another one", async () => {
     job = {
       ...job,

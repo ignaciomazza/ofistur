@@ -6,7 +6,7 @@ import { invalidateAfipCache } from "@/services/afip/afipConfig";
 import { runAutomation } from "@/services/arca/automationV2";
 import { extractPemPair } from "@/services/arca/pem";
 import { classifyTaxRegime } from "@/services/arca/taxRegime";
-import { arcaErrorMessage, isInvalidCertificate, isMissingServiceAuthorization, isProviderCuitLimit } from "@/services/arca/connectionErrors";
+import { arcaErrorMessage, isInvalidCertificate, isMissingCertificateAdministration, isMissingServiceAuthorization, isProviderCuitLimit } from "@/services/arca/connectionErrors";
 import { getAfipSdkAccessToken } from "@/services/afip/accessToken";
 
 type Regime = "mono" | "ri";
@@ -166,7 +166,8 @@ export async function advanceAutomaticJob(jobId: number) {
     }
 
     const service = job.services[job.currentServiceIndex];
-    const task = job.step === "create_cert" || job.step === "renew_cert" ? "create-cert-prod" :
+    const task = ["create_cert", "renew_cert", "create_cert_after_relation"].includes(job.step) ? "create-cert-prod" :
+      job.step === "enable_cert_admin" ? "add-relation" :
       job.step === "auth_ws" && service ? "auth-web-service-prod" :
       job.step === "list_points" ? "list-sales-points" :
       job.step === "create_point" ? "create-sales-point" : null;
@@ -183,6 +184,10 @@ export async function advanceAutomaticJob(jobId: number) {
     if (task) {
       const params: Record<string, unknown> = { ...base };
       if (task === "create-cert-prod") params.alias = job.alias;
+      if (task === "add-relation") {
+        params.service = "web://arfe_certificado";
+        params.delegate_to = job.taxIdLogin;
+      }
       if (task === "auth-web-service-prod") {
         params.alias = job.alias;
         params.service = service;
@@ -200,6 +205,16 @@ export async function advanceAutomaticJob(jobId: number) {
         return update({ status: "waiting", longJobId: result.id, lastError: null });
       }
       if (result.status === "error") {
+        if (task === "create-cert-prod" && job.step !== "create_cert_after_relation" &&
+            isMissingCertificateAdministration(result.error)) {
+          return update({ step: "enable_cert_admin", longJobId: null, status: "running", retryCount: 0, lastError: null });
+        }
+        if (job.step === "create_cert_after_relation" && isMissingCertificateAdministration(result.error)) {
+          if (job.retryCount < 3) {
+            return update({ retryCount: job.retryCount + 1, status: "waiting", lastError: null });
+          }
+          return fail(jobId, "ARCA todavía no habilitó Administración de Certificados Digitales para este CUIT. Revisá que el CUIT de ingreso pueda administrar las relaciones del CUIT representado.");
+        }
         if (task === "create-sales-point" && /ya existe|already exists|duplicad/i.test(result.error)) {
           return update({ step: "list_points", longJobId: null, status: "running", retryCount: 0 });
         }
@@ -208,6 +223,10 @@ export async function advanceAutomaticJob(jobId: number) {
           return update({ retryCount: job.retryCount + 1, status: "waiting", lastError: safeMessage(result.error, password) });
         }
         return fail(jobId, result.error, false, password);
+      }
+
+      if (task === "add-relation") {
+        return update({ step: "create_cert_after_relation", longJobId: null, status: "running", retryCount: 0, lastError: null });
       }
 
       if (task === "create-cert-prod") {
@@ -380,6 +399,15 @@ export async function advanceAutomaticJob(jobId: number) {
   } catch (error) {
     const message = arcaErrorMessage(error);
     if (isProviderCuitLimit(message)) return fail(jobId, message, false, password);
+    if (["create_cert", "renew_cert"].includes(job.step) && isMissingCertificateAdministration(message)) {
+      return update({ step: "enable_cert_admin", longJobId: null, status: "running", retryCount: 0, lastError: null });
+    }
+    if (job.step === "create_cert_after_relation" && isMissingCertificateAdministration(message)) {
+      if (job.retryCount < 3) {
+        return update({ retryCount: job.retryCount + 1, status: "waiting", lastError: null });
+      }
+      return fail(jobId, "ARCA todavía no habilitó Administración de Certificados Digitales para este CUIT. Revisá que el CUIT de ingreso pueda administrar las relaciones del CUIT representado.");
+    }
     if (job.retryCount < 3) {
       return update({ retryCount: job.retryCount + 1, status: "waiting", lastError: safeMessage(message, password) });
     }

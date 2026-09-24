@@ -844,6 +844,7 @@ export default function ArcaPage() {
                         </div>
                         <div className="mt-3 space-y-2 text-xs text-sky-950/60 dark:text-white/60">
                           {isJobActive && <p>Podés cerrar esta página. El proceso continúa y al volver verás el avance.</p>}
+                          {job?.step === "enable_cert_admin" && <p>Habilitando la administración de certificados digitales en ARCA.</p>}
                           {job?.step === "detect_regime" && <p>Consultando el régimen fiscal.</p>}
                           {job?.step === "list_points" && <p>Buscando puntos de venta compatibles.</p>}
                           {job?.step === "create_point" && <p>Creando un punto de venta para Web Services.</p>}
@@ -851,13 +852,13 @@ export default function ArcaPage() {
                           <div className="flex items-center justify-between">
                             <span>Certificado en ARCA</span>
                             <span>
-                              {job?.step === "create_cert" &&
-                              job.status === "error"
+                              {["create_cert", "enable_cert_admin", "create_cert_after_relation"].includes(job?.step ?? "") &&
+                              job?.status === "error"
                                 ? config?.hasCert
                                   ? "Guardado"
                                   : "Falló"
-                                : job?.step === "create_cert" &&
-                                    job.status !== "completed"
+                                : ["create_cert", "enable_cert_admin", "create_cert_after_relation"].includes(job?.step ?? "") &&
+                                    job?.status !== "completed"
                                 ? "En progreso"
                                 : config?.hasCert
                                   ? "OK"
