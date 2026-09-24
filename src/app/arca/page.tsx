@@ -23,6 +23,9 @@ type ArcaConfig = {
   updatedAt: string;
   hasCert: boolean;
   hasKey: boolean;
+  taxRegime?: "mono" | "ri" | null;
+  observedTaxRegime?: "mono" | "ri" | null;
+  taxRegimeCheckedAt?: string | null;
 };
 
 type ArcaJob = {
@@ -48,6 +51,11 @@ const AVAILABLE_SERVICES = [
   {
     id: "wsfe",
     label: "WSFE (Facturación electrónica)",
+    required: true,
+  },
+  {
+    id: "ws_sr_constancia_inscripcion",
+    label: "Constancia de inscripción (régimen fiscal)",
     required: true,
   },
   {
@@ -99,6 +107,7 @@ function normalizeServices(services: string[]): string[] {
       .filter((s) => allowed.has(s as (typeof AVAILABLE_SERVICES)[number]["id"])),
   );
   set.add("wsfe");
+  set.add("ws_sr_constancia_inscripcion");
   return Array.from(set);
 }
 
@@ -143,8 +152,10 @@ export default function ArcaPage() {
     null | "connect" | "rotate"
   >(null);
   const [testing, setTesting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [resumePassword, setResumePassword] = useState("");
+  const [resumeRegime, setResumeRegime] = useState<"" | "mono" | "ri">("");
   const [aliasHadInvalid, setAliasHadInvalid] = useState(false);
 
   const [form, setForm] = useState({
@@ -152,7 +163,7 @@ export default function ArcaPage() {
     cuitLogin: "",
     password: "",
     alias: "",
-    services: ["wsfe"],
+    services: ["wsfe", "ws_sr_constancia_inscripcion"],
   });
 
   const prefillingRef = useRef(false);
@@ -161,7 +172,9 @@ export default function ArcaPage() {
     if (job && ["pending", "running", "waiting"].includes(job.status))
       return "Conectando";
     if (job?.status === "requires_action") return "Requiere acción";
+    if (job?.status === "error") return config?.status === "connected" ? "Conexión anterior activa" : "Error";
     if (config?.status === "connected") return "Conectado";
+    if (config?.status === "disconnected") return "Desconectado";
     if (config?.status === "error") return "Error";
     return "Sin conexión";
   }, [config, job]);
@@ -175,6 +188,8 @@ export default function ArcaPage() {
       return "border border-amber-700/60 bg-amber-200/50 text-amber-900 dark:border-amber-400/50 dark:bg-amber-500/20 dark:text-amber-100";
     if (statusLabel === "Error")
       return "border border-rose-700/60 bg-rose-200/50 text-rose-900 dark:border-rose-400/50 dark:bg-rose-500/20 dark:text-rose-100";
+    if (statusLabel === "Conexión anterior activa")
+      return "border border-amber-700/60 bg-amber-200/50 text-amber-900 dark:border-amber-400/50 dark:bg-amber-500/20 dark:text-amber-100";
     return "border border-slate-700/30 bg-white/60 text-slate-800 dark:border-white/10 dark:bg-white/10 dark:text-white/70";
   }, [statusLabel]);
 
@@ -191,7 +206,7 @@ export default function ArcaPage() {
   const isJobActive = Boolean(
     job && ["pending", "running", "waiting"].includes(job.status),
   );
-  const isBusy = actionLoading !== null || testing || resuming;
+  const isBusy = actionLoading !== null || testing || resuming || disconnecting;
   const isConnecting = actionLoading === "connect";
   const isRotating = actionLoading === "rotate";
   const inputsDisabled = isJobActive || isBusy;
@@ -218,6 +233,7 @@ export default function ArcaPage() {
       if (res.ok && data) {
         setConfig(data.config);
         setJob(data.activeJob);
+        if (data.activeJob) setStep(3);
         setSecretsKeyValid(
           typeof data.secretsKeyValid === "boolean"
             ? data.secretsKeyValid
@@ -275,12 +291,15 @@ export default function ArcaPage() {
       const data = await safeJson<{ job: ArcaJob | null }>(res);
       if (res.ok && data?.job) {
         setJob(data.job);
-        if (data.job.status === "completed") {
+        if (["completed", "error"].includes(data.job.status)) {
           const st = await secureFetch("/api/arca", { method: "GET" }, token);
           const payload = await safeJson<ArcaStatusPayload>(st);
           if (st.ok && payload) {
             setConfig(payload.config);
-            setJob(payload.activeJob);
+            if (data.job.status === "completed") setJob(payload.activeJob);
+          }
+          if (data.job.status === "error") {
+            toast.error("Falló la conexión con ARCA. Revisá el detalle del error.");
           }
         }
       }
@@ -317,7 +336,19 @@ export default function ArcaPage() {
       }
       setJob(data?.job ?? null);
       setStep(3);
-      toast.info("Conexión ARCA iniciada.");
+      if (data?.job?.status === "error" || data?.job?.status === "completed") {
+        const st = await secureFetch("/api/arca", { method: "GET" }, token);
+        const payload = await safeJson<ArcaStatusPayload>(st);
+        if (st.ok && payload) setConfig(payload.config);
+      }
+      if (data?.job?.status === "error") {
+        setMissingPv(false);
+        toast.error("Falló la conexión con ARCA. Revisá el detalle del error.");
+      } else if (data?.job?.status === "completed") {
+        toast.success("Conexión ARCA completada.");
+      } else {
+        toast.info("Conexión ARCA iniciada.");
+      }
       setForm((prev) => ({ ...prev, password: "" }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al conectar";
@@ -328,7 +359,7 @@ export default function ArcaPage() {
   };
 
   const toggleService = (serviceId: string) => {
-    if (serviceId === "wsfe") return;
+    if (serviceId === "wsfe" || serviceId === "ws_sr_constancia_inscripcion") return;
     setForm((prev) => {
       const exists = prev.services.includes(serviceId);
       const next = exists
@@ -370,7 +401,7 @@ export default function ArcaPage() {
                 ...prev,
                 salesPointsDetected: data.salesPoints ?? [],
                 selectedSalesPoint:
-                  data.selectedSalesPoint ?? prev.selectedSalesPoint,
+                  data.selectedSalesPoint === undefined ? prev.selectedSalesPoint : data.selectedSalesPoint,
               }
             : prev,
         );
@@ -380,7 +411,7 @@ export default function ArcaPage() {
           "El punto de venta seleccionado no esta habilitado para WSFE.",
         );
       } else if (data?.missingSalesPoint) {
-        toast.info("Conexión OK. Falta punto de venta.");
+        toast.info("ARCA respondió, pero falta un punto de venta compatible.");
       } else {
         toast.success("Conexión ARCA OK.");
       }
@@ -391,7 +422,11 @@ export default function ArcaPage() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al probar";
+      setMissingPv(false);
       toast.error(msg);
+      const st = await secureFetch("/api/arca", { method: "GET" }, token);
+      const payload = await safeJson<ArcaStatusPayload>(st);
+      if (st.ok && payload) setConfig(payload.config);
     } finally {
       setTesting(false);
     }
@@ -409,7 +444,7 @@ export default function ArcaPage() {
         `/api/arca/connect/${job.id}`,
         {
           method: "POST",
-          body: JSON.stringify({ password: resumePassword }),
+          body: JSON.stringify({ password: resumePassword, taxRegime: resumeRegime || undefined }),
         },
         token,
       );
@@ -419,12 +454,40 @@ export default function ArcaPage() {
       }
       setJob(data?.job ?? null);
       setResumePassword("");
-      toast.info("Retomando conexión...");
+      if (data?.job?.status === "error" || data?.job?.status === "completed") {
+        const st = await secureFetch("/api/arca", { method: "GET" }, token);
+        const payload = await safeJson<ArcaStatusPayload>(st);
+        if (st.ok && payload) setConfig(payload.config);
+      }
+      if (data?.job?.status === "error") {
+        setMissingPv(false);
+        toast.error("Falló la conexión con ARCA. Revisá el detalle del error.");
+      } else if (data?.job?.status === "completed") {
+        toast.success("Conexión ARCA completada.");
+      } else {
+        toast.info("Retomando conexión...");
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al retomar";
       toast.error(msg);
     } finally {
       setResuming(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!token) return;
+    setDisconnecting(true);
+    try {
+      const res = await secureFetch("/api/arca/disconnect", { method: "POST" }, token);
+      const data = await safeJson<{ error?: string }>(res);
+      if (!res.ok) throw new Error(data?.error || "No se pudo desconectar ARCA.");
+      setConfig((prev) => prev ? { ...prev, status: "disconnected" } : prev);
+      toast.success("ARCA desconectada. Podés reconectar cuando quieras.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo desconectar ARCA.");
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -452,6 +515,44 @@ export default function ArcaPage() {
             )}
           </div>
         </div>
+
+        {job?.status === "error" && config?.status === "connected" && (
+          <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+            La reconexión no terminó. La conexión anterior sigue activa. {job.lastError}
+          </div>
+        )}
+
+        {config?.status === "connected" && !config.authorizedServices.includes("ws_sr_constancia_inscripcion") && (
+          <div className="rounded-2xl border border-sky-600/40 bg-sky-100 p-4 text-sm text-sky-950 dark:bg-sky-500/10 dark:text-sky-100">
+            Esta conexión es anterior a la verificación automática del régimen fiscal. Reconectá para activarla.
+            <button type="button" onClick={() => setStep(1)} className="ml-3 font-semibold underline">Reconectar</button>
+          </div>
+        )}
+
+        {config?.status === "connected" && config.taxRegime === "mono" && (
+          <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+            El CUIT monotributista está conectado con ARCA, pero Ofistur todavía no emite Factura C desde reservas. Esa emisión fiscal permanecerá bloqueada para evitar comprobantes incorrectos.
+          </div>
+        )}
+
+        {config?.status === "connected" && config.taxRegime && !config.taxRegimeCheckedAt && (
+          <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+            El régimen fiscal se eligió manualmente. Todavía falta que ARCA lo confirme; la emisión fiscal desde reservas permanecerá bloqueada hasta que se pueda verificar.
+          </div>
+        )}
+
+        {config?.status === "connected" && config.authorizedServices.includes("ws_sr_constancia_inscripcion") && !config.taxRegime && (
+          <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+            Todavía no pudimos verificar el régimen fiscal en ARCA. Se volverá a consultar al abrir esta pantalla o intentar facturar.
+          </div>
+        )}
+
+        {config?.taxRegime && config.observedTaxRegime && config.taxRegime !== config.observedTaxRegime && (
+          <div className="rounded-2xl border border-amber-600/50 bg-amber-100 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+            ARCA informa un cambio de régimen a {config.observedTaxRegime === "ri" ? "responsable inscripto" : "monotributista"}. Reconectá para validar el punto de venta y el tipo de comprobante antes de facturar.
+            <button type="button" onClick={() => setStep(1)} className="ml-3 font-semibold underline">Reconectar</button>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex min-h-[40vh] items-center justify-center">
@@ -495,7 +596,7 @@ export default function ArcaPage() {
                             CUIT representado
                             <Tooltip
                               label="?"
-                              text="CUIT del pax que va a facturar. Es el CUIT que quedará en ARCA."
+                              text="CUIT de la agencia que emitirá facturas. Es el CUIT que quedará en ARCA."
                             />
                           </label>
                           <input
@@ -572,7 +673,7 @@ export default function ArcaPage() {
                             className="w-full rounded-2xl border border-sky-950/10 bg-white/60 p-3 outline-none backdrop-blur transition placeholder:text-sky-950/40 focus:border-sky-400/60 focus:ring-2 focus:ring-sky-200/60 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-white/10 dark:text-white dark:focus:border-sky-300/40 dark:focus:ring-sky-400/30"
                           />
                           <p className="text-xs text-sky-950/60 dark:text-white/60">
-                            Nunca guardamos tu clave fiscal.
+                            La clave fiscal se guarda cifrada solo mientras dura la conexión y se borra al finalizar.
                           </p>
                         </div>
 
@@ -594,7 +695,7 @@ export default function ArcaPage() {
                           />
                           <p className="text-xs text-sky-950/60 dark:text-white/60">
                             Solo letras y números. Si lo dejás vacío, usamos un
-                            alias consistente.
+                            alias único para este intento.
                           </p>
                           {aliasNeedsCuit && (
                             <span className="inline-flex rounded-full border border-amber-700/60 bg-amber-200/60 px-2 py-1 text-[11px] text-amber-900 dark:border-amber-300/40 dark:bg-amber-500/20 dark:text-amber-100">
@@ -642,7 +743,7 @@ export default function ArcaPage() {
                       className="mt-6 space-y-4"
                     >
                       <p className="text-sm text-sky-950/70 dark:text-white/70">
-                        Elegí los servicios ARCA a autorizar. `WSFE` es obligatorio.
+                        Elegí los servicios ARCA a autorizar. Facturación y constancia fiscal son obligatorios.
                       </p>
                       <div className="grid gap-3 md:grid-cols-2">
                         {AVAILABLE_SERVICES.map((svc) => {
@@ -716,18 +817,28 @@ export default function ArcaPage() {
                       <div className="rounded-2xl border border-sky-950/10 bg-white/50 p-4 dark:border-white/10 dark:bg-white/5">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">
-                            Conexión en curso
+                            {job?.status === "completed" ? "Conexión completada" : "Conexión automática"}
                           </span>
                           {isJobActive && (
                             <span className="size-4 animate-spin rounded-full border-2 border-sky-400/60 border-t-transparent dark:border-white/60" />
                           )}
                         </div>
                         <div className="mt-3 space-y-2 text-xs text-sky-950/60 dark:text-white/60">
+                          {isJobActive && <p>Podés cerrar esta página. El proceso continúa y al volver verás el avance.</p>}
+                          {job?.step === "detect_regime" && <p>Consultando el régimen fiscal.</p>}
+                          {job?.step === "list_points" && <p>Buscando puntos de venta compatibles.</p>}
+                          {job?.step === "create_point" && <p>Creando un punto de venta para Web Services.</p>}
+                          {job?.step === "verify" && <p>Verificando la conexión antes de activarla.</p>}
                           <div className="flex items-center justify-between">
                             <span>Certificado en ARCA</span>
                             <span>
                               {job?.step === "create_cert" &&
-                              job.status !== "completed"
+                              job.status === "error"
+                                ? config?.hasCert
+                                  ? "Guardado"
+                                  : "Falló"
+                                : job?.step === "create_cert" &&
+                                    job.status !== "completed"
                                 ? "En progreso"
                                 : config?.hasCert
                                   ? "OK"
@@ -737,8 +848,8 @@ export default function ArcaPage() {
                           <div className="flex items-center justify-between">
                             <span>Servicios autorizados</span>
                             <span>
-                              {config?.authorizedServices?.length ?? 0}/
-                              {form.services.length}
+                              {job?.currentServiceIndex ?? config?.authorizedServices?.length ?? 0}/
+                              {job?.services.length ?? form.services.length}
                             </span>
                           </div>
                           {job?.lastError && (
@@ -752,8 +863,21 @@ export default function ArcaPage() {
                       {job?.status === "requires_action" && (
                         <div className="rounded-2xl border border-amber-700/50 bg-amber-200/60 p-4 text-amber-900 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-100">
                           <p className="text-xs font-medium">
-                            Necesitamos tu clave fiscal para continuar.
+                            {job?.step === "list_points" || job?.step === "detect_regime"
+                              ? "Confirmá el régimen fiscal y reingresá tu clave para continuar."
+                              : "Necesitamos tu clave fiscal para continuar."}
                           </p>
+                          {(job?.step === "list_points" || job?.step === "detect_regime") && (
+                            <select
+                              value={resumeRegime}
+                              onChange={(event) => setResumeRegime(event.target.value as "" | "mono" | "ri")}
+                              className="mt-3 w-full rounded-xl border border-amber-700/40 bg-white/70 px-3 py-2 text-sm text-amber-900"
+                            >
+                              <option value="">Seleccioná el régimen confirmado en ARCA</option>
+                              <option value="ri">Responsable inscripto</option>
+                              <option value="mono">Monotributista</option>
+                            </select>
+                          )}
                           <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center">
                             <input
                               type="password"
@@ -766,7 +890,7 @@ export default function ArcaPage() {
                             />
                             <button
                               type="button"
-                              disabled={!resumePassword.trim() || resuming}
+                              disabled={!resumePassword.trim() || ((job?.step === "list_points" || job?.step === "detect_regime") && !resumeRegime) || resuming}
                               onClick={handleResume}
                               className="rounded-full border border-amber-700/60 bg-amber-200/70 px-4 py-2 text-xs font-medium text-amber-900 shadow-sm transition-transform hover:scale-95 active:scale-90 disabled:cursor-not-allowed dark:border-amber-300/40 dark:bg-amber-500/20 dark:text-white"
                             >
@@ -987,7 +1111,7 @@ export default function ArcaPage() {
                   <button
                     type="button"
                     disabled={
-                      !config?.hasCert || !config?.hasKey || testing || isBusy
+                      !config?.hasCert || !config?.hasKey || config.status === "disconnected" || testing || isBusy
                     }
                     onClick={() => {
                       const parsed = salesPointChoice.trim()
@@ -1013,6 +1137,16 @@ export default function ArcaPage() {
                       "Probar conexión"
                     )}
                   </button>
+                  {config?.hasCert && config.status !== "disconnected" && (
+                    <button
+                      type="button"
+                      disabled={isJobActive || isBusy}
+                      onClick={handleDisconnect}
+                      className="rounded-full border border-rose-700/50 px-4 py-2 text-sm text-rose-800 disabled:opacity-50 dark:text-rose-200"
+                    >
+                      {disconnecting ? "Desconectando..." : "Desconectar"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={!canConnect || isBusy}
@@ -1034,8 +1168,7 @@ export default function ArcaPage() {
                   </button>
                 </div>
                 <p className="mt-3 text-xs text-sky-950/60 dark:text-white/60">
-                  Rotar reemplaza el cert/key actual una vez finalizada la
-                  conexión.
+                  Rotar reemplaza el certificado solo cuando la nueva conexión funciona. Desconectar suspende la facturación en Ofistur y conserva los datos para volver a conectar; no revoca el certificado en ARCA.
                 </p>
               </div>
             </div>

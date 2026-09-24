@@ -7,9 +7,16 @@ import { runArcaDiagnostics } from "@/services/arca/diagnostics";
 import { logArca } from "@/services/arca/logger";
 
 function sanitizeError(err: unknown): string {
+  const providerMessage =
+    err && typeof err === "object" && "data" in err
+      ? (err as { data?: { message?: unknown } }).data?.message
+      : null;
+  if (typeof providerMessage === "string" && providerMessage.trim()) {
+    return providerMessage.trim().replace(/\s+/g, " ").slice(0, 320);
+  }
   if (err instanceof Error && err.message) {
     const msg = err.message.trim();
-    return msg ? msg.slice(0, 180) : "Error en ARCA";
+    return msg ? msg.slice(0, 320) : "Error en ARCA";
   }
   return "Error en ARCA";
 }
@@ -37,11 +44,17 @@ export default async function handler(
       certEncrypted: true,
       keyEncrypted: true,
       selectedSalesPoint: true,
+      salesPointsDetected: true,
+      taxRegime: true,
+      status: true,
     },
   });
   if (!cfg?.certEncrypted || !cfg?.keyEncrypted) {
     logArca("warn", "API test missing cert/key", { agencyId: auth.id_agency });
     return res.status(400).json({ error: "No hay credenciales ARCA" });
+  }
+  if (cfg.status === "disconnected") {
+    return res.status(409).json({ error: "ARCA está desconectada. Reconectá para volver a facturar." });
   }
 
   try {
@@ -49,6 +62,12 @@ export default async function handler(
     const afip = await getAfipForAgency(auth.id_agency);
     const { serverStatus, salesPoints, missingSalesPoint } =
       await runArcaDiagnostics(afip);
+    // New connections retain the points whose ARCA system matches their fiscal
+    // regime. A manual test must not make an unrelated WSFE point selectable.
+    const selectablePoints = cfg.taxRegime
+      ? cfg.salesPointsDetected.filter((number) => salesPoints.includes(number))
+      : salesPoints;
+    const missingCompatiblePoint = missingSalesPoint || selectablePoints.length === 0;
 
     const rawSelected =
       req.body && typeof req.body === "object"
@@ -68,8 +87,8 @@ export default async function handler(
     const baseSelected =
       inputSelected != null ? inputSelected : cfg?.selectedSalesPoint ?? null;
     const selectionValid =
-      baseSelected != null ? salesPoints.includes(baseSelected) : false;
-    const nextSelected = missingSalesPoint
+      baseSelected != null ? selectablePoints.includes(baseSelected) : false;
+    const nextSelected = missingCompatiblePoint
       ? null
       : selectionValid
         ? baseSelected
@@ -79,22 +98,24 @@ export default async function handler(
       where: { agencyId: auth.id_agency },
       data: {
         lastOkAt: new Date(),
-        lastError: missingSalesPoint
-          ? "Falta punto de venta para Web Services."
+        lastError: missingCompatiblePoint
+          ? "Falta un punto de venta compatible con el régimen fiscal para Web Services. Reconectá ARCA para buscarlo."
           : baseSelected != null && !selectionValid
             ? "El punto de venta seleccionado no esta habilitado para WSFE."
-          : null,
-        status: "connected",
-        salesPointsDetected: salesPoints,
+            : nextSelected == null
+              ? "Seleccioná un punto de venta habilitado para Web Services."
+              : null,
+        status: nextSelected != null ? "connected" : "error",
+        salesPointsDetected: selectablePoints,
         selectedSalesPoint: nextSelected,
       },
     });
 
     return res.status(200).json({
       ok: true,
-      missingSalesPoint,
-      salesPointsCount: salesPoints.length,
-      salesPoints,
+      missingSalesPoint: missingCompatiblePoint,
+      salesPointsCount: selectablePoints.length,
+      salesPoints: selectablePoints,
       selectedSalesPoint: nextSelected,
       selectionValid: baseSelected != null ? selectionValid : null,
       serverStatus,
@@ -104,8 +125,8 @@ export default async function handler(
     logArca("warn", "API test error", { agencyId: auth.id_agency, error: msg });
     await prisma.agencyArcaConfig.updateMany({
       where: { agencyId: auth.id_agency },
-      data: { lastError: msg, status: "error" },
+      data: { lastError: msg },
     });
-    return res.status(500).json({ error: "No se pudo probar ARCA" });
+    return res.status(502).json({ error: msg });
   }
 }

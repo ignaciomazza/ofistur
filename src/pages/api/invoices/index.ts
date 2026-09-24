@@ -10,6 +10,7 @@ import {
   getBookingComponentGrants,
 } from "@/lib/accessControl";
 import { canAccessBookingComponent } from "@/utils/permissions";
+import { refreshIssuerRegime } from "@/services/arca/regimeMonitor";
 
 export const config = {
   maxDuration: 60,
@@ -386,6 +387,30 @@ export default async function handler(
     }
 
     try {
+      await refreshIssuerRegime(auth.id_agency);
+      const issuer = await prisma.agencyArcaConfig.findUnique({
+        where: { agencyId: auth.id_agency },
+        select: { status: true, taxRegime: true, observedTaxRegime: true, taxRegimeCheckedAt: true, authorizedServices: true },
+      });
+      if (issuer?.status === "disconnected" || issuer?.status === "error") {
+        return res.status(409).json({ success: false, message: "La conexión ARCA requiere atención. Revisá el punto de venta o reconectá antes de facturar." });
+      }
+      if (issuer?.authorizedServices.includes("ws_sr_constancia_inscripcion") &&
+          (!issuer.taxRegimeCheckedAt || Date.now() - issuer.taxRegimeCheckedAt.getTime() >= 24 * 60 * 60 * 1000)) {
+        return res.status(503).json({ success: false, message: "No pude verificar el régimen fiscal en ARCA. Volvé a intentar antes de emitir." });
+      }
+      if (issuer?.taxRegime && issuer.observedTaxRegime && issuer.taxRegime !== issuer.observedTaxRegime) {
+        return res.status(409).json({
+          success: false,
+          message: "ARCA informa un cambio de régimen fiscal. Reconectá ARCA antes de emitir nuevas facturas.",
+        });
+      }
+      if (issuer?.taxRegime === "mono") {
+        return res.status(409).json({
+          success: false,
+          message: "Este CUIT es monotributista. La emisión de Factura C todavía no está disponible; no se enviará una Factura A o B a ARCA.",
+        });
+      }
       // createInvoices ya resuelve agencia por el req (mismo token/cookie)
       const result = await createInvoices(req, parsedB.data);
       if (!result.success) {

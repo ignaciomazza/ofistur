@@ -2,8 +2,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import prisma from "@/lib/prisma";
 import { getAuthContext, hasArcaAccess } from "@/lib/arcaAuth";
-import { advanceArcaJob } from "@/services/arca/jobRunner";
-import { setJobSecret } from "@/services/arca/jobSecrets";
+import { encryptSecret } from "@/lib/arcaSecrets";
+import { start } from "workflow/api";
+import { connectArcaWorkflow } from "@/services/arca/automaticWorkflow";
 import { logArca } from "@/services/arca/logger";
 
 function parseJobId(raw: string | string[] | undefined): number {
@@ -32,8 +33,8 @@ export default async function handler(
   }
 
   if (req.method === "POST") {
-    const password = String((req.body ?? {}).password ?? "").trim();
-    if (!password) {
+    const password = String((req.body ?? {}).password ?? "");
+    if (!password.trim()) {
       return res.status(400).json({ error: "Clave fiscal requerida" });
     }
     logArca("info", "API resume job", {
@@ -42,21 +43,39 @@ export default async function handler(
       hasPassword: Boolean(password),
       passwordLength: password.length,
     });
-    setJobSecret(jobId, password);
-    await advanceArcaJob(jobId);
-  } else if (req.method === "GET") {
-    if (
-      ["pending", "running", "waiting", "requires_action"].includes(job.status)
-    ) {
-      logArca("info", "API poll job", {
-        jobId,
-        agencyId: auth.id_agency,
-        status: job.status,
-        step: job.step,
-      });
-      await advanceArcaJob(jobId);
+    if (job.status !== "requires_action") {
+      return res.status(409).json({ error: "Esta conexión no requiere reanudar." });
     }
-  } else {
+    const newer = await prisma.arcaConnectionJob.findFirst({
+      where: { agencyId: auth.id_agency, id: { gt: jobId } },
+      select: { id: true },
+    });
+    if (newer) return res.status(409).json({ error: "Hay una conexión más reciente. Actualizá la página." });
+    const regime = (req.body ?? {}).taxRegime;
+    if (["detect_regime", "list_points"].includes(job.step) && !job.detectedTaxRegime && !["mono", "ri"].includes(regime)) {
+      return res.status(400).json({ error: "Seleccioná el régimen fiscal confirmado en ARCA." });
+    }
+    const resumed = await prisma.arcaConnectionJob.updateMany({
+      where: { id: jobId, agencyId: auth.id_agency, status: "requires_action" },
+      data: {
+        passwordEncrypted: encryptSecret(password),
+        detectedTaxRegime: ["mono", "ri"].includes(regime) ? regime : job.detectedTaxRegime,
+        status: "running", lastError: null, retryCount: 0,
+      },
+    });
+    if (resumed.count !== 1) {
+      return res.status(409).json({ error: "La conexión cambió de estado. Actualizá la página." });
+    }
+    try {
+      await start(connectArcaWorkflow, [jobId]);
+    } catch {
+      await prisma.arcaConnectionJob.update({
+        where: { id: jobId },
+        data: { status: "requires_action", passwordEncrypted: null, lastError: "No se pudo reanudar el proceso automático." },
+      });
+      return res.status(503).json({ error: "No se pudo reanudar el proceso automático." });
+    }
+  } else if (req.method !== "GET") {
     res.setHeader("Allow", ["GET", "POST"]);
     return res.status(405).end(`Método ${req.method} no permitido`);
   }

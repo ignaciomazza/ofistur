@@ -11,6 +11,7 @@ import {
   getBookingComponentGrants,
 } from "@/lib/accessControl";
 import { canAccessBookingComponent } from "@/utils/permissions";
+import { refreshIssuerRegime } from "@/services/arca/regimeMonitor";
 
 /* ================= JWT SECRET (igual que bookings/invoices) ================= */
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -424,6 +425,21 @@ export default async function handler(
             success: false,
             message: "La factura no pertenece a tu agencia.",
           });
+      }
+
+      await refreshIssuerRegime(auth.id_agency);
+      const issuer = await prisma.agencyArcaConfig.findUnique({
+        where: { agencyId: auth.id_agency },
+        select: { status: true, taxRegime: true, observedTaxRegime: true, taxRegimeCheckedAt: true, authorizedServices: true },
+      });
+      const stale = issuer?.authorizedServices.includes("ws_sr_constancia_inscripcion") &&
+        (!issuer.taxRegimeCheckedAt || Date.now() - issuer.taxRegimeCheckedAt.getTime() >= 24 * 60 * 60 * 1000);
+      if (issuer?.status === "disconnected" || issuer?.status === "error" || stale || issuer?.taxRegime === "mono" ||
+          (issuer?.taxRegime && issuer.observedTaxRegime && issuer.taxRegime !== issuer.observedTaxRegime)) {
+        return res.status(409).json({
+          success: false,
+          message: "El régimen fiscal actual no permite emitir esta nota de crédito automáticamente. Revisá la conexión ARCA o solicitá asistencia para corregir el comprobante histórico.",
+        });
       }
 
       const { invoiceId, tipoNota, exchangeRate, invoiceDate, manualTotals } =

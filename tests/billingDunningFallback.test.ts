@@ -70,6 +70,19 @@ function nextId(rows: Array<Record<string, unknown>>, key: string): number {
   return max + 1;
 }
 
+function findCharges(where?: Record<string, unknown>): ChargeRow[] {
+  return charges.filter((row) => {
+    if (where?.id_charge && typeof where.id_charge === "number" && row.id_charge !== where.id_charge) return false;
+    if (where?.status && typeof where.status === "object" && "not" in where.status) {
+      if (row.status === (where.status as { not: string }).not) return false;
+    }
+    if (where?.dunning_stage && typeof where.dunning_stage === "object" && "gte" in where.dunning_stage) {
+      if (row.dunning_stage < Number((where.dunning_stage as { gte: number }).gte)) return false;
+    }
+    return true;
+  });
+}
+
 const prismaMock = {
   agencyBillingCharge: {
     findUnique: vi.fn(async ({ where }: { where: { id_charge: number } }) => {
@@ -81,23 +94,9 @@ const prismaMock = {
       Object.assign(row, data);
       return clone(row);
     }),
-    findMany: vi.fn(async ({ where }: { where?: Record<string, unknown> } = {}) => {
-      return charges.filter((row) => {
-        if (where?.id_charge && typeof where.id_charge === "number" && row.id_charge !== where.id_charge) {
-          return false;
-        }
-        if (where?.status && typeof where.status === "object" && "not" in where.status) {
-          if (row.status === (where.status as { not: string }).not) return false;
-        }
-        if (where?.dunning_stage && typeof where.dunning_stage === "object" && "gte" in where.dunning_stage) {
-          if (row.dunning_stage < Number((where.dunning_stage as { gte: number }).gte)) return false;
-        }
-        return true;
-      });
-    }),
+    findMany: vi.fn(async ({ where }: { where?: Record<string, unknown> } = {}) => findCharges(where)),
     count: vi.fn(async ({ where }: { where?: Record<string, unknown> } = {}) => {
-      const items = await prismaMock.agencyBillingCharge.findMany({ where });
-      return items.length;
+      return findCharges(where).length;
     }),
   },
   agencyBillingAttempt: {
@@ -245,9 +244,9 @@ const prismaMock = {
   agencyBillingCycle: {
     update: vi.fn(async () => ({})),
   },
-  $transaction: vi.fn(async (arg: unknown) => {
+  $transaction: vi.fn(async (arg: unknown): Promise<unknown> => {
     if (typeof arg === "function") {
-      return (arg as (tx: typeof prismaMock) => Promise<unknown>)(prismaMock);
+      return (arg as (tx: unknown) => Promise<unknown>)(prismaMock);
     }
     throw new Error("Unsupported transaction signature");
   }),

@@ -12,8 +12,12 @@ const mocks = vi.hoisted(() => {
   return {
     afipClient,
     getAfipForAgency: vi.fn(),
+    refreshIssuerRegime: vi.fn(),
     logBillingEvent: vi.fn(),
     prisma: {
+      agencyArcaConfig: {
+        findUnique: vi.fn(),
+      },
       agencyBillingCharge: {
         findUnique: vi.fn(),
       },
@@ -30,6 +34,10 @@ vi.mock("@/lib/prisma", () => ({ default: mocks.prisma }));
 
 vi.mock("@/services/afip/afipConfig", () => ({
   getAfipForAgency: mocks.getAfipForAgency,
+}));
+
+vi.mock("@/services/arca/regimeMonitor", () => ({
+  refreshIssuerRegime: mocks.refreshIssuerRegime,
 }));
 
 vi.mock("@/services/billing/events", () => ({
@@ -68,6 +76,8 @@ describe("issueFiscalForCharge", () => {
     );
 
     mocks.getAfipForAgency.mockResolvedValue(mocks.afipClient);
+    mocks.refreshIssuerRegime.mockResolvedValue(undefined);
+    mocks.prisma.agencyArcaConfig.findUnique.mockResolvedValue(null);
     mocks.afipClient.ElectronicBilling.getSalesPoints.mockResolvedValue([
       { Nro: 4 },
       { Nro: 3 },
@@ -207,5 +217,15 @@ describe("issueFiscalForCharge", () => {
     expect(payload.ImpNeto).toBe(1000);
     expect(payload.ImpIVA).toBe(0);
     expect(payload).not.toHaveProperty("Iva");
+  });
+
+  it("does not send a Factura B for a monotributista", async () => {
+    mocks.prisma.agencyArcaConfig.findUnique.mockResolvedValue({
+      status: "connected", taxRegime: "mono", observedTaxRegime: "mono",
+      taxRegimeCheckedAt: new Date(), authorizedServices: ["ws_sr_constancia_inscripcion"],
+    });
+    const result = await issueFiscalForCharge({ chargeId: 10, issuerAgencyId: 1 });
+    expect(result.ok).toBe(false);
+    expect(mocks.afipClient.ElectronicBilling.createVoucher).not.toHaveBeenCalled();
   });
 });

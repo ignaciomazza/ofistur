@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { getAuthContext, hasArcaAccess } from "@/lib/arcaAuth";
 import { validateArcaSecretsKey } from "@/lib/arcaSecrets";
 import { logArca } from "@/services/arca/logger";
+import { refreshIssuerRegime } from "@/services/arca/regimeMonitor";
 
 async function handleGET(req: NextApiRequest, res: NextApiResponse) {
   const auth = await getAuthContext(req);
@@ -26,6 +27,19 @@ async function handleGET(req: NextApiRequest, res: NextApiResponse) {
           ? err.message
           : "ARCA_SECRETS_KEY inválido";
     }
+    await prisma.arcaConnectionJob.updateMany({
+      where: {
+        agencyId: auth.id_agency,
+        status: { in: ["pending", "running", "waiting"] },
+        updatedAt: { lt: new Date(Date.now() - 30 * 60 * 1000) },
+      },
+      data: {
+        status: "requires_action",
+        passwordEncrypted: null,
+        lastError: "La conexión se detuvo. Podés retomarla desde este paso.",
+      },
+    });
+    await refreshIssuerRegime(auth.id_agency);
     const [config, job] = await Promise.all([
       prisma.agencyArcaConfig.findUnique({
         where: { agencyId: auth.id_agency },
@@ -36,6 +50,9 @@ async function handleGET(req: NextApiRequest, res: NextApiResponse) {
           authorizedServices: true,
           salesPointsDetected: true,
           selectedSalesPoint: true,
+          taxRegime: true,
+          observedTaxRegime: true,
+          taxRegimeCheckedAt: true,
           status: true,
           lastError: true,
           lastOkAt: true,
@@ -48,7 +65,7 @@ async function handleGET(req: NextApiRequest, res: NextApiResponse) {
       prisma.arcaConnectionJob.findFirst({
         where: {
           agencyId: auth.id_agency,
-          status: { in: ["pending", "running", "waiting", "requires_action"] },
+          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
         },
         orderBy: { createdAt: "desc" },
         select: {
@@ -81,6 +98,9 @@ async function handleGET(req: NextApiRequest, res: NextApiResponse) {
             authorizedServices: config.authorizedServices,
             salesPointsDetected: config.salesPointsDetected,
             selectedSalesPoint: config.selectedSalesPoint,
+            taxRegime: config.taxRegime,
+            observedTaxRegime: config.observedTaxRegime,
+            taxRegimeCheckedAt: config.taxRegimeCheckedAt,
             status: config.status,
             lastError: config.lastError,
             lastOkAt: config.lastOkAt,
@@ -90,7 +110,7 @@ async function handleGET(req: NextApiRequest, res: NextApiResponse) {
             hasKey: Boolean(config.keyEncrypted),
           }
         : null,
-      activeJob: job ?? null,
+      activeJob: job?.status === "completed" ? null : job ?? null,
       secretsKeyValid,
       secretsKeyError,
     });

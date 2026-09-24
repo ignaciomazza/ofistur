@@ -87,19 +87,19 @@ const prismaMock = {
     findMany: vi.fn(),
   },
   travelGroupOperatorPayment: {
-    findMany: vi.fn(async () => []),
+    findMany: vi.fn(async (): Promise<unknown[]> => []),
   },
   travelGroupReceipt: {
-    findMany: vi.fn(async () => []),
+    findMany: vi.fn(async (): Promise<unknown[]> => []),
   },
   operator: {
-    findMany: vi.fn(async () => []),
+    findMany: vi.fn(async (): Promise<unknown[]> => []),
   },
   client: {
-    findMany: vi.fn(async () => []),
+    findMany: vi.fn(async (): Promise<unknown[]> => []),
   },
   travelGroup: {
-    findMany: vi.fn(async () => []),
+    findMany: vi.fn(async (): Promise<unknown[]> => []),
   },
   financeTransfer: {
     findMany: vi.fn(async () => []),

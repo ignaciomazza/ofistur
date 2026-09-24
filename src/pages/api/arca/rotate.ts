@@ -27,12 +27,13 @@ function ensureCuit(value: string, label: string): string {
 }
 
 function normalizeServices(input?: string[]): string[] {
-  const allowed = new Set(["wsfe", "ws_sr_padron_a13"]);
+  const allowed = new Set(["wsfe", "ws_sr_padron_a13", "ws_sr_constancia_inscripcion"]);
   const cleaned = (Array.isArray(input) ? input : [])
     .map((s) => String(s).trim().toLowerCase())
     .filter((s) => allowed.has(s));
   const set = new Set(cleaned);
   set.add("wsfe");
+  set.add("ws_sr_constancia_inscripcion");
   return Array.from(set);
 }
 

@@ -125,6 +125,9 @@ model AgencyArcaConfig {
   authorizedServices  String[]  @default([])
   salesPointsDetected Int[]     @default([])
   selectedSalesPoint  Int?
+  taxRegime           String?   // "mono" | "ri"; confirmado por ARCA
+  observedTaxRegime   String?
+  taxRegimeCheckedAt  DateTime?
   status              String    @default("pending")
   lastError           String?
   lastOkAt            DateTime?
@@ -142,6 +145,15 @@ model ArcaConnectionJob {
   services            String[]  @default([])
   currentServiceIndex Int       @default(0)
   longJobId           String?
+  passwordEncrypted   String?
+  stagedCertEncrypted String?
+  stagedKeyEncrypted  String?
+  stagedServices      String[]  @default([])
+  stagedSalesPoints   Int[]     @default([])
+  stagedSalesPoint    Int?
+  detectedTaxRegime   String?
+  regimeConfirmedByArca Boolean @default(false)
+  retryCount          Int       @default(0)
   taxIdRepresentado   String
   taxIdLogin          String
   alias               String

@@ -5,6 +5,7 @@ import { getBillingConfig } from "@/lib/billingConfig";
 import { getAfipForAgency } from "@/services/afip/afipConfig";
 import { resolveSalesPoint } from "@/services/afip/salesPoints";
 import { logBillingEvent } from "@/services/billing/events";
+import { refreshIssuerRegime } from "@/services/arca/regimeMonitor";
 
 type FiscalStatus = "ISSUED" | "FAILED" | "PENDING";
 
@@ -227,11 +228,25 @@ async function emitWithAfip(params: {
     Number.isFinite(Number(issuerAgencyId)) && Number(issuerAgencyId) > 0
       ? Number(issuerAgencyId)
       : charge.id_agency;
+  const cbteTipo = parseIntEnv("BILLING_AFIP_CBTE_TIPO", 6); // Factura B por defecto
+
+  await refreshIssuerRegime(effectiveIssuerAgencyId);
+  const issuer = await prisma.agencyArcaConfig.findUnique({
+    where: { agencyId: effectiveIssuerAgencyId },
+    select: { status: true, taxRegime: true, observedTaxRegime: true, taxRegimeCheckedAt: true, authorizedServices: true },
+  });
+  if (issuer?.status === "disconnected" || issuer?.status === "error" ||
+      (issuer?.taxRegime === "mono" && cbteTipo !== 11) ||
+      (issuer?.taxRegime === "ri" && cbteTipo === 11) ||
+      (issuer?.taxRegime && issuer.observedTaxRegime && issuer.taxRegime !== issuer.observedTaxRegime) ||
+      (issuer?.authorizedServices.includes("ws_sr_constancia_inscripcion") &&
+        (!issuer.taxRegimeCheckedAt || Date.now() - issuer.taxRegimeCheckedAt.getTime() >= 24 * 60 * 60 * 1000))) {
+    throw new Error("El régimen fiscal actual no permite emitir este comprobante. Revisá la conexión ARCA.");
+  }
 
   const afip = await getAfipForAgency(effectiveIssuerAgencyId);
   const preferredPtoVta = parseOptionalPositiveIntEnv("BILLING_AFIP_PTO_VTA");
   const ptoVta = await resolveSalesPoint(afip, preferredPtoVta);
-  const cbteTipo = parseIntEnv("BILLING_AFIP_CBTE_TIPO", 6); // Factura B
 
   const lastVoucher = await afip.ElectronicBilling.getLastVoucher(ptoVta, cbteTipo);
   const nextVoucher = Number(lastVoucher || 0) + 1;

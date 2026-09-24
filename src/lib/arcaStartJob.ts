@@ -1,8 +1,10 @@
 // src/lib/arcaStartJob.ts
 import prisma from "@/lib/prisma";
-import { setJobSecret } from "@/services/arca/jobSecrets";
-import { advanceArcaJob } from "@/services/arca/jobRunner";
+import { encryptSecret } from "@/lib/arcaSecrets";
+import { start } from "workflow/api";
+import { connectArcaWorkflow } from "@/services/arca/automaticWorkflow";
 import { logArca } from "@/services/arca/logger";
+import { randomBytes } from "crypto";
 
 type StartJobInput = {
   agencyId: number;
@@ -25,43 +27,81 @@ export async function startArcaJob(input: StartJobInput) {
     hasPassword: Boolean(input.password),
     passwordLength: input.password.length,
   });
-  await prisma.agencyArcaConfig.upsert({
-    where: { agencyId: input.agencyId },
-    update: {
-      taxIdRepresentado: input.cuitRepresentado,
-      taxIdLogin: input.cuitLogin,
-      alias: input.alias,
-      status: "pending",
-      lastError: null,
-      authorizedServices: [],
-    },
-    create: {
-      agencyId: input.agencyId,
-      taxIdRepresentado: input.cuitRepresentado,
-      taxIdLogin: input.cuitLogin,
-      alias: input.alias,
-      status: "pending",
-      authorizedServices: [],
-    },
+  const job = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(77445, ${input.agencyId})`;
+    const active = await tx.arcaConnectionJob.findFirst({
+      where: { agencyId: input.agencyId, status: { in: ["pending", "running", "waiting"] } },
+    });
+    if (active) throw new Error("Ya hay una conexión ARCA en curso.");
+    const [current, agency] = await Promise.all([
+      tx.agencyArcaConfig.findUnique({
+        where: { agencyId: input.agencyId },
+        select: { taxIdRepresentado: true },
+      }),
+      tx.agency.findUnique({
+        where: { id_agency: input.agencyId },
+        select: { tax_id: true },
+      }),
+    ]);
+    const priorCuit = String(current?.taxIdRepresentado || agency?.tax_id || "").replace(/\D/g, "");
+    if (priorCuit && priorCuit !== input.cuitRepresentado) {
+      const [issued, groupInvoices] = await Promise.all([
+        tx.invoice.count({ where: { id_agency: input.agencyId, status: "Autorizada" } }),
+        tx.travelGroupInvoice.count({ where: { id_agency: input.agencyId } }),
+      ]);
+      if (issued > 0 || groupInvoices > 0) {
+        throw new Error("Esta agencia ya tiene facturas emitidas con otro CUIT. Consultá soporte antes de cambiar el emisor fiscal.");
+      }
+    }
+    await tx.arcaConnectionJob.updateMany({
+      where: { agencyId: input.agencyId, status: "requires_action" },
+      data: {
+        status: "error",
+        passwordEncrypted: null,
+        lastError: "Se inició una conexión nueva.",
+        completedAt: new Date(),
+      },
+    });
+    return tx.arcaConnectionJob.create({
+      data: {
+        agencyId: input.agencyId,
+        action: input.action,
+        status: "running",
+        step: "create_cert",
+        services: input.services,
+        passwordEncrypted: encryptSecret(input.password),
+        currentServiceIndex: 0,
+        taxIdRepresentado: input.cuitRepresentado,
+        taxIdLogin: input.cuitLogin,
+        // A failed attempt may leave the previous alias in ARCA. A fresh alias
+        // prevents the next attempt from colliding with that remote certificate.
+        alias: `${input.alias.slice(0, 20)}${randomBytes(4).toString("hex")}`,
+      },
+    });
   });
 
-  const job = await prisma.arcaConnectionJob.create({
-    data: {
-      agencyId: input.agencyId,
-      action: input.action,
-      status: "running",
-      step: "create_cert",
-      services: input.services,
-      currentServiceIndex: 0,
-      taxIdRepresentado: input.cuitRepresentado,
-      taxIdLogin: input.cuitLogin,
-      alias: input.alias,
-    },
-  });
-
-  setJobSecret(job.id, input.password);
   logArca("info", "Job created", { jobId: job.id, agencyId: input.agencyId });
-  await advanceArcaJob(job.id);
+  try {
+    await start(connectArcaWorkflow, [job.id]);
+  } catch (error) {
+    await prisma.arcaConnectionJob.update({
+      where: { id: job.id },
+      data: {
+        status: "error",
+        lastError: "No se pudo iniciar el proceso automático.",
+        passwordEncrypted: null,
+        completedAt: new Date(),
+      },
+    });
+    throw error;
+  }
 
-  return prisma.arcaConnectionJob.findUnique({ where: { id: job.id } });
+  return prisma.arcaConnectionJob.findUnique({
+    where: { id: job.id },
+    select: {
+      id: true, status: true, step: true, services: true,
+      currentServiceIndex: true, lastError: true,
+      createdAt: true, updatedAt: true, completedAt: true,
+    },
+  });
 }

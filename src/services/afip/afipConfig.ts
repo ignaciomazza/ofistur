@@ -268,6 +268,13 @@ async function resolveUserIdFromRequest(
  *  API pública: AFIP por agencyId o por request
  *  --------------------------------------------------------------------- */
 export async function getAfipForAgency(agencyId: number): Promise<AfipClient> {
+  const connection = await prisma.agencyArcaConfig.findUnique({
+    where: { agencyId },
+    select: { status: true },
+  });
+  if (connection?.status === "disconnected") {
+    throw new Error("ARCA está desconectada. Reconectá antes de facturar.");
+  }
   const hit = cacheByAgency.get(agencyId);
   if (hit) return hit;
   const mats = await loadAgencyMaterials(agencyId);

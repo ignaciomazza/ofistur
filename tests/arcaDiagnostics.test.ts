@@ -41,4 +41,24 @@ describe("runArcaDiagnostics", () => {
     expect(result.missingSalesPoint).toBe(false);
     expect(result.salesPoints).toHaveLength(1);
   });
+
+  it("does not report missing sales points when the provider rejects the request", async () => {
+    const providerError = new Error("Alcanzaste el límite de CUITs");
+    const afip = {
+      ElectronicBilling: {
+        getServerStatus: vi.fn().mockResolvedValue({
+          AppServer: "OK",
+          DbServer: "OK",
+          AuthServer: "OK",
+        }),
+        getSalesPoints: vi.fn().mockRejectedValue(providerError),
+      },
+    };
+
+    await expect(
+      runArcaDiagnostics(
+        afip as unknown as Parameters<typeof runArcaDiagnostics>[0],
+      ),
+    ).rejects.toBe(providerError);
+  });
 });
